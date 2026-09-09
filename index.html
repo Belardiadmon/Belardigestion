@@ -13036,6 +13036,7 @@ function seedData() {
         presupuestos: [],
         vehiculos: ["Camión", "Iveco nueva", "Iveco vieja", "Fiat", "Renault"],
         variedadesSeto: [],
+        variedadesCespedArtificial: ["Allure", "Aura", "Bliss", "Bloom", "Blossom", "Lush", "Silk 35", "Seda", "Wave"],
         parametrosPresupuesto: {
             origenEmpresa: "Polígono Industrial de Mutilva, Calle F, 2, Mutilva, Navarra",
             cespedManoM2h: 300,
@@ -13083,6 +13084,16 @@ function seedData() {
             aporte_recebo: { label: "Aporte de recebo", unidad: "m³", precio: 0 },
             aporte_compost: { label: "Aporte de compost", unidad: "m³", precio: 0 },
             aporte_arena_silice: { label: "Aporte de arena de sílice", unidad: "m³", precio: 0 },
+            mano_obra_aportes: { label: "Mano de obra de aportes", unidad: "h", precio: 0 },
+            grua: { label: "Grúa", unidad: "h", precio: 0 },
+            ca_excavacion_tierras: { label: "Mano de obra — excavación de tierras", unidad: "m²", precio: 0 },
+            ca_aporte_gravas: { label: "Aporte de gravas", unidad: "m³", precio: 0 },
+            ca_malla_geotextil: { label: "Malla geotextil", unidad: "m²", precio: 0 },
+            ca_aporte_arena_miga: { label: "Aporte de arena", unidad: "m³", precio: 0 },
+            ca_mano_obra_tendido: { label: "Mano de obra — extendido y colocación", unidad: "m²", precio: 0 },
+            ca_bandas_union: { label: "Bandas de unión", unidad: "ml", precio: 0 },
+            ca_colas: { label: "Colas", unidad: "kg", precio: 0 },
+            ca_servicio_extra: { label: "Servicio extra", unidad: "ud", precio: 0 },
             trat_herbicida_selectivo: { label: "Tratamiento con herbicida selectivo", unidad: "m²", precio: 0 },
             trat_herbicida_total: { label: "Tratamiento con herbicida total", unidad: "m²", precio: 0 },
             trat_herbicida_total_residual: { label: "Tratamiento con herbicida total residual", unidad: "m²", precio: 0 },
@@ -16492,6 +16503,7 @@ const SECCIONES_OBRA = [
             "prep_laboreo", "prep_abonado_fondo", "prep_mejora_suelo",
             "siembra_semilla", "implantacion_tepes", "resiembra_calvas",
             "retirada_tierra", "aporte_tierra", "aporte_recebo", "aporte_compost", "aporte_arena_silice",
+            "mano_obra_aportes", "grua",
         ],
     },
     {
@@ -16505,6 +16517,13 @@ const SECCIONES_OBRA = [
     {
         titulo: "Drenajes",
         claves: ["drenajes"],
+    },
+    {
+        titulo: "Césped artificial",
+        claves: [
+            "ca_excavacion_tierras", "ca_aporte_gravas", "ca_malla_geotextil",
+            "ca_aporte_arena_miga", "ca_mano_obra_tendido", "ca_bandas_union", "ca_colas", "ca_servicio_extra",
+        ],
     },
 ];
 function CalculadoraObra({ data, persist, onGuardar }) {
@@ -16567,6 +16586,26 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         { key: "desbrozado_alto_con", label: "Desbrozado (hierba alta) — con recogida" },
         { key: "desbrozado_alto_sin", label: "Desbrozado (hierba alta) — sin recogida" },
     ];
+    // Cesped artificial - lista editable de variedades (igual que setos/arbustos) + materiales varios (partida libre)
+    const [cespedArtLineas, setCespedArtLineas] = useState([]); // {id, variedad, m2, precio}
+    const [nuevaVariedadCespedArt, setNuevaVariedadCespedArt] = useState("");
+    const addCespedArtRow = () => {
+        setCespedArtLineas(l => [...l, { id: uid("ca"), variedad: (data.variedadesCespedArtificial || [])[0] || "", m2: 0, precio: 0 }]);
+    };
+    const updateCespedArtRow = (id, campo, valor) => setCespedArtLineas(l => l.map(row => row.id === id ? { ...row, [campo]: valor } : row));
+    const quitarCespedArtRow = (id) => setCespedArtLineas(l => l.filter(row => row.id !== id));
+    const añadirVariedadCespedArt = () => {
+        if (!nuevaVariedadCespedArt.trim())
+            return;
+        const next = structuredClone(data);
+        next.variedadesCespedArtificial = [...(next.variedadesCespedArtificial || []), nuevaVariedadCespedArt.trim()];
+        persist(next);
+        setNuevaVariedadCespedArt("");
+    };
+    const [materialesVarios, setMaterialesVarios] = useState([]); // {id, desc, cantidad, precio}
+    const añadirMaterialVario = () => setMaterialesVarios(m => [...m, { id: uid("mv"), desc: "", cantidad: 1, precio: 0 }]);
+    const actualizarMaterialVario = (id, campo, valor) => setMaterialesVarios(m => m.map(x => x.id === id ? { ...x, [campo]: valor } : x));
+    const quitarMaterialVario = (id) => setMaterialesVarios(m => m.filter(x => x.id !== id));
     const normalizarBusqueda = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[°"'ºª]/g, " ").replace(/\s+/g, " ").trim();
     const resultadosRiego = busquedaRiego.trim().length > 0
         ? (() => {
@@ -16617,6 +16656,20 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         const precioSeto = Number(precioPodaSeto) || 0;
         lineasCalculadas.push({ key: "poda_seto", label: "Poda de setos", unidad: "m²", cantidad: Number(m2SetoObraTotal.toFixed(1)), precio: precioSeto, subtotal: m2SetoObraTotal * precioSeto });
     }
+    cespedArtLineas.forEach(l => {
+        const m2 = Number(l.m2) || 0;
+        const precio = Number(l.precio) || 0;
+        if (l.variedad && m2 > 0) {
+            lineasCalculadas.push({ key: null, label: `Césped artificial — ${l.variedad}`, unidad: "m²", cantidad: m2, precio, subtotal: m2 * precio });
+        }
+    });
+    materialesVarios.forEach(mv => {
+        const cant = Number(mv.cantidad) || 0;
+        const precio = Number(mv.precio) || 0;
+        if (mv.desc.trim() && cant > 0) {
+            lineasCalculadas.push({ key: null, label: mv.desc, unidad: "ud", cantidad: cant, precio, subtotal: cant * precio });
+        }
+    });
     const totalObra = lineasCalculadas.reduce((acc, l) => acc + l.subtotal, 0);
     const guardarPreciosBase = () => {
         const next = structuredClone(data);
@@ -16681,6 +16734,8 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         setEspeciales([]);
         setRiegoLineas([]);
         setSetosObra([]);
+        setCespedArtLineas([]);
+        setMaterialesVarios([]);
     };
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-card" },
@@ -16786,7 +16841,35 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
                     React.createElement(Plus, { size: 14 }),
-                    " A\u00F1adir partida especial")))))),
+                    " A\u00F1adir partida especial"))),
+            sec.titulo === "Césped artificial" && (React.createElement("div", { style: { marginTop: 8 } },
+                React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "C\u00E9sped artificial (variedades)"),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "A\u00F1adir nueva variedad al listado"),
+                    React.createElement("div", { style: { display: "flex", gap: 6 } },
+                        React.createElement("input", { className: "gj-input", value: nuevaVariedadCespedArt, onChange: e => setNuevaVariedadCespedArt(e.target.value), placeholder: "Ej: Golf 30mm" }),
+                        React.createElement("button", { className: "gj-btn", onClick: añadirVariedadCespedArt }, "A\u00F1adir"))),
+                cespedArtLineas.map(l => (React.createElement("div", { key: l.id, className: "gj-row", style: { gap: 6, marginBottom: 6, alignItems: "center" } },
+                    React.createElement("select", { className: "gj-select", style: { flex: 2 }, value: l.variedad, onChange: e => updateCespedArtRow(l.id, "variedad", e.target.value) },
+                        React.createElement("option", { value: "" }, "Variedad..."),
+                        (data.variedadesCespedArtificial || []).map(v => React.createElement("option", { key: v, value: v }, v))),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: l.m2, onChange: e => updateCespedArtRow(l.id, "m2", e.target.value), placeholder: "m\u00B2" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio, onChange: e => updateCespedArtRow(l.id, "precio", e.target.value), placeholder: "\u20AC/m\u00B2" }),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarCespedArtRow(l.id) },
+                        React.createElement(X, { size: 14 }))))),
+                React.createElement("button", { className: "gj-btn ghost block", onClick: addCespedArtRow },
+                    React.createElement(Plus, { size: 13 }),
+                    " A\u00F1adir variedad al presupuesto"),
+                React.createElement("div", { className: "gj-label", style: { marginTop: 14, marginBottom: 4 } }, "Materiales varios (partida libre)"),
+                materialesVarios.map(mv => (React.createElement("div", { key: mv.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+                    React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: mv.desc, onChange: e => actualizarMaterialVario(mv.id, "desc", e.target.value), placeholder: "Descripci\u00F3n" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: mv.cantidad, onChange: e => actualizarMaterialVario(mv.id, "cantidad", e.target.value), placeholder: "Cant." }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: mv.precio, onChange: e => actualizarMaterialVario(mv.id, "precio", e.target.value), placeholder: "Precio" }),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarMaterialVario(mv.id) },
+                        React.createElement(X, { size: 14 }))))),
+                React.createElement("button", { className: "gj-btn ghost block", onClick: añadirMaterialVario },
+                    React.createElement(Plus, { size: 14 }),
+                    " A\u00F1adir material vario")))))),
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Instalaci\u00F3n de riego"),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } },
