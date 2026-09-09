@@ -12848,7 +12848,10 @@ function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
     }
     return cliente;
 }
-function todayStr() { const d = new Date(); return d.toISOString().slice(0, 10); }
+function todayStr() {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 function nowTime() { const d = new Date(); return d.toTimeString().slice(0, 5); }
 function cleanPhone(p) { return (p || "").replace(/[^\d]/g, ""); }
 function waLink(phone, text) { return `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(text)}`; }
@@ -12913,9 +12916,10 @@ function eurDec(n) {
     return new Intl.NumberFormat("es-ES", { style: "currency", currency: "EUR", minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(n || 0);
 }
 function addDaysStr(dateStr, days) {
-    const d = new Date(dateStr + "T00:00:00");
-    d.setDate(d.getDate() + days);
-    return d.toISOString().slice(0, 10);
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const utc = new Date(Date.UTC(y, m - 1, d));
+    utc.setUTCDate(utc.getUTCDate() + days);
+    return utc.toISOString().slice(0, 10);
 }
 function esFinde(dateStr) {
     const d = new Date(dateStr + "T00:00:00");
@@ -13001,7 +13005,7 @@ function seedData() {
     const c1 = uid("cli"), c2 = uid("cli"), c3 = uid("cli");
     const w1 = uid("wrk"), w2 = uid("wrk"), w3 = uid("wrk");
     const y = new Date().getFullYear();
-    const ayer = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const ayer = addDaysStr(todayStr(), -1);
     return {
         clients: [
             { id: c1, nombre: "Familia Duarte", direccion: "Calle Almendros 12, Pozuelo", telefono: "34611222333", email: "duarte@correo.com", esMantenimiento: true, esObra: false, cuotaMensual: 90, presupuesto: 0, estadoObra: "en_curso", activo: true },
@@ -13050,7 +13054,539 @@ function seedData() {
             arboladoUh: 1 / 1.5,
             alcorquesUh: 10,
             abonadoCoste: 0.07,
+            desbrozadoObraM2hPersona: 125,
         },
+        preciosObra: {
+            desbrozado_bajo_con: { label: "Desbrozado (hierba baja) — con recogida", unidad: "m²", precio: 0 },
+            desbrozado_bajo_sin: { label: "Desbrozado (hierba baja) — sin recogida", unidad: "m²", precio: 0 },
+            desbrozado_alto_con: { label: "Desbrozado (hierba alta) — con recogida", unidad: "m²", precio: 0 },
+            desbrozado_alto_sin: { label: "Desbrozado (hierba alta) — sin recogida", unidad: "m²", precio: 0 },
+            poda_arbol_pequeno: { label: "Poda de arbolado — árbol pequeño", unidad: "ud", precio: 0 },
+            poda_arbol_mediano: { label: "Poda de arbolado — árbol mediano", unidad: "ud", precio: 0 },
+            poda_arbol_grande: { label: "Poda de arbolado — árbol grande", unidad: "ud", precio: 0 },
+            poda_arbol_ejemplar: { label: "Poda de arbolado — árbol ejemplar", unidad: "ud", precio: 0 },
+            tala_arbol_pequeno: { label: "Tala — árbol pequeño", unidad: "ud", precio: 0 },
+            tala_arbol_mediano: { label: "Tala — árbol mediano", unidad: "ud", precio: 0 },
+            tala_arbol_grande: { label: "Tala — árbol grande", unidad: "ud", precio: 0 },
+            tala_arbol_ejemplar: { label: "Tala — árbol ejemplar", unidad: "ud", precio: 0 },
+            poda_arbusto_pequeno: { label: "Poda de arbustos — pequeño", unidad: "ud", precio: 0 },
+            poda_arbusto_mediano: { label: "Poda de arbustos — mediano", unidad: "ud", precio: 0 },
+            poda_arbusto_grande: { label: "Poda de arbustos — grande", unidad: "ud", precio: 0 },
+            poda_arbol_ornamental: { label: "Poda de árboles ornamentales", unidad: "ud", precio: 0 },
+            prep_laboreo: { label: "Preparación del terreno — laboreo/rastrillado", unidad: "m²", precio: 0 },
+            prep_abonado_fondo: { label: "Preparación del terreno — abonado de fondo", unidad: "m²", precio: 0 },
+            prep_mejora_suelo: { label: "Preparación del terreno — mejora de estructura del suelo (compost/arena/recebo)", unidad: "m²", precio: 0 },
+            siembra_semilla: { label: "Siembra de césped con semilla", unidad: "m²", precio: 0 },
+            implantacion_tepes: { label: "Implantación de tepes", unidad: "m²", precio: 0 },
+            retirada_tierra: { label: "Retirada de tierra", unidad: "m³", precio: 0 },
+            aporte_tierra: { label: "Aporte de tierra", unidad: "m³", precio: 0 },
+            aporte_recebo: { label: "Aporte de recebo", unidad: "m³", precio: 0 },
+            aporte_compost: { label: "Aporte de compost", unidad: "m³", precio: 0 },
+            aporte_arena_silice: { label: "Aporte de arena de sílice", unidad: "m³", precio: 0 },
+            trat_herbicida_selectivo: { label: "Tratamiento con herbicida selectivo", unidad: "m²", precio: 0 },
+            trat_herbicida_total: { label: "Tratamiento con herbicida total", unidad: "m²", precio: 0 },
+            trat_herbicida_total_residual: { label: "Tratamiento con herbicida total residual", unidad: "m²", precio: 0 },
+            trat_insecticida: { label: "Tratamiento con insecticida", unidad: "m²", precio: 0 },
+            trat_fungicida: { label: "Tratamiento con fungicida", unidad: "m²", precio: 0 },
+            trat_acaricida: { label: "Tratamiento con acaricida", unidad: "m²", precio: 0 },
+            trat_fungicida_aliette: { label: "Tratamiento con fungicida Aliette", unidad: "m²", precio: 0 },
+            trat_topos: { label: "Tratamiento contra topos", unidad: "ud", precio: 0 },
+            trat_ratas_ratones: { label: "Tratamiento contra ratas y ratones", unidad: "ud", precio: 0 },
+            drenajes: { label: "Drenajes", unidad: "ml", precio: 0 },
+            resiembra_calvas: { label: "Resiembra (calvas)", unidad: "m²", precio: 0 },
+            poda_seto: { label: "Poda de setos", unidad: "m²", precio: 0 },
+        },
+        catalogoRiego: [
+            { id: "solem_dc_1", categoria: "Programadores", label: "Programador a pilas Solem DC — 1 estación", unidad: "ud", precio: 131.73 },
+            { id: "solem_dc_2", categoria: "Programadores", label: "Programador a pilas Solem DC — 2 estaciones", unidad: "ud", precio: 183.21 },
+            { id: "solem_dc_4", categoria: "Programadores", label: "Programador a pilas Solem DC — 4 estaciones", unidad: "ud", precio: 213.27 },
+            { id: "solem_dc_6", categoria: "Programadores", label: "Programador a pilas Solem DC — 6 estaciones", unidad: "ud", precio: 242.8 },
+            { id: "woobee_1", categoria: "Programadores", label: "Programador a pilas WooBee — 1 estación", unidad: "ud", precio: 160.33 },
+            { id: "woobee_2", categoria: "Programadores", label: "Programador a pilas WooBee — 2 estaciones", unidad: "ud", precio: 250.44 },
+            { id: "woobee_4", categoria: "Programadores", label: "Programador a pilas WooBee — 4 estaciones", unidad: "ud", precio: 273.55 },
+            { id: "woobee_6", categoria: "Programadores", label: "Programador a pilas WooBee — 6 estaciones", unidad: "ud", precio: 308.52 },
+            { id: "valvula_pp_hh_1/2\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 1/2\"", unidad: "ud", precio: 15.09 },
+            { id: "valvula_pp_hh_3/4\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 3/4\"", unidad: "ud", precio: 20.64 },
+            { id: "valvula_pp_hh_1\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 1\"", unidad: "ud", precio: 26.78 },
+            { id: "valvula_pp_hh_1 1/4\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 1 1/4\"", unidad: "ud", precio: 37.31 },
+            { id: "valvula_pp_hh_1 1/2\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 1 1/2\"", unidad: "ud", precio: 50.2 },
+            { id: "valvula_pp_hh_2\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra-hembra 2\"", unidad: "ud", precio: 73.49 },
+            { id: "valvula_pp_pe_20-1/2\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra rosca gas / enlace PE 20-1/2\"", unidad: "ud", precio: 16.6 },
+            { id: "valvula_pp_pe_25-3/4\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra rosca gas / enlace PE 25-3/4\"", unidad: "ud", precio: 22.52 },
+            { id: "valvula_pp_pe_32-1\"", categoria: "Llaves de paso", label: "Válvula esfera PP hembra rosca gas / enlace PE 32-1\"", unidad: "ud", precio: 29.92 },
+            { id: "J61_20-1/2\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 20-1/2\"", unidad: "ud", precio: 2.63 },
+            { id: "J61_25-1/2\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 25-1/2\"", unidad: "ud", precio: 3.64 },
+            { id: "J61_25-3/4\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 25-3/4\"", unidad: "ud", precio: 3.3 },
+            { id: "J61_32-1\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 32-1\"", unidad: "ud", precio: 5.27 },
+            { id: "J61_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 40-1 1/4\"", unidad: "ud", precio: 7.04 },
+            { id: "J61_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 50-1 1/2\"", unidad: "ud", precio: 9.41 },
+            { id: "J61_63-2\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 63-2\"", unidad: "ud", precio: 14.27 },
+            { id: "J61_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 75-2 1/2\"", unidad: "ud", precio: 25.12 },
+            { id: "J61_90-3\"", categoria: "Fitting Gama'55", label: "J61 Enlace mixto rosca macho 90-3\"", unidad: "ud", precio: 40.7 },
+            { id: "J62_20-1/2\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 20-1/2\"", unidad: "ud", precio: 3.22 },
+            { id: "J62_25-1/2\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 25-1/2\"", unidad: "ud", precio: 4.07 },
+            { id: "J62_25-3/4\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 25-3/4\"", unidad: "ud", precio: 4.07 },
+            { id: "J62_32-1\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 32-1\"", unidad: "ud", precio: 5.38 },
+            { id: "J62_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 40-1 1/4\"", unidad: "ud", precio: 7.43 },
+            { id: "J62_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 50-1 1/2\"", unidad: "ud", precio: 10.26 },
+            { id: "J62_63-2\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 63-2\"", unidad: "ud", precio: 15.22 },
+            { id: "J62_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 75-2 1/2\"", unidad: "ud", precio: 27.26 },
+            { id: "J62_90-3\"", categoria: "Fitting Gama'55", label: "J62 Enlace mixto rosca hembra 90-3\"", unidad: "ud", precio: 46.78 },
+            { id: "J63_20", categoria: "Fitting Gama'55", label: "J63 Enlace recto 20", unidad: "ud", precio: 4.26 },
+            { id: "J63_25", categoria: "Fitting Gama'55", label: "J63 Enlace recto 25", unidad: "ud", precio: 5.15 },
+            { id: "J63_32", categoria: "Fitting Gama'55", label: "J63 Enlace recto 32", unidad: "ud", precio: 7.31 },
+            { id: "J63_40", categoria: "Fitting Gama'55", label: "J63 Enlace recto 40", unidad: "ud", precio: 11.48 },
+            { id: "J63_50", categoria: "Fitting Gama'55", label: "J63 Enlace recto 50", unidad: "ud", precio: 16.59 },
+            { id: "J63_63", categoria: "Fitting Gama'55", label: "J63 Enlace recto 63", unidad: "ud", precio: 25.02 },
+            { id: "J63_75", categoria: "Fitting Gama'55", label: "J63 Enlace recto 75", unidad: "ud", precio: 43.03 },
+            { id: "J63_90", categoria: "Fitting Gama'55", label: "J63 Enlace recto 90", unidad: "ud", precio: 71.67 },
+            { id: "J68_25-20", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 25-20", unidad: "ud", precio: 5.15 },
+            { id: "J68_32-25", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 32-25", unidad: "ud", precio: 7.35 },
+            { id: "J68_40-32", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 40-32", unidad: "ud", precio: 11.48 },
+            { id: "J68_50-40", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 50-40", unidad: "ud", precio: 16.07 },
+            { id: "J68_63-50", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 63-50", unidad: "ud", precio: 24.18 },
+            { id: "J68_75-63", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 75-63", unidad: "ud", precio: 43.03 },
+            { id: "J68_90-75", categoria: "Fitting Gama'55", label: "J68 Enlace reducido 90-75", unidad: "ud", precio: 71.67 },
+            { id: "J69_20-1/2\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 20-1/2\"", unidad: "ud", precio: 4.28 },
+            { id: "J69_25-3/4\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 25-3/4\"", unidad: "ud", precio: 5.24 },
+            { id: "J69_32-1\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 32-1\"", unidad: "ud", precio: 6.65 },
+            { id: "J69_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 40-1 1/4\"", unidad: "ud", precio: 8.67 },
+            { id: "J69_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 50-1 1/2\"", unidad: "ud", precio: 11.82 },
+            { id: "J69_63-2\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 63-2\"", unidad: "ud", precio: 18.01 },
+            { id: "J69_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 75-2 1/2\"", unidad: "ud", precio: 35.99 },
+            { id: "J69_90-3\"", categoria: "Fitting Gama'55", label: "J69 Enlace acodado 90° rosca macho 90-3\"", unidad: "ud", precio: 44.27 },
+            { id: "J70_20-1/2\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 20-1/2\"", unidad: "ud", precio: 4.28 },
+            { id: "J70_25-3/4\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 25-3/4\"", unidad: "ud", precio: 5.27 },
+            { id: "J70_32-1\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 32-1\"", unidad: "ud", precio: 6.65 },
+            { id: "J70_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 40-1 1/4\"", unidad: "ud", precio: 8.67 },
+            { id: "J70_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 50-1 1/2\"", unidad: "ud", precio: 11.47 },
+            { id: "J70_63-2\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 63-2\"", unidad: "ud", precio: 18.01 },
+            { id: "J70_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 75-2 1/2\"", unidad: "ud", precio: 26.43 },
+            { id: "J70_90-3\"", categoria: "Fitting Gama'55", label: "J70 Enlace acodado 45° rosca macho 90-3\"", unidad: "ud", precio: 45.59 },
+            { id: "J71_20-1/2\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 20-1/2\"", unidad: "ud", precio: 5.54 },
+            { id: "J71_25-3/4\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 25-3/4\"", unidad: "ud", precio: 6.36 },
+            { id: "J71_32-1\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 32-1\"", unidad: "ud", precio: 8.01 },
+            { id: "J71_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 40-1 1/4\"", unidad: "ud", precio: 10.02 },
+            { id: "J71_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 50-1 1/2\"", unidad: "ud", precio: 14.98 },
+            { id: "J71_63-2\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 63-2\"", unidad: "ud", precio: 18.37 },
+            { id: "J71_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 75-2 1/2\"", unidad: "ud", precio: 35.99 },
+            { id: "J71_90-3\"", categoria: "Fitting Gama'55", label: "J71 Enlace acodado 90° rosca hembra 90-3\"", unidad: "ud", precio: 48.66 },
+            { id: "J64_20", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 20", unidad: "ud", precio: 4.26 },
+            { id: "J64_25", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 25", unidad: "ud", precio: 5.15 },
+            { id: "J64_32", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 32", unidad: "ud", precio: 7.54 },
+            { id: "J64_40", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 40", unidad: "ud", precio: 11.48 },
+            { id: "J64_50", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 50", unidad: "ud", precio: 16.59 },
+            { id: "J64_63", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 63", unidad: "ud", precio: 24.96 },
+            { id: "J64_75", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 75", unidad: "ud", precio: 44.4 },
+            { id: "J64_90", categoria: "Fitting Gama'55", label: "J64 Enlace acodado 90° 90", unidad: "ud", precio: 73.92 },
+            { id: "J60_20-1/2\"", categoria: "Fitting Gama'55", label: "J60 Derivación te rosca macho 20-1/2\"", unidad: "ud", precio: 5.71 },
+            { id: "J60_25-3/4\"", categoria: "Fitting Gama'55", label: "J60 Derivación te rosca macho 25-3/4\"", unidad: "ud", precio: 8.01 },
+            { id: "J60_32-1\"", categoria: "Fitting Gama'55", label: "J60 Derivación te rosca macho 32-1\"", unidad: "ud", precio: 10.97 },
+            { id: "J65_20-1/2\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 20-1/2\"", unidad: "ud", precio: 5.41 },
+            { id: "J65_25-3/4\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 25-3/4\"", unidad: "ud", precio: 7.61 },
+            { id: "J65_32-1\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 32-1\"", unidad: "ud", precio: 10.47 },
+            { id: "J65_40-1 1/4\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 40-1 1/4\"", unidad: "ud", precio: 13.6 },
+            { id: "J65_50-1 1/2\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 50-1 1/2\"", unidad: "ud", precio: 19.72 },
+            { id: "J65_63-2\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 63-2\"", unidad: "ud", precio: 30.96 },
+            { id: "J65_75-2 1/2\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 75-2 1/2\"", unidad: "ud", precio: 54.47 },
+            { id: "J65_90-3\"", categoria: "Fitting Gama'55", label: "J65 Derivación te rosca hembra 90-3\"", unidad: "ud", precio: 83.14 },
+            { id: "J73_20", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 20", unidad: "ud", precio: 6.46 },
+            { id: "J73_25", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 25", unidad: "ud", precio: 7.74 },
+            { id: "J73_32", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 32", unidad: "ud", precio: 11.0 },
+            { id: "J73_40", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 40", unidad: "ud", precio: 17.17 },
+            { id: "J73_50", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 50", unidad: "ud", precio: 25.06 },
+            { id: "J73_63", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 63", unidad: "ud", precio: 37.69 },
+            { id: "J73_75", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 75", unidad: "ud", precio: 73.92 },
+            { id: "J73_90", categoria: "Fitting Gama'55", label: "J73 Te bocas iguales 90", unidad: "ud", precio: 111.86 },
+            { id: "J74_25-20-25", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 25-20-25", unidad: "ud", precio: 7.77 },
+            { id: "J74_32-25-32", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 32-25-32", unidad: "ud", precio: 11.0 },
+            { id: "J74_40-32-40", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 40-32-40", unidad: "ud", precio: 17.17 },
+            { id: "J74_50-40-50", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 50-40-50", unidad: "ud", precio: 24.86 },
+            { id: "J74_63-50-63", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 63-50-63", unidad: "ud", precio: 37.52 },
+            { id: "J74_75-63-75", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 75-63-75", unidad: "ud", precio: 71.67 },
+            { id: "J74_90-75-90", categoria: "Fitting Gama'55", label: "J74 Te boca reducida al centro 90-75-90", unidad: "ud", precio: 111.86 },
+            { id: "J75_25-20-20", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 25-20-20", unidad: "ud", precio: 7.77 },
+            { id: "J75_32-25-25", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 32-25-25", unidad: "ud", precio: 11.0 },
+            { id: "J75_40-32-32", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 40-32-32", unidad: "ud", precio: 17.17 },
+            { id: "J75_50-40-40", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 50-40-40", unidad: "ud", precio: 24.08 },
+            { id: "J75_63-50-50", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 63-50-50", unidad: "ud", precio: 36.44 },
+            { id: "J75_75-63-63", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 75-63-63", unidad: "ud", precio: 71.82 },
+            { id: "J75_90-75-75", categoria: "Fitting Gama'55", label: "J75 Te dos bocas reducidas 90-75-75", unidad: "ud", precio: 112.07 },
+            { id: "J72_20-1/2\"", categoria: "Fitting Gama'55", label: "J72 Codo grifo (refuerzo metálico) 20-1/2\"", unidad: "ud", precio: 7.65 },
+            { id: "J72_25-3/4\"", categoria: "Fitting Gama'55", label: "J72 Codo grifo (refuerzo metálico) 25-3/4\"", unidad: "ud", precio: 8.5 },
+            { id: "J72_32-1\"", categoria: "Fitting Gama'55", label: "J72 Codo grifo (refuerzo metálico) 32-1\"", unidad: "ud", precio: 11.0 },
+            { id: "J78_20", categoria: "Fitting Gama'55", label: "J78 Tapón final 20", unidad: "ud", precio: 3.42 },
+            { id: "J78_25", categoria: "Fitting Gama'55", label: "J78 Tapón final 25", unidad: "ud", precio: 3.84 },
+            { id: "J78_32", categoria: "Fitting Gama'55", label: "J78 Tapón final 32", unidad: "ud", precio: 5.97 },
+            { id: "J78_40", categoria: "Fitting Gama'55", label: "J78 Tapón final 40", unidad: "ud", precio: 7.4 },
+            { id: "J78_50", categoria: "Fitting Gama'55", label: "J78 Tapón final 50", unidad: "ud", precio: 10.91 },
+            { id: "J78_63", categoria: "Fitting Gama'55", label: "J78 Tapón final 63", unidad: "ud", precio: 15.69 },
+            { id: "J78_75", categoria: "Fitting Gama'55", label: "J78 Tapón final 75", unidad: "ud", precio: 27.98 },
+            { id: "J78_90", categoria: "Fitting Gama'55", label: "J78 Tapón final 90", unidad: "ud", precio: 45.77 },
+            { id: "J93_universal", categoria: "Fitting Gama'55", label: "J-93 Llave de apriete fitting universal (16 a 63)", unidad: "ud", precio: 25.38 },
+            { id: "J93_g55_1", categoria: "Fitting Gama'55", label: "J-93 Llave de apriete Gama'55 (16-32)", unidad: "ud", precio: 45.37 },
+            { id: "J93_g55_2", categoria: "Fitting Gama'55", label: "J-93 Llave de apriete Gama'55 (40-63)", unidad: "ud", precio: 63.77 },
+            { id: "J93_g55_3", categoria: "Fitting Gama'55", label: "J-93 Llave de apriete Gama'55 (75-110)", unidad: "ud", precio: 126.72 },
+            { id: "collarin_25", categoria: "Collarines", label: "Collarín PP Ø25mm (varias roscas, mismo precio)", unidad: "ud", precio: 2.41 },
+            { id: "collarin_32", categoria: "Collarines", label: "Collarín PP Ø32mm (varias roscas, mismo precio)", unidad: "ud", precio: 3.05 },
+            { id: "collarin_40", categoria: "Collarines", label: "Collarín PP Ø40mm (varias roscas, mismo precio)", unidad: "ud", precio: 3.73 },
+            { id: "collarin_50", categoria: "Collarines", label: "Collarín PP Ø50mm (varias roscas, mismo precio)", unidad: "ud", precio: 5.33 },
+            { id: "collarin_63", categoria: "Collarines", label: "Collarín PP Ø63mm (varias roscas, mismo precio)", unidad: "ud", precio: 6.56 },
+            { id: "collarin_75", categoria: "Collarines", label: "Collarín PP Ø75mm (varias roscas, mismo precio)", unidad: "ud", precio: 8.53 },
+            { id: "collarin_90", categoria: "Collarines", label: "Collarín PP Ø90mm (varias roscas, mismo precio)", unidad: "ud", precio: 12.85 },
+            { id: "J82_1/2\"", categoria: "Fitting Gama'55", label: "J82 Machón 1/2\"", unidad: "ud", precio: 1.23 },
+            { id: "J82_3/4\"", categoria: "Fitting Gama'55", label: "J82 Machón 3/4\"", unidad: "ud", precio: 1.4 },
+            { id: "J82_1\"", categoria: "Fitting Gama'55", label: "J82 Machón 1\"", unidad: "ud", precio: 1.97 },
+            { id: "J82_1 1/4\"", categoria: "Fitting Gama'55", label: "J82 Machón 1 1/4\"", unidad: "ud", precio: 2.58 },
+            { id: "J82_1 1/2\"", categoria: "Fitting Gama'55", label: "J82 Machón 1 1/2\"", unidad: "ud", precio: 4.21 },
+            { id: "J82_2\"", categoria: "Fitting Gama'55", label: "J82 Machón 2\"", unidad: "ud", precio: 7.95 },
+            { id: "J84_3/4-1/2\"", categoria: "Fitting Gama'55", label: "J84 Machón reducido 3/4-1/2\"", unidad: "ud", precio: 1.4 },
+            { id: "J84_1-3/4\"", categoria: "Fitting Gama'55", label: "J84 Machón reducido 1-3/4\"", unidad: "ud", precio: 1.97 },
+            { id: "J84_1 1/4-1\"", categoria: "Fitting Gama'55", label: "J84 Machón reducido 1 1/4-1\"", unidad: "ud", precio: 2.58 },
+            { id: "J84_1 1/2-1 1/4\"", categoria: "Fitting Gama'55", label: "J84 Machón reducido 1 1/2-1 1/4\"", unidad: "ud", precio: 4.21 },
+            { id: "J84_2-1 1/2\"", categoria: "Fitting Gama'55", label: "J84 Machón reducido 2-1 1/2\"", unidad: "ud", precio: 7.95 },
+            { id: "J85_1/2\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 1/2\"", unidad: "ud", precio: 1.33 },
+            { id: "J85_3/4\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 3/4\"", unidad: "ud", precio: 1.63 },
+            { id: "J85_1\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 1\"", unidad: "ud", precio: 2.3 },
+            { id: "J85_1 1/4\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 1 1/4\"", unidad: "ud", precio: 2.9 },
+            { id: "J85_1 1/2\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 1 1/2\"", unidad: "ud", precio: 4.23 },
+            { id: "J85_2\"", categoria: "Fitting Gama'55", label: "J85 Manguito hembra 2\"", unidad: "ud", precio: 7.95 },
+            { id: "J86_3/4-1/2\"", categoria: "Fitting Gama'55", label: "J86 Manguito reducido hembra 3/4-1/2\"", unidad: "ud", precio: 1.63 },
+            { id: "J86_1-3/4\"", categoria: "Fitting Gama'55", label: "J86 Manguito reducido hembra 1-3/4\"", unidad: "ud", precio: 2.3 },
+            { id: "J86_1 1/4-1\"", categoria: "Fitting Gama'55", label: "J86 Manguito reducido hembra 1 1/4-1\"", unidad: "ud", precio: 2.9 },
+            { id: "J86_1 1/2-1 1/4\"", categoria: "Fitting Gama'55", label: "J86 Manguito reducido hembra 1 1/2-1 1/4\"", unidad: "ud", precio: 4.21 },
+            { id: "J86_2-1 1/2\"", categoria: "Fitting Gama'55", label: "J86 Manguito reducido hembra 2-1 1/2\"", unidad: "ud", precio: 7.95 },
+            { id: "J83_1/2\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 1/2\"", unidad: "ud", precio: 1.72 },
+            { id: "J83_3/4\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 3/4\"", unidad: "ud", precio: 1.97 },
+            { id: "J83_1\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 1\"", unidad: "ud", precio: 2.58 },
+            { id: "J83_1 1/4\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 1 1/4\"", unidad: "ud", precio: 3.52 },
+            { id: "J83_1 1/2\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 1 1/2\"", unidad: "ud", precio: 6.01 },
+            { id: "J83_2\"", categoria: "Fitting Gama'55", label: "J83 Te 90° macho 2\"", unidad: "ud", precio: 11.14 },
+            { id: "J81_1/2\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 1/2\"", unidad: "ud", precio: 1.23 },
+            { id: "J81_3/4\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 3/4\"", unidad: "ud", precio: 1.42 },
+            { id: "J81_1\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 1\"", unidad: "ud", precio: 1.99 },
+            { id: "J81_1 1/4\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 1 1/4\"", unidad: "ud", precio: 2.64 },
+            { id: "J81_1 1/2\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 1 1/2\"", unidad: "ud", precio: 4.21 },
+            { id: "J81_2\"", categoria: "Fitting Gama'55", label: "J81 Codo 90° macho 2\"", unidad: "ud", precio: 8.12 },
+            { id: "J87_1/2\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 1/2\"", unidad: "ud", precio: 0.73 },
+            { id: "J87_3/4\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 3/4\"", unidad: "ud", precio: 0.96 },
+            { id: "J87_1\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 1\"", unidad: "ud", precio: 1.4 },
+            { id: "J87_1 1/4\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 1 1/4\"", unidad: "ud", precio: 1.97 },
+            { id: "J87_1 1/2\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 1 1/2\"", unidad: "ud", precio: 2.58 },
+            { id: "J87_2\"", categoria: "Fitting Gama'55", label: "J87 Tapón hembra 2\"", unidad: "ud", precio: 4.77 },
+            { id: "J80_1/2\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 1/2\"", unidad: "ud", precio: 0.53 },
+            { id: "J80_3/4\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 3/4\"", unidad: "ud", precio: 0.61 },
+            { id: "J80_1\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 1\"", unidad: "ud", precio: 0.73 },
+            { id: "J80_1 1/4\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 1 1/4\"", unidad: "ud", precio: 2.02 },
+            { id: "J80_1 1/2\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 1 1/2\"", unidad: "ud", precio: 2.22 },
+            { id: "J80_2\"", categoria: "Fitting Gama'55", label: "J80 Tapón macho 2\"", unidad: "ud", precio: 3.98 },
+            { id: "J88_1/2-3/4\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1/2-3/4\"", unidad: "ud", precio: 1.4 },
+            { id: "J88_1/2-1\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1/2-1\"", unidad: "ud", precio: 1.74 },
+            { id: "J88_1/2-1 1/4\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1/2-1 1/4\"", unidad: "ud", precio: 2.3 },
+            { id: "J88_1/2-1 1/2\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1/2-1 1/2\"", unidad: "ud", precio: 3.68 },
+            { id: "J88_3/4-1\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 3/4-1\"", unidad: "ud", precio: 1.97 },
+            { id: "J88_3/4-1 1/4\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 3/4-1 1/4\"", unidad: "ud", precio: 2.3 },
+            { id: "J88_3/4-1 1/2\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 3/4-1 1/2\"", unidad: "ud", precio: 3.68 },
+            { id: "J88_1-1 1/4\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1-1 1/4\"", unidad: "ud", precio: 2.3 },
+            { id: "J88_1-1 1/2\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1-1 1/2\"", unidad: "ud", precio: 3.68 },
+            { id: "J88_1 1/4-1 1/2\"", categoria: "Fitting Gama'55", label: "J88 Reducción macho/hembra 1 1/4-1 1/2\"", unidad: "ud", precio: 3.68 },
+            { id: "J89_3/4-1/2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 3/4-1/2\"", unidad: "ud", precio: 1.62 },
+            { id: "J89_1-1/2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1-1/2\"", unidad: "ud", precio: 1.97 },
+            { id: "J89_1-3/4\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1-3/4\"", unidad: "ud", precio: 1.97 },
+            { id: "J89_1 1/4-1/2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/4-1/2\"", unidad: "ud", precio: 2.9 },
+            { id: "J89_1 1/4-3/4\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/4-3/4\"", unidad: "ud", precio: 2.9 },
+            { id: "J89_1 1/4-1\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/4-1\"", unidad: "ud", precio: 2.9 },
+            { id: "J89_1 1/2-3/4\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/2-3/4\"", unidad: "ud", precio: 3.98 },
+            { id: "J89_1 1/2-1\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/2-1\"", unidad: "ud", precio: 3.98 },
+            { id: "J89_1 1/2-1 1/4\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 1 1/2-1 1/4\"", unidad: "ud", precio: 3.98 },
+            { id: "J89_2-1\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 2-1\"", unidad: "ud", precio: 6.39 },
+            { id: "J89_2-1 1/4\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 2-1 1/4\"", unidad: "ud", precio: 6.39 },
+            { id: "J89_2-1 1/2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 2-1 1/2\"", unidad: "ud", precio: 6.39 },
+            { id: "J89_2 1/2-2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 2 1/2-2\"", unidad: "ud", precio: 8.73 },
+            { id: "J89_3-2 1/2\"", categoria: "Fitting Gama'55", label: "J89 Reducción macho/hembra 3-2 1/2\"", unidad: "ud", precio: 11.94 },
+            { id: "pe_bd_20", categoria: "Tubería polietileno", label: "Polietileno baja densidad 6ATM — 20mm (1/2\")", unidad: "m", precio: 1.29 },
+            { id: "pe_bd_25", categoria: "Tubería polietileno", label: "Polietileno baja densidad 6ATM — 25mm (3/4\")", unidad: "m", precio: 1.845 },
+            { id: "pe_bd_32", categoria: "Tubería polietileno", label: "Polietileno baja densidad 6ATM — 32mm (1\")", unidad: "m", precio: 3.045 },
+            { id: "pe_ad_25", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 25mm (3/4\")", unidad: "m", precio: 1.5 },
+            { id: "pe_ad_32", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 32mm (1\")", unidad: "m", precio: 2.19 },
+            { id: "pe_ad_40", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 40mm (1 1/4\")", unidad: "m", precio: 3.225 },
+            { id: "pe_ad_50", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 50mm (1 1/2\")", unidad: "m", precio: 5.145 },
+            { id: "pe_ad_63", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 63mm (2\")", unidad: "m", precio: 8.145 },
+            { id: "pe_ad_75", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 75mm (2 1/2\") [sin precio, consultar]", unidad: "m", precio: 0 },
+            { id: "pe_ad_90", categoria: "Tubería polietileno", label: "Polietileno alta densidad 10ATM — 90mm (3\") [sin precio, consultar]", unidad: "m", precio: 0 },
+            { id: "goteo_ciego_16", categoria: "Tubería polietileno", label: "Goteo agrícola ciego 16mm", unidad: "m", precio: 0.597 },
+            { id: "rb_dripkitint", categoria: "Riego por goteo", label: "Kit de inicio de riego por goteo", unidad: "ud", precio: 36.41 },
+            { id: "rb_balconykit", categoria: "Riego por goteo", label: "Kit de riego para balcón", unidad: "ud", precio: 50.07 },
+            { id: "rb_shrubkit", categoria: "Riego por goteo", label: "Kit de riego para arbustos", unidad: "ud", precio: 66.77 },
+            { id: "rb_xcz075prf", categoria: "Riego por goteo", label: "Kit zona de control goteo 3/4\" 24V (electroválvula + filtro regulador)", unidad: "ud", precio: 63.58 },
+            { id: "rb_xcz100prf", categoria: "Riego por goteo", label: "Kit zona de control goteo 1\" 24V (electroválvula + filtro regulador)", unidad: "ud", precio: 62.51 },
+            { id: "rb_icz075tbos", categoria: "Riego por goteo", label: "Kit zona de control goteo 3/4\" 9V (electroválvula + filtro regulador)", unidad: "ud", precio: 84.12 },
+            { id: "rb_ixz100tbos", categoria: "Riego por goteo", label: "Kit zona de control goteo 1\" 9V (electroválvula + filtro regulador)", unidad: "ud", precio: 92.9 },
+            { id: "rb_1800retro", categoria: "Riego por goteo", label: "Kit de conversión a riego por goteo para difusores 1800", unidad: "ud", precio: 33.63 },
+            { id: "rb_lfv075", categoria: "Riego por goteo", label: "Electroválvula bajo caudal 3/4\" 24VCA DV goteo", unidad: "ud", precio: 43.41 },
+            { id: "rb_lfv0759v", categoria: "Riego por goteo", label: "Electroválvula bajo caudal 3/4\" 9V DV goteo (RB)", unidad: "ud", precio: 68.33 },
+            { id: "rb_psim15", categoria: "Riego por goteo", label: "Regulador de presión PSIM15 (1 bar)", unidad: "ud", precio: 19.25 },
+            { id: "rb_psim20", categoria: "Riego por goteo", label: "Regulador de presión PSIM20 (1,40 bares)", unidad: "ud", precio: 19.25 },
+            { id: "rb_psim25", categoria: "Riego por goteo", label: "Regulador de presión PSIM25 (1,75 bares)", unidad: "ud", precio: 19.25 },
+            { id: "rb_psim30", categoria: "Riego por goteo", label: "Regulador de presión PSIM30 (2,10 bares)", unidad: "ud", precio: 19.25 },
+            { id: "rb_prf075rby", categoria: "Riego por goteo", label: "Filtro regulador de presión 3/4\" RBY (75 micras)", unidad: "ud", precio: 34.34 },
+            { id: "rb_prf100rby", categoria: "Riego por goteo", label: "Filtro regulador de presión 1\" RBY (75 micras)", unidad: "ud", precio: 37.69 },
+            { id: "rb_rby200mx", categoria: "Riego por goteo", label: "Cartucho de malla de 75 micras (RBY)", unidad: "ud", precio: 15.5 },
+            { id: "rb_iprb100", categoria: "Riego por goteo", label: "Filtro regulador de presión de cesta 1\" (75 micras)", unidad: "ud", precio: 77.78 },
+            { id: "rb_ilcrby100s", categoria: "Riego por goteo", label: "Filtro de malla gran capacidad 1\" BSP (130 micras)", unidad: "ud", precio: 19.8 },
+            { id: "rb_ilcrby100d", categoria: "Riego por goteo", label: "Filtro de anillas gran capacidad 1\" BSP (130 micras)", unidad: "ud", precio: 30.97 },
+            { id: "rb_ilcrby150s", categoria: "Riego por goteo", label: "Filtro de malla gran capacidad 1 1/2\" BSP (130 micras)", unidad: "ud", precio: 58.92 },
+            { id: "rb_ilcrby150d", categoria: "Riego por goteo", label: "Filtro de anillas gran capacidad 1 1/2\" BSP (130 micras)", unidad: "ud", precio: 70.27 },
+            { id: "rb_ilcrby200s", categoria: "Riego por goteo", label: "Filtro de malla gran capacidad 2\" BSP (130 micras)", unidad: "ud", precio: 63.38 },
+            { id: "rb_ilcrby200d", categoria: "Riego por goteo", label: "Filtro de anillas gran capacidad 2\" BSP (130 micras)", unidad: "ud", precio: 83.16 },
+            { id: "rb_lgfc120ms", categoria: "Riego por goteo", label: "Cartucho de malla 130 micras filtro grande (1 1/2-2\")", unidad: "ud", precio: 21.91 },
+            { id: "rb_lgfc120md", categoria: "Riego por goteo", label: "Cartucho de anillas 130 micras filtro grande (1 1/2-2\")", unidad: "ud", precio: 49.57 },
+            { id: "rb_dbl100", categoria: "Riego por goteo", label: "Tubería lisa negra 16mm (sin goteros), rollo 100m", unidad: "rollo", precio: 111.78 },
+            { id: "rb_xfd1600", categoria: "Riego por goteo", label: "Tubería lisa XF marrón (sin goteros), rollo 100m", unidad: "rollo", precio: 136.66 },
+            { id: "rb_xfd1633100", categoria: "Riego por goteo", label: "Tubería goteo XF 1,6 l/h, goteros cada 33cm, rollo 100m", unidad: "rollo", precio: 178.38 },
+            { id: "rb_xfd233350", categoria: "Riego por goteo", label: "Tubería goteo XF 2,3 l/h, goteros cada 33cm, rollo 50m", unidad: "rollo", precio: 93.16 },
+            { id: "rb_xfd2333100", categoria: "Riego por goteo", label: "Tubería goteo XF 2,3 l/h, goteros cada 33cm, rollo 100m", unidad: "rollo", precio: 178.38 },
+            { id: "rb_xfd2350100", categoria: "Riego por goteo", label: "Tubería goteo XF 2,3 l/h, goteros cada 50cm, rollo 100m", unidad: "rollo", precio: 148.96 },
+            { id: "rb_xb05pc", categoria: "Riego por goteo", label: "Gotero XB05PC autocompensante 2 l/h - azul", unidad: "ud", precio: 0.41 },
+            { id: "rb_xb10pc", categoria: "Riego por goteo", label: "Gotero XB10PC autocompensante 4 l/h - negro", unidad: "ud", precio: 0.41 },
+            { id: "rb_xb20pc", categoria: "Riego por goteo", label: "Gotero XB20PC autocompensante 8 l/h - rojo", unidad: "ud", precio: 0.41 },
+            { id: "rb_xbcv05pc", categoria: "Riego por goteo", label: "Gotero XBCV05PC anti-drenaje 2 l/h - azul", unidad: "ud", precio: 0.52 },
+            { id: "rb_xbcv10pc", categoria: "Riego por goteo", label: "Gotero XBCV10PC anti-drenaje 4 l/h - negro", unidad: "ud", precio: 0.52 },
+            { id: "rb_xbcv20pc", categoria: "Riego por goteo", label: "Gotero XBCV20PC anti-drenaje 8 l/h - rojo", unidad: "ud", precio: 0.52 },
+            { id: "rb_pc12", categoria: "Riego por goteo", label: "Emisor PC12 caudal medio 45 l/h - marrón oscuro", unidad: "ud", precio: 2.62 },
+            { id: "rb_pc18", categoria: "Riego por goteo", label: "Emisor PC18 caudal medio 68 l/h - blanco", unidad: "ud", precio: 2.62 },
+            { id: "rb_pct05", categoria: "Riego por goteo", label: "Inundador bajo caudal PCT05 19 l/h", unidad: "ud", precio: 5.01 },
+            { id: "rb_pct07", categoria: "Riego por goteo", label: "Inundador bajo caudal PCT07 26 l/h", unidad: "ud", precio: 5.01 },
+            { id: "rb_pct10", categoria: "Riego por goteo", label: "Inundador bajo caudal PCT10 38 l/h", unidad: "ud", precio: 5.01 },
+            { id: "rb_xb106", categoria: "Riego por goteo", label: "Multigotero XB106 de 6 salidas, 4 l/h/salida", unidad: "ud", precio: 11.48 },
+            { id: "rb_emt6x", categoria: "Riego por goteo", label: "Colector de riego localizado 6 salidas, toma 1/2\" hembra", unidad: "ud", precio: 11.42 },
+            { id: "rb_xbd81", categoria: "Riego por goteo", label: "Dispositivo multisalida 8 goteros XB-10PC de 4 l/h", unidad: "ud", precio: 35.84 },
+            { id: "rb_sxb360spyk", categoria: "Riego por goteo", label: "Microdifusor 360° sobre estaca, 8 chorros, caudal regulable", unidad: "ud", precio: 1.31 },
+            { id: "rb_xs360tsspyk", categoria: "Riego por goteo", label: "Microdifusor 360° pulverizado sobre estaca, caudal regulable", unidad: "ud", precio: 1.77 },
+            { id: "rb_jetspike90", categoria: "Riego por goteo", label: "Microaspersor Jet Spike 90° sobre estaca", unidad: "ud", precio: 5.58 },
+            { id: "rb_jetspike180", categoria: "Riego por goteo", label: "Microaspersor Jet Spike 180° sobre estaca", unidad: "ud", precio: 5.58 },
+            { id: "rb_jetspike360", categoria: "Riego por goteo", label: "Microaspersor Jet Spike 360° sobre estaca", unidad: "ud", precio: 5.58 },
+            { id: "rb_xs90", categoria: "Riego por goteo", label: "Microdifusor XS 90°, caudal y alcance regulable", unidad: "ud", precio: 1.58 },
+            { id: "rb_xs180", categoria: "Riego por goteo", label: "Microdifusor XS 180°, caudal y alcance regulable", unidad: "ud", precio: 1.58 },
+            { id: "rb_xs360", categoria: "Riego por goteo", label: "Microdifusor XS 360°, caudal y alcance regulable", unidad: "ud", precio: 1.58 },
+            { id: "rb_bf1", categoria: "Riego por goteo", label: "Enlace recto estriado para microtubo 4-6mm", unidad: "ud", precio: 0.33 },
+            { id: "rb_bf2", categoria: "Riego por goteo", label: "Codo estriado para microtubo 4-6mm", unidad: "ud", precio: 0.46 },
+            { id: "rb_bf3", categoria: "Riego por goteo", label: "Te estriada para microtubo 4-6mm", unidad: "ud", precio: 0.45 },
+            { id: "rb_spb025", categoria: "Riego por goteo", label: "Enlace recto autopinchante de 16mm", unidad: "ud", precio: 1.02 },
+            { id: "rb_pfrrs", categoria: "Riego por goteo", label: "Conjunto elevador (30cm) y estaca para tubería", unidad: "ud", precio: 2.22 },
+            { id: "rb_xq100", categoria: "Riego por goteo", label: "Microtubo distribución 1/4\" 6mm, rollo 30m", unidad: "rollo", precio: 29.7 },
+            { id: "rb_xq1000", categoria: "Riego por goteo", label: "Microtubo distribución 1/4\" 6mm, rollo 300m", unidad: "rollo", precio: 217.53 },
+            { id: "rb_xq1000b", categoria: "Riego por goteo", label: "Cubo auto-dispensador microtubo 4-6mm, rollo 300m", unidad: "ud", precio: 255.87 },
+            { id: "rb_ts025", categoria: "Riego por goteo", label: "Estaca para microtubo de 6mm", unidad: "ud", precio: 1.12 },
+            { id: "rb_dbc025", categoria: "Riego por goteo", label: "Tapa difusora de gotero", unidad: "ud", precio: 1.01 },
+            { id: "rb_pcdiffuser", categoria: "Riego por goteo", label: "Tapón difusor con compensación de presión", unidad: "ud", precio: 2.35 },
+            { id: "rb_arv050", categoria: "Riego por goteo", label: "Válvula de ventosa 1/2\"", unidad: "ud", precio: 25.2 },
+            { id: "rb_bf12lock", categoria: "Riego por goteo", label: "Enlace recto acople rápido tubería XF 16mm (BF12 lock)", unidad: "ud", precio: 1.41 },
+            { id: "rb_bf22lock", categoria: "Riego por goteo", label: "Codo acople rápido tubería XF 16mm (BF22 lock)", unidad: "ud", precio: 2.18 },
+            { id: "rb_bf32lock", categoria: "Riego por goteo", label: "Te acople rápido tubería XF 16mm (BF32 lock)", unidad: "ud", precio: 2.81 },
+            { id: "rb_bf8250lock", categoria: "Riego por goteo", label: "Enlace recto roscado XF x rosca macho 1/2\" (BF8250 lock)", unidad: "ud", precio: 0.96 },
+            { id: "rb_bf6250lock", categoria: "Riego por goteo", label: "Enlace recto roscado XF x rosca hembra 1/2\" (BF6250 lock)", unidad: "ud", precio: 2.32 },
+            { id: "rb_bf8275lock", categoria: "Riego por goteo", label: "Enlace recto roscado XF x rosca macho 3/4\" (BF8275 lock)", unidad: "ud", precio: 0.9 },
+            { id: "rb_bf6275lock", categoria: "Riego por goteo", label: "Enlace recto roscado XF x rosca hembra 3/4\" (BF6275 lock)", unidad: "ud", precio: 2.32 },
+            { id: "rb_bf92lock", categoria: "Riego por goteo", label: "Válvula manual salidas roscadas para tubería XF (BF92 lock)", unidad: "ud", precio: 3.32 },
+            { id: "rb_bfpluglock", categoria: "Riego por goteo", label: "Tapón final roscado para tubería XF (BFplug lock)", unidad: "ud", precio: 1.09 },
+            { id: "rb_bfvalvelock", categoria: "Riego por goteo", label: "Válvula manual conexión rosca macho 3/4\" XF (BFvalve lock)", unidad: "ud", precio: 2.81 },
+            { id: "rb_xffcoup", categoria: "Riego por goteo", label: "Enlace recto estriado 17mm (XFF)", unidad: "ud", precio: 0.58 },
+            { id: "rb_xffelbow", categoria: "Riego por goteo", label: "Codo estriado 17mm (XFF)", unidad: "ud", precio: 0.87 },
+            { id: "rb_xfftee", categoria: "Riego por goteo", label: "Te estriada 17mm (XFF)", unidad: "ud", precio: 1.05 },
+            { id: "rb_xffma050", categoria: "Riego por goteo", label: "Conexión recta estriada 17mm x rosca macho 1/2\"", unidad: "ud", precio: 0.92 },
+            { id: "rb_xffma075", categoria: "Riego por goteo", label: "Conexión recta estriada 17mm x rosca macho 3/4\"", unidad: "ud", precio: 1.02 },
+            { id: "rb_xfftma050", categoria: "Riego por goteo", label: "Te estriada 17mm x rosca macho 1/2\"", unidad: "ud", precio: 1.41 },
+            { id: "rb_fitinstool", categoria: "Riego por goteo", label: "Herramienta de inserción de accesorios XFF", unidad: "ud", precio: 7.26 },
+            { id: "rb_clamp", categoria: "Riego por goteo", label: "Abrazadera para tubería de 16mm", unidad: "ud", precio: 0.52 },
+            { id: "rb_c12", categoria: "Riego por goteo", label: "Estaca para tubería de 16mm", unidad: "ud", precio: 0.64 },
+            { id: "rb_700cf22", categoria: "Riego por goteo", label: "Tapón final de tubería de 16mm", unidad: "ud", precio: 0.41 },
+            { id: "rb_emagpx", categoria: "Riego por goteo", label: "Tapón para agujeros en tubería", unidad: "ud", precio: 0.29 },
+            { id: "rb_xmtool", categoria: "Riego por goteo", label: "Herramienta de instalación de goteros autopinchantes", unidad: "ud", precio: 7.56 },
+            { id: "rb_ppc200x", categoria: "Riego por goteo", label: "Cortatubos", unidad: "ud", precio: 64.64 },
+            { id: "rb_us408he", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 8-HE-VAN instalada", unidad: "ud", precio: 6.13 },
+            { id: "rb_us410he", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 10-HE-VAN instalada", unidad: "ud", precio: 6.13 },
+            { id: "rb_us412he", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 12-HE-VAN instalada", unidad: "ud", precio: 6.13 },
+            { id: "rb_us415he", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 15-HE-VAN instalada", unidad: "ud", precio: 6.13 },
+            { id: "rb_us410", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 10 VAN instalada", unidad: "ud", precio: 5.58 },
+            { id: "rb_us412", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 12 VAN instalada", unidad: "ud", precio: 5.58 },
+            { id: "rb_us415", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 15 VAN instalada", unidad: "ud", precio: 5.58 },
+            { id: "rb_us418", categoria: "Difusores y toberas", label: "Uni-Spray 10cm con tobera 18 VAN instalada", unidad: "ud", precio: 5.58 },
+            { id: "rb_us400", categoria: "Difusores y toberas", label: "Uni-Spray 10cm cuerpo sin tobera", unidad: "ud", precio: 3.27 },
+            { id: "rb_1802", categoria: "Difusores y toberas", label: "Difusor 1802 - 5cm", unidad: "ud", precio: 5.0 },
+            { id: "rb_1804", categoria: "Difusores y toberas", label: "Difusor 1804 - 10cm", unidad: "ud", precio: 4.47 },
+            { id: "rb_1806", categoria: "Difusores y toberas", label: "Difusor 1806 - 15cm", unidad: "ud", precio: 14.74 },
+            { id: "rb_1812", categoria: "Difusores y toberas", label: "Difusor 1812 - 30cm", unidad: "ud", precio: 23.24 },
+            { id: "rb_1802prs", categoria: "Difusores y toberas", label: "Difusor 1802 PRS (regulador presión) - 5cm", unidad: "ud", precio: 14.27 },
+            { id: "rb_1803prs", categoria: "Difusores y toberas", label: "Difusor 1803 PRS (regulador presión) - 8cm", unidad: "ud", precio: 14.27 },
+            { id: "rb_1804sam", categoria: "Difusores y toberas", label: "Difusor 1804 SAM (antidrenaje) - 10cm", unidad: "ud", precio: 9.18 },
+            { id: "rb_1806sam", categoria: "Difusores y toberas", label: "Difusor 1806 SAM (antidrenaje) - 15cm", unidad: "ud", precio: 22.5 },
+            { id: "rb_1812sam", categoria: "Difusores y toberas", label: "Difusor 1812 SAM (antidrenaje) - 30cm", unidad: "ud", precio: 27.6 },
+            { id: "rb_1804samprs", categoria: "Difusores y toberas", label: "Difusor 1804 SAM PRS 2.1bar - 10cm", unidad: "ud", precio: 16.32 },
+            { id: "rb_1804samp45", categoria: "Difusores y toberas", label: "Difusor 1804 SAM PRS 3.1bar - 10cm", unidad: "ud", precio: 16.32 },
+            { id: "rb_mpr_5F", categoria: "Difusores y toberas", label: "Tobera MPR 5F - 360° roja", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_5H", categoria: "Difusores y toberas", label: "Tobera MPR 5H - 180° roja", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_5Q", categoria: "Difusores y toberas", label: "Tobera MPR 5Q - 90° roja", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_8F", categoria: "Difusores y toberas", label: "Tobera MPR 8F - 360° verde", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_8H", categoria: "Difusores y toberas", label: "Tobera MPR 8H - 180° verde", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_8Q", categoria: "Difusores y toberas", label: "Tobera MPR 8Q - 90° verde", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_10F", categoria: "Difusores y toberas", label: "Tobera MPR 10F - 360° azul", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_10H", categoria: "Difusores y toberas", label: "Tobera MPR 10H - 180° azul", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_10Q", categoria: "Difusores y toberas", label: "Tobera MPR 10Q - 90° azul", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_12F", categoria: "Difusores y toberas", label: "Tobera MPR 12F - 360° marrón", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_12H", categoria: "Difusores y toberas", label: "Tobera MPR 12H - 180° marrón", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_12Q", categoria: "Difusores y toberas", label: "Tobera MPR 12Q - 90° marrón", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15F", categoria: "Difusores y toberas", label: "Tobera MPR 15F - 360° negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15H", categoria: "Difusores y toberas", label: "Tobera MPR 15H - 180° negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15Q", categoria: "Difusores y toberas", label: "Tobera MPR 15Q - 90° negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15CST", categoria: "Difusores y toberas", label: "Tobera MPR 15CST - franja central negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15EST", categoria: "Difusores y toberas", label: "Tobera MPR 15EST - franja final negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15SST", categoria: "Difusores y toberas", label: "Tobera MPR 15SST - franja lateral negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15LCS", categoria: "Difusores y toberas", label: "Tobera MPR 15LCS - esquina izq. negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_15RCS", categoria: "Difusores y toberas", label: "Tobera MPR 15RCS - esquina der. negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_mpr_9SST", categoria: "Difusores y toberas", label: "Tobera MPR 9SST - lateral negra", unidad: "ud", precio: 3.48 },
+            { id: "rb_van_4VAN", categoria: "Difusores y toberas", label: "Tobera ajustable VAN tamaño 4VAN", unidad: "ud", precio: 3.15 },
+            { id: "rb_van_6VAN", categoria: "Difusores y toberas", label: "Tobera ajustable VAN tamaño 6VAN", unidad: "ud", precio: 3.15 },
+            { id: "rb_van_18VAN", categoria: "Difusores y toberas", label: "Tobera ajustable VAN tamaño 18VAN", unidad: "ud", precio: 3.15 },
+            { id: "rb_hevan_HEVAN08", categoria: "Difusores y toberas", label: "Tobera ajustable alta eficiencia HEVAN08", unidad: "ud", precio: 3.07 },
+            { id: "rb_hevan_HEVAN10", categoria: "Difusores y toberas", label: "Tobera ajustable alta eficiencia HEVAN10", unidad: "ud", precio: 3.07 },
+            { id: "rb_hevan_HEVAN12", categoria: "Difusores y toberas", label: "Tobera ajustable alta eficiencia HEVAN12", unidad: "ud", precio: 3.07 },
+            { id: "rb_hevan_HEVAN15", categoria: "Difusores y toberas", label: "Tobera ajustable alta eficiencia HEVAN15", unidad: "ud", precio: 3.07 },
+            { id: "rb_useries_U8F", categoria: "Difusores y toberas", label: "Tobera serie U U8F (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U8H", categoria: "Difusores y toberas", label: "Tobera serie U U8H (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U8Q", categoria: "Difusores y toberas", label: "Tobera serie U U8Q (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U10F", categoria: "Difusores y toberas", label: "Tobera serie U U10F (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U10H", categoria: "Difusores y toberas", label: "Tobera serie U U10H (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U10Q", categoria: "Difusores y toberas", label: "Tobera serie U U10Q (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U12F", categoria: "Difusores y toberas", label: "Tobera serie U U12F (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U12H", categoria: "Difusores y toberas", label: "Tobera serie U U12H (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U12Q", categoria: "Difusores y toberas", label: "Tobera serie U U12Q (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U15F", categoria: "Difusores y toberas", label: "Tobera serie U U15F (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U15H", categoria: "Difusores y toberas", label: "Tobera serie U U15H (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_useries_U15Q", categoria: "Difusores y toberas", label: "Tobera serie U U15Q (doble orificio)", unidad: "ud", precio: 5.53 },
+            { id: "rb_3504pc", categoria: "Aspersores emergentes", label: "Aspersor 3504-PC 1/2\" sectorial/círculo completo, tobera 2.0", unidad: "ud", precio: 21.78 },
+            { id: "rb_3504pcsam", categoria: "Aspersores emergentes", label: "Aspersor 3504-PC-SAM 1/2\" con válvula SAM", unidad: "ud", precio: 32.77 },
+            { id: "rb_5004pc30", categoria: "Aspersores emergentes", label: "Aspersor 5004-PC 3/4\" sectorial/círculo, tobera 3.0", unidad: "ud", precio: 23.21 },
+            { id: "rb_5004pcsam", categoria: "Aspersores emergentes", label: "Aspersor 5004-PC-SAM 3/4\" con válvula SAM", unidad: "ud", precio: 27.83 },
+            { id: "rb_5004pcr", categoria: "Aspersores emergentes", label: "Aspersor 5004-PC-R 3/4\" con regulador de presión PRS", unidad: "ud", precio: 32.34 },
+            { id: "rb_5004pluspc30", categoria: "Aspersores emergentes", label: "Aspersor 5004-PLUS-PC sectorial/círculo, tobera 3.0", unidad: "ud", precio: 29.44 },
+            { id: "rb_5004plusfc", categoria: "Aspersores emergentes", label: "Aspersor 5004-PLUS-FC círculo completo", unidad: "ud", precio: 29.44 },
+            { id: "rb_5004pluspcsam", categoria: "Aspersores emergentes", label: "Aspersor 5004-PLUS-PC-SAM con válvula SAM", unidad: "ud", precio: 37.17 },
+            { id: "rb_5004pluspcsamr", categoria: "Aspersores emergentes", label: "Aspersor 5004-PLUS-PC-SAM-R con PRS y SAM", unidad: "ud", precio: 44.18 },
+            { id: "rb_5004pluspcsamrss", categoria: "Aspersores emergentes", label: "Aspersor 5004-PLUS-PC-SAM-R-SS vástago inox, PRS 3.1bar", unidad: "ud", precio: 49.78 },
+            { id: "rb_100hv", categoria: "Electroválvulas", label: "Electroválvula HV 1\" 24VCA", unidad: "ud", precio: 29.51 },
+            { id: "rb_100hvf", categoria: "Electroválvulas", label: "Electroválvula HV 1\" con control de caudal, 24VCA", unidad: "ud", precio: 34.38 },
+            { id: "rb_100hvbsp9v", categoria: "Electroválvulas", label: "Electroválvula HV 1\" solenoide 9V", unidad: "ud", precio: 54.66 },
+            { id: "rb_075dv", categoria: "Electroválvulas", label: "Electroválvula 075DV 3/4\" 24VCA", unidad: "ud", precio: 40.26 },
+            { id: "rb_100dv", categoria: "Electroválvulas", label: "Electroválvula 100DV 1\" solenoide 24VCA", unidad: "ud", precio: 38.43 },
+            { id: "rb_100dvftbos", categoria: "Electroválvulas", label: "Electroválvula 100DV 1\" control de caudal, 9V", unidad: "ud", precio: 62.81 },
+            { id: "rb_100dvf", categoria: "Electroválvulas", label: "Electroválvula 100DV 1\" control de caudal, 24VCA", unidad: "ud", precio: 48.87 },
+            { id: "rb_100pga", categoria: "Electroválvulas", label: "Electroválvula 100PGA 1\" 24VCA", unidad: "ud", precio: 80.36 },
+            { id: "rb_100pga9v", categoria: "Electroválvulas", label: "Electroválvula 100PGA 1\" 9V", unidad: "ud", precio: 118.4 },
+            { id: "rb_150pga", categoria: "Electroválvulas", label: "Electroválvula 150PGA 1 1/2\" 24VCA", unidad: "ud", precio: 117.61 },
+            { id: "rb_150pga9v", categoria: "Electroválvulas", label: "Electroválvula 150PGA 1 1/2\" 9V", unidad: "ud", precio: 166.82 },
+            { id: "rb_200pga", categoria: "Electroválvulas", label: "Electroválvula 200PGA 2\" 24VCA", unidad: "ud", precio: 165.47 },
+            { id: "rb_200pga9v", categoria: "Electroválvulas", label: "Electroválvula 200PGA 2\" 9V", unidad: "ud", precio: 208.19 },
+            { id: "rb_100peb", categoria: "Electroválvulas", label: "Electroválvula 100PEB 1\" 24VCA", unidad: "ud", precio: 117.42 },
+            { id: "rb_150peb", categoria: "Electroválvulas", label: "Electroválvula 150PEB 1 1/2\" 24VCA", unidad: "ud", precio: 156.33 },
+            { id: "rb_200peb", categoria: "Electroválvulas", label: "Electroválvula 200PEB 2\" 24VCA", unidad: "ud", precio: 231.18 },
+            { id: "rb_100pesb", categoria: "Electroválvulas", label: "Electroválvula 100PESB 1\" 24VCA con dispositivo limpiador", unidad: "ud", precio: 246.67 },
+            { id: "rb_150pesb", categoria: "Electroválvulas", label: "Electroválvula 150PESB 1 1/2\" 24VCA con dispositivo limpiador", unidad: "ud", precio: 301.65 },
+            { id: "rb_200pesb", categoria: "Electroválvulas", label: "Electroválvula 200PESB 2\" 24VCA con dispositivo limpiador", unidad: "ud", precio: 378.35 },
+            { id: "rb_vba17186", categoria: "Arquetas", label: "Arqueta redonda con hidrante manguera, válvula macho 3/4\"", unidad: "ud", precio: 47.32 },
+            { id: "rb_vba02672", categoria: "Arquetas", label: "Arqueta negra redonda tapa verde encajada Ø20xØ16x24cm", unidad: "ud", precio: 10.08 },
+            { id: "rb_vba02673", categoria: "Arquetas", label: "Arqueta negra redonda cierre bayoneta Ø33,5x24x25,5cm", unidad: "ud", precio: 21.42 },
+            { id: "rb_vba02674", categoria: "Arquetas", label: "Arqueta negra rectangular tapa verde y tornillo 50,5x37x30,5cm", unidad: "ud", precio: 50.35 },
+            { id: "rb_vba02675", categoria: "Arquetas", label: "Arqueta negra rectangular tapa verde y tornillo 63x48x30,5cm", unidad: "ud", precio: 80.4 },
+            { id: "rb_vba02676", categoria: "Arquetas", label: "Extensión arqueta VBA02674 sin tapa 39,5x27x18cm", unidad: "ud", precio: 27.8 },
+            { id: "rb_vba07777", categoria: "Arquetas", label: "Extensión arqueta VBA02675 sin tapa 55x38x19cm", unidad: "ud", precio: 38.05 },
+            { id: "rb_vba02674c", categoria: "Arquetas", label: "Tapa para arqueta VBA02674", unidad: "ud", precio: 22.86 },
+            { id: "rb_vba02675c", categoria: "Arquetas", label: "Tapa para arqueta VBA02675", unidad: "ud", precio: 31.81 },
+            { id: "rb_vb7rnd", categoria: "Arquetas", label: "Arqueta HDPE redonda 7\" cuerpo negro tapa verde", unidad: "ud", precio: 33.3 },
+            { id: "rb_vb10rndh", categoria: "Arquetas", label: "Arqueta HDPE redonda 10\" con cierre tornillo hexagonal", unidad: "ud", precio: 47.96 },
+            { id: "rb_vbstdh", categoria: "Arquetas", label: "Arqueta HDPE rectangular Estándar con cierre 59x49x30,7cm", unidad: "ud", precio: 86.98 },
+            { id: "rb_vbjmbh", categoria: "Arquetas", label: "Arqueta HDPE rectangular Jumbo con cierre 70,1x53,3x30,7cm", unidad: "ud", precio: 133.95 },
+            { id: "rb_vbsprh", categoria: "Arquetas", label: "Arqueta HDPE Super Jumbo con cierre 84,1x60,6x45,7cm", unidad: "ud", precio: 468.91 },
+            { id: "rb_vbmaxh", categoria: "Arquetas", label: "Arqueta HDPE Maxi Jumbo con cierre, 18 lengüetas", unidad: "ud", precio: 844.36 },
+            { id: "rb_vbstd6extb", categoria: "Arquetas", label: "Extensión arqueta HDPE Estándar 6\" sin tapa 50,8x37,5x17,1cm", unidad: "ud", precio: 67.19 },
+            { id: "rb_vbjmb6extb", categoria: "Arquetas", label: "Extensión arqueta HDPE Jumbo 6\" sin tapa 62x45,5x17,1cm", unidad: "ud", precio: 99.26 },
+            { id: "rb_vb10rndl", categoria: "Arquetas", label: "Tapa para arqueta VB-10RND", unidad: "ud", precio: 31.24 },
+            { id: "rb_vbstdl", categoria: "Arquetas", label: "Tapa para arqueta VB-STD HDPE", unidad: "ud", precio: 44.67 },
+            { id: "rb_vbjmbl", categoria: "Arquetas", label: "Tapa para arqueta VB-JMB HDPE", unidad: "ud", precio: 78.66 },
+            { id: "rb_dbm10", categoria: "Eléctrico riego", label: "Conector estanco máx. 3 cables 1,5mm² (600V)", unidad: "ud", precio: 2.67 },
+            { id: "rb_wpsk20", categoria: "Eléctrico riego", label: "Conector estanco máx. 3 cables 4mm² (600V)", unidad: "ud", precio: 5.11 },
+            { id: "rb_irricable375", categoria: "Eléctrico riego", label: "Cable 3 conductores de colores, 75m", unidad: "rollo", precio: 139.26 },
+            { id: "rb_irricable3150", categoria: "Eléctrico riego", label: "Cable 3 conductores de colores, 150m", unidad: "rollo", precio: 278.5 },
+            { id: "rb_irricable575", categoria: "Eléctrico riego", label: "Cable 5 conductores de colores, 75m", unidad: "rollo", precio: 215.5 },
+            { id: "rb_irricable5150", categoria: "Eléctrico riego", label: "Cable 5 conductores de colores, 150m", unidad: "rollo", precio: 431.0 },
+            { id: "rb_irricable775", categoria: "Eléctrico riego", label: "Cable 7 conductores de colores, 75m", unidad: "rollo", precio: 293.21 },
+            { id: "rb_irricable7150", categoria: "Eléctrico riego", label: "Cable 7 conductores de colores, 150m", unidad: "rollo", precio: 586.44 },
+            { id: "rb_irricable975", categoria: "Eléctrico riego", label: "Cable 9 conductores de colores, 75m", unidad: "rollo", precio: 376.78 },
+            { id: "rb_irricable1375", categoria: "Eléctrico riego", label: "Cable 13 conductores de colores, 75m", unidad: "rollo", precio: 511.84 },
+            { id: "rb_si115", categoria: "Eléctrico riego", label: "Cable 1x1,5mm² recubrimiento PE, rollo 500m", unidad: "rollo", precio: 535.84 },
+            { id: "rb_di115", categoria: "Eléctrico riego", label: "Cable 1x1,5mm² doble recubrimiento PVC-PE, rollo 500m", unidad: "rollo", precio: 604.25 },
+            { id: "rb_rzxi230xfm", categoria: "Eléctrico riego", label: "Transformador 24V indoor", unidad: "ud", precio: 85.42 },
+            { id: "rb_wirestripper", categoria: "Eléctrico riego", label: "Herramienta para pelar cables", unidad: "ud", precio: 66.11 },
+            { id: "rb_rpkhvsola2", categoria: "Eléctrico riego", label: "Repuesto: solenoide HV 24V", unidad: "ud", precio: 22.29 },
+            { id: "rb_rpksolenoi", categoria: "Eléctrico riego", label: "Repuesto: solenoide DV/DVF/JTV 24V", unidad: "ud", precio: 31.69 },
+            { id: "rb_solassg4", categoria: "Eléctrico riego", label: "Repuesto: solenoide G4 24V (PGA, PEB, BPES)", unidad: "ud", precio: 73.29 },
+            { id: "rb_solassg5", categoria: "Eléctrico riego", label: "Repuesto: solenoide G5 (HV, DV, PGA, PEB, BPES)", unidad: "ud", precio: 78.06 },
+            { id: "rb_k80920", categoria: "Eléctrico riego", label: "Repuesto: solenoide compacto 9V (DV, JTV, PGA, PEB, PESB, BPE)", unidad: "ud", precio: 60.68 },
+            { id: "rb_screwpeb", categoria: "Eléctrico riego", label: "Repuesto: tornillo purgado externo 150/200 PE/PEB", unidad: "ud", precio: 18.03 },
+            { id: "rb_rpkdiaphre", categoria: "Eléctrico riego", label: "Repuesto: kit membrana 075/100-DV/DVF", unidad: "ud", precio: 37.66 },
+            { id: "rb_diaph100pg", categoria: "Eléctrico riego", label: "Repuesto: kit membrana 100-PGA", unidad: "ud", precio: 51.09 },
+            { id: "rb_diaph150pg", categoria: "Eléctrico riego", label: "Repuesto: kit membrana 150-PGA", unidad: "ud", precio: 59.54 },
+            { id: "rb_diaph200pg", categoria: "Eléctrico riego", label: "Repuesto: kit membrana 200-PGA", unidad: "ud", precio: 71.89 },
+            { id: "rb_dias1peprs", categoria: "Eléctrico riego", label: "Repuesto: kit membrana 100-PE/PEB", unidad: "ud", precio: 113.25 },
+            { id: "rb_150pedibo", categoria: "Eléctrico riego", label: "Repuesto: membrana y tapa para 150PEB", unidad: "ud", precio: 148.39 },
+            { id: "rb_15pesbdibo", categoria: "Eléctrico riego", label: "Repuesto: membrana y tapa para 150PESB", unidad: "ud", precio: 262.91 },
+            { id: "rb_20pebdibo", categoria: "Eléctrico riego", label: "Repuesto: membrana y tapa para 200PEB", unidad: "ud", precio: 171.42 },
+            { id: "rb_20pesbdibo", categoria: "Eléctrico riego", label: "Repuesto: membrana y tapa para 200PESB", unidad: "ud", precio: 320.3 },
+            { id: "rb_p33", categoria: "Bocas de riego", label: "Válvula conexión rápida plástico, rosca macho 3/4\"", unidad: "ud", precio: 28.25 },
+            { id: "rb_p33dk", categoria: "Bocas de riego", label: "Llave para válvula P-33 rosca macho 3/4\"", unidad: "ud", precio: 5.92 },
+            { id: "rb_5lrcbsp", categoria: "Bocas de riego", label: "Boca de riego bronce con tapa termoplástico y cerradura 1\" BSP", unidad: "ud", precio: 283.4 },
+            { id: "rb_2049", categoria: "Bocas de riego", label: "Llave para cerradura boca de riego 5LRC y tapa arqueta", unidad: "ud", precio: 39.02 },
+            { id: "rb_55k1bsp", categoria: "Bocas de riego", label: "Llave para boca de riego 5LRC-BSP 1\" BSP macho", unidad: "ud", precio: 250.35 },
+            { id: "rb_sh2bsp", categoria: "Bocas de riego", label: "Codo giratorio bronce para llave 55K-1 1\" hembra x 1\" macho", unidad: "ud", precio: 339.51 },
+            { id: "rb_prsdial", categoria: "Bocas de riego", label: "Regulador de presión para PGA, PEB, PESB, BPE, BPES", unidad: "ud", precio: 146.0 },
+            { id: "rb_mtt100", categoria: "Bocas de riego", label: "Te de derivación para válvulas 1\"x1\"x1\" BSP", unidad: "ud", precio: 4.8 },
+            { id: "rb_tbosadapp", categoria: "Bocas de riego", label: "Adaptador de solenoide TBOS", unidad: "ud", precio: 12.01 },
+            { id: "rb_rb1201010", categoria: "Bocas de riego", label: "Colector PVC unión en Te 1\"H x 1\"M, salida 1\"H", unidad: "ud", precio: 13.94 },
+            { id: "rb_rb1201210", categoria: "Bocas de riego", label: "Colector PVC 2 salidas 1\"H x 1\"M", unidad: "ud", precio: 26.6 },
+            { id: "rb_rb1201310", categoria: "Bocas de riego", label: "Colector PVC 3 salidas 1\"H x 1\"M", unidad: "ud", precio: 39.74 },
+            { id: "rb_rb1201410", categoria: "Bocas de riego", label: "Colector PVC 4 salidas 1\"H x 1\"M", unidad: "ud", precio: 48.17 },
+            { id: "rb_rb1206010", categoria: "Bocas de riego", label: "Colector PVC unión en codo 1\"M x 1\"H", unidad: "ud", precio: 11.59 },
+            { id: "rb_rb1212010", categoria: "Bocas de riego", label: "Colector PVC unión en codo 1\"H x 1\"H", unidad: "ud", precio: 13.1 },
+            { id: "rb_rb1234010", categoria: "Bocas de riego", label: "Colector PVC euro adaptador 1\"", unidad: "ud", precio: 8.76 },
+            { id: "rb_rb1203010", categoria: "Bocas de riego", label: "Colector PVC te doble giratoria 1\", 2 salidas opuestas 1\"H", unidad: "ud", precio: 19.49 },
+            { id: "rb_rb1220010", categoria: "Bocas de riego", label: "Colector PVC unión en cruz 1\"H x 1\"M, 2 salidas opuestas", unidad: "ud", precio: 18.37 },
+            { id: "rb_rb1239131", categoria: "Bocas de riego", label: "Colector PVC adaptador 1\"M x 3/4\"H", unidad: "ud", precio: 3.88 },
+            { id: "rb_rb1282010", categoria: "Bocas de riego", label: "Colector PVC adaptador 1\"M x 1\"M", unidad: "ud", precio: 3.64 },
+            { id: "rb_rb1282131", categoria: "Bocas de riego", label: "Colector PVC adaptador 1\"M x 3/4\"M", unidad: "ud", precio: 3.86 },
+            { id: "rb_rb1301010", categoria: "Bocas de riego", label: "Colector PVC unión en Te 1\"H x 1\"M, salida 1\"M", unidad: "ud", precio: 14.75 },
+            { id: "rb_rb1301210", categoria: "Bocas de riego", label: "Colector PVC 2 salidas 1\"H x 1\"M (macho)", unidad: "ud", precio: 28.01 },
+            { id: "rb_rb1301310", categoria: "Bocas de riego", label: "Colector PVC 3 salidas 1\"H x 1\"M (macho)", unidad: "ud", precio: 41.97 },
+            { id: "rb_rb1301410", categoria: "Bocas de riego", label: "Colector PVC 4 salidas 1\"H x 1\"M (macho)", unidad: "ud", precio: 55.9 },
+            { id: "rb_rb1306010", categoria: "Bocas de riego", label: "Colector PVC unión en codo 1\"M x 1\"M", unidad: "ud", precio: 11.12 },
+            { id: "rb_rb1312010", categoria: "Bocas de riego", label: "Colector PVC unión en codo 1\"M x 1\"H", unidad: "ud", precio: 12.88 },
+            { id: "rb_rb1303010", categoria: "Bocas de riego", label: "Colector PVC te doble giratoria 1\", 2 salidas opuestas 1\"M", unidad: "ud", precio: 19.35 },
+            { id: "rb_rb1320010", categoria: "Bocas de riego", label: "Colector PVC unión en cruz 1\"H x 1\"M, 2 salidas opuestas M", unidad: "ud", precio: 18.15 },
+            { id: "rb_rb1330010", categoria: "Bocas de riego", label: "Colector PVC unión 1\"H x 1\"H", unidad: "ud", precio: 3.3 },
+            { id: "rb_rb1330131", categoria: "Bocas de riego", label: "Colector PVC unión 1\"H x 3/4\"H", unidad: "ud", precio: 3.3 },
+            { id: "rb_rb1348010", categoria: "Bocas de riego", label: "Colector PVC tapón 1\"H", unidad: "ud", precio: 3.37 },
+            { id: "rb_1zehtmr", categoria: "Programadores", label: "Programador de grifo 1ZEHTMR", unidad: "ud", precio: 57.81 },
+            { id: "rb_ht2bsp", categoria: "Programadores", label: "Programador de grifo HT2-BSP premium, conexión manguera latón", unidad: "ud", precio: 70.21 },
+            { id: "rb_tm2i4230", categoria: "Programadores", label: "ESP-TM2 interior, 4 estaciones, compatible WiFi", unidad: "ud", precio: 171.37 },
+            { id: "rb_tm2i8230", categoria: "Programadores", label: "ESP-TM2 interior, 8 estaciones, compatible WiFi", unidad: "ud", precio: 222.88 },
+            { id: "rb_tm2i12230", categoria: "Programadores", label: "ESP-TM2 interior, 12 estaciones, compatible WiFi", unidad: "ud", precio: 267.47 },
+            { id: "rb_tm24230", categoria: "Programadores", label: "ESP-TM2 exterior, 4 estaciones, compatible LNK WiFi", unidad: "ud", precio: 236.94 },
+            { id: "rb_tm28s230v", categoria: "Programadores", label: "ESP-TM2 exterior, 8 estaciones, compatible LNK WiFi", unidad: "ud", precio: 332.24 },
+            { id: "rb_tm212s230", categoria: "Programadores", label: "ESP-TM2 exterior, 12 estaciones, compatible LNK WiFi", unidad: "ud", precio: 479.86 },
+            { id: "rb_esp4me3eur", categoria: "Programadores", label: "ESP-ME3 modular, 4 estaciones ampliable a 22, LNK WiFi", unidad: "ud", precio: 376.1 },
+            { id: "rb_espsm3", categoria: "Programadores", label: "Módulo de ampliación de 3 estaciones para ESP-Me", unidad: "ud", precio: 71.21 },
+            { id: "rb_espsm6", categoria: "Programadores", label: "Módulo de ampliación de 6 estaciones para ESP-Me", unidad: "ud", precio: 128.06 },
+            { id: "rb_lnk2wifi", categoria: "Programadores", label: "Módulo WiFi LNK2 (para RZX, TM-2, ESP-Me)", unidad: "ud", precio: 221.01 },
+        ],
         settings: { costeHora: 14, nombreEmpresa: "Belardi Jardinería", emailEmpresa: "belardijardin@gmail.com", telefonoEmpresa: "660 42 22 82 / 606 10 11 27", webEmpresa: "www.belardijardineria.es", cifEmpresa: "B71216774", adminPin1: "1111", adminPin2: "2222", adminNombre1: "Rafa", adminNombre2: "Gonzalo", vacacionesAnuales: 22, almuerzoEstandarMin: 15 },
     };
 }
@@ -13299,15 +13835,16 @@ function App() {
           .gj-no-print{ display:none !important; }
           .gj{ background:#fff; padding-bottom:0; }
           .gj-main{ max-width:100%; padding:0; }
+          @page{ margin: 2.2cm 1.8cm; }
         }
       `),
         deviceWorkerId === undefined ? (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 8 } },
             React.createElement(Loader2, { size: 18, className: "gj-spin" }),
-            React.createElement("span", { style: { fontFamily: "var(--font-body)", color: "var(--ink-soft)" } }, "Comprobando dispositivo..."))) : deviceWorkerId === null ? (React.createElement(DeviceSetupView, { workers: data.workers.filter(w => w.activo !== false), onSelect: asignarDispositivo, onSkip: () => asignarDispositivo("__admin__"), nombreEmpresa: data.settings.nombreEmpresa, logo: LOGO_B64 })) : consentGiven === undefined ? (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 8 } },
+            React.createElement("span", { style: { fontFamily: "var(--font-body)", color: "var(--ink-soft)" } }, "Comprobando dispositivo..."))) : deviceWorkerId === null ? (React.createElement(DeviceSetupView, { workers: data.workers.filter(w => w.activo !== false), onSelect: asignarDispositivo, onSkip: () => asignarDispositivo("__admin__"), nombreEmpresa: data.settings.nombreEmpresa, logo: LOGO_FULL_B64 })) : consentGiven === undefined ? (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 8 } },
             React.createElement(Loader2, { size: 18, className: "gj-spin" }),
-            React.createElement("span", { style: { fontFamily: "var(--font-body)", color: "var(--ink-soft)" } }, "Cargando..."))) : consentGiven !== true ? (React.createElement(ConsentView, { onAceptar: aceptarConsentimiento, nombreEmpresa: data.settings.nombreEmpresa, logo: LOGO_B64, esTrabajador: deviceWorkerId !== "__admin__" })) : (React.createElement(React.Fragment, null,
+            React.createElement("span", { style: { fontFamily: "var(--font-body)", color: "var(--ink-soft)" } }, "Cargando..."))) : consentGiven !== true ? (React.createElement(ConsentView, { onAceptar: aceptarConsentimiento, nombreEmpresa: data.settings.nombreEmpresa, logo: LOGO_FULL_B64, esTrabajador: deviceWorkerId !== "__admin__" })) : (React.createElement(React.Fragment, null,
             React.createElement("div", { className: "gj-header gj-no-print" },
-                React.createElement("img", { src: `data:image/png;base64,${LOGO_B64}`, alt: "Belardi", style: { width: 32, height: 32, flexShrink: 0, objectFit: "contain" } }),
+                React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Belardi", style: { width: "auto", height: 32, maxWidth: 90, flexShrink: 0, objectFit: "contain" } }),
                 React.createElement("div", { style: { flex: 1 } },
                     React.createElement("h1", null, data.settings.nombreEmpresa),
                     React.createElement("div", { className: "gj-sub" },
@@ -13363,7 +13900,7 @@ function DeviceSetupView({ workers, onSelect, onSkip, nombreEmpresa, logo }) {
     return (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", padding: 20 } },
         React.createElement("div", { style: { maxWidth: 360, width: "100%" } },
             React.createElement("div", { style: { display: "flex", justifyContent: "center", marginBottom: 14 } },
-                React.createElement("img", { src: `data:image/png;base64,${logo}`, alt: nombreEmpresa, style: { width: 48, height: 48, objectFit: "contain" } })),
+                React.createElement("img", { src: `data:image/png;base64,${logo}`, alt: nombreEmpresa, style: { width: "auto", height: 60, maxWidth: 170, objectFit: "contain" } })),
             React.createElement("h2", { className: "gj-h2", style: { textAlign: "center" } }, "\u00BFQui\u00E9n eres?"),
             React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 16, textAlign: "center" } }, "Elige tu nombre de la lista. Este m\u00F3vil quedar\u00E1 asignado a ti \u2014 a partir de ahora, solo t\u00FA podr\u00E1s fichar desde aqu\u00ED."),
             workers.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay trabajadores activos dados de alta. Pide a un administrador que te d\u00E9 de alta primero."),
@@ -13374,7 +13911,7 @@ function ConsentView({ onAceptar, nombreEmpresa, logo, esTrabajador }) {
     return (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: "80vh", padding: 20 } },
         React.createElement("div", { style: { maxWidth: 380, width: "100%" } },
             React.createElement("div", { style: { display: "flex", justifyContent: "center", marginBottom: 14 } },
-                React.createElement("img", { src: `data:image/png;base64,${logo}`, alt: nombreEmpresa, style: { width: 48, height: 48, objectFit: "contain" } })),
+                React.createElement("img", { src: `data:image/png;base64,${logo}`, alt: nombreEmpresa, style: { width: "auto", height: 60, maxWidth: 170, objectFit: "contain" } })),
             React.createElement("h2", { className: "gj-h2", style: { textAlign: "center" } }, "Autorizaci\u00F3n de uso de datos personales"),
             React.createElement("div", { className: "gj-card", style: { fontSize: 12.5, lineHeight: 1.6, marginBottom: 14 } },
                 React.createElement("p", { style: { marginTop: 0 } },
@@ -15777,7 +16314,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
         const mensajeContrato = `Contrato de mantenimiento nº ${numeroContrato} firmado con fecha ${fechaEs(todayStr())}. Cuota mensual: ${eur(p.importe)}. Adjuntamos copia para sus archivos.`;
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
-            React.createElement("div", { className: "gj-print-area gj-card", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
+            React.createElement("div", { className: "gj-print-area gj-card gj-contrato-print", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 } },
                     React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 50, maxWidth: 140, objectFit: "contain" } }),
                     React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 40, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
@@ -15935,23 +16472,368 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
                 React.createElement(Mail, { size: 13 }),
                 " Reenviar por correo")))));
 }
+const SECCIONES_OBRA = [
+    {
+        titulo: "Preparaciones / Adecuaciones",
+        claves: [],
+    },
+    {
+        titulo: "Podas y talas",
+        claves: [
+            "poda_arbol_pequeno", "poda_arbol_mediano", "poda_arbol_grande", "poda_arbol_ejemplar",
+            "tala_arbol_pequeno", "tala_arbol_mediano", "tala_arbol_grande", "tala_arbol_ejemplar",
+            "poda_arbusto_pequeno", "poda_arbusto_mediano", "poda_arbusto_grande",
+            "poda_arbol_ornamental",
+        ],
+    },
+    {
+        titulo: "Siembra e implantación de césped",
+        claves: [
+            "prep_laboreo", "prep_abonado_fondo", "prep_mejora_suelo",
+            "siembra_semilla", "implantacion_tepes", "resiembra_calvas",
+            "retirada_tierra", "aporte_tierra", "aporte_recebo", "aporte_compost", "aporte_arena_silice",
+        ],
+    },
+    {
+        titulo: "Tratamientos",
+        claves: [
+            "trat_herbicida_selectivo", "trat_herbicida_total", "trat_herbicida_total_residual",
+            "trat_insecticida", "trat_fungicida", "trat_acaricida", "trat_fungicida_aliette",
+            "trat_topos", "trat_ratas_ratones",
+        ],
+    },
+    {
+        titulo: "Drenajes",
+        claves: ["drenajes"],
+    },
+];
+function CalculadoraObra({ data, persist, onGuardar }) {
+    var _a;
+    const preciosBase = data.preciosObra || {};
+    const [nombre, setNombre] = useState("");
+    const [direccion, setDireccion] = useState("");
+    const [telefono, setTelefono] = useState("");
+    const [email, setEmail] = useState("");
+    const [fecha, setFecha] = useState(todayStr());
+    const [cantidades, setCantidades] = useState({});
+    const [preciosLinea, setPreciosLinea] = useState(() => {
+        const ini = {};
+        Object.keys(preciosBase).forEach(k => { ini[k] = preciosBase[k].precio; });
+        return ini;
+    });
+    const [editandoPrecios, setEditandoPrecios] = useState(false);
+    const [especiales, setEspeciales] = useState([]); // {id, desc, cantidad, precio}
+    const catalogoRiego = data.catalogoRiego || [];
+    const [busquedaRiego, setBusquedaRiego] = useState("");
+    const [riegoLineas, setRiegoLineas] = useState([]); // {id(uid), catalogId, label, unidad, cantidad, precio}
+    const añadirLineaRiego = (item) => {
+        setRiegoLineas(r => [...r, { id: uid("rl"), catalogId: item.id, label: item.label, unidad: item.unidad, cantidad: 1, precio: item.precio }]);
+        setBusquedaRiego("");
+    };
+    const actualizarLineaRiego = (id, campo, valor) => setRiegoLineas(r => r.map(x => x.id === id ? { ...x, [campo]: valor } : x));
+    const quitarLineaRiego = (id) => setRiegoLineas(r => r.filter(x => x.id !== id));
+    // Poda de setos - mismo formato que en el presupuesto de mantenimiento
+    const TIPOS_CORTE_OBRA = [
+        { id: "3caras", label: "3 caras (2 laterales + altura)" },
+        { id: "lateral_altura", label: "1 lateral + altura" },
+        { id: "solo_lateral", label: "Solo 1 lateral" },
+        { id: "solo_altura", label: "Solo altura" },
+    ];
+    const [setosObra, setSetosObra] = useState([]); // {id, variedad, tipoCorte, ml, altura, anchura}
+    const [nuevaVariedadObra, setNuevaVariedadObra] = useState("");
+    const addSetoRowObra = () => {
+        setSetosObra(s => [...s, { id: uid("setoobra"), variedad: (data.variedadesSeto || [])[0] || "", tipoCorte: "3caras", ml: 0, altura: 0, anchura: 0 }]);
+    };
+    const updateSetoRowObra = (id, campo, valor) => setSetosObra(s => s.map(row => row.id === id ? { ...row, [campo]: valor } : row));
+    const quitarSetoRowObra = (id) => setSetosObra(s => s.filter(row => row.id !== id));
+    const añadirVariedadObra = () => {
+        if (!nuevaVariedadObra.trim())
+            return;
+        const next = structuredClone(data);
+        next.variedadesSeto = [...(next.variedadesSeto || []), nuevaVariedadObra.trim()];
+        persist(next);
+        setNuevaVariedadObra("");
+    };
+    const m2SetoObraTotal = setosObra.reduce((acc, s) => acc + m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura), 0);
+    const [precioPodaSeto, setPrecioPodaSeto] = useState(preciosBase.poda_seto ? preciosBase.poda_seto.precio : 0);
+    // Desbrozado de obra - calculo automatico igual que el cesped de mantenimiento (m² / rendimiento x coste/hora)
+    const parametrosObra = data.parametrosPresupuesto || {};
+    const [rendimientoDesbrozado, setRendimientoDesbrozado] = useState(parametrosObra.desbrozadoObraM2hPersona || 125);
+    const costeHoraEmpresa = ((_a = data.settings) === null || _a === void 0 ? void 0 : _a.costeHora) || 0;
+    const precioM2Desbrozado = rendimientoDesbrozado > 0 ? costeHoraEmpresa / rendimientoDesbrozado : 0;
+    const DESBROZADOS_OBRA = [
+        { key: "desbrozado_bajo_con", label: "Desbrozado (hierba baja) — con recogida" },
+        { key: "desbrozado_bajo_sin", label: "Desbrozado (hierba baja) — sin recogida" },
+        { key: "desbrozado_alto_con", label: "Desbrozado (hierba alta) — con recogida" },
+        { key: "desbrozado_alto_sin", label: "Desbrozado (hierba alta) — sin recogida" },
+    ];
+    const normalizarBusqueda = (s) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[°"'ºª]/g, " ").replace(/\s+/g, " ").trim();
+    const resultadosRiego = busquedaRiego.trim().length > 0
+        ? (() => {
+            const palabras = normalizarBusqueda(busquedaRiego).split(" ").filter(Boolean);
+            return catalogoRiego.filter(it => {
+                const textoItem = normalizarBusqueda(it.label + " " + it.categoria);
+                return palabras.every(p => textoItem.includes(p));
+            }).slice(0, 25);
+        })()
+        : [];
+    const setCantidad = (k, v) => setCantidades(c => ({ ...c, [k]: v }));
+    const setPrecioLinea = (k, v) => setPreciosLinea(p => ({ ...p, [k]: v }));
+    const añadirEspecial = () => setEspeciales(e => [...e, { id: uid("pe"), desc: "", cantidad: 1, precio: 0 }]);
+    const actualizarEspecial = (id, campo, valor) => setEspeciales(e => e.map(x => x.id === id ? { ...x, [campo]: valor } : x));
+    const quitarEspecial = (id) => setEspeciales(e => e.filter(x => x.id !== id));
+    const lineasCalculadas = [];
+    SECCIONES_OBRA.forEach(sec => {
+        sec.claves.forEach(k => {
+            var _a, _b;
+            const cant = Number(cantidades[k]) || 0;
+            const precio = Number(preciosLinea[k]) || 0;
+            if (cant > 0) {
+                lineasCalculadas.push({ key: k, label: ((_a = preciosBase[k]) === null || _a === void 0 ? void 0 : _a.label) || k, unidad: ((_b = preciosBase[k]) === null || _b === void 0 ? void 0 : _b.unidad) || "ud", cantidad: cant, precio, subtotal: cant * precio });
+            }
+        });
+    });
+    DESBROZADOS_OBRA.forEach(d => {
+        const cant = Number(cantidades[d.key]) || 0;
+        if (cant > 0) {
+            lineasCalculadas.push({ key: null, label: d.label, unidad: "m²", cantidad: cant, precio: precioM2Desbrozado, subtotal: cant * precioM2Desbrozado });
+        }
+    });
+    especiales.forEach(e => {
+        const cant = Number(e.cantidad) || 0;
+        const precio = Number(e.precio) || 0;
+        if (e.desc.trim() && cant > 0) {
+            lineasCalculadas.push({ key: null, label: e.desc, unidad: "ud", cantidad: cant, precio, subtotal: cant * precio });
+        }
+    });
+    riegoLineas.forEach(l => {
+        const cant = Number(l.cantidad) || 0;
+        const precio = Number(l.precio) || 0;
+        if (cant > 0) {
+            lineasCalculadas.push({ key: null, catalogId: l.catalogId, label: l.label, unidad: l.unidad, cantidad: cant, precio, subtotal: cant * precio });
+        }
+    });
+    if (m2SetoObraTotal > 0) {
+        const precioSeto = Number(precioPodaSeto) || 0;
+        lineasCalculadas.push({ key: "poda_seto", label: "Poda de setos", unidad: "m²", cantidad: Number(m2SetoObraTotal.toFixed(1)), precio: precioSeto, subtotal: m2SetoObraTotal * precioSeto });
+    }
+    const totalObra = lineasCalculadas.reduce((acc, l) => acc + l.subtotal, 0);
+    const guardarPreciosBase = () => {
+        const next = structuredClone(data);
+        next.preciosObra = next.preciosObra || {};
+        Object.keys(preciosLinea).forEach(k => {
+            if (!next.preciosObra[k])
+                return;
+            next.preciosObra[k].precio = Number(preciosLinea[k]) || 0;
+        });
+        next.parametrosPresupuesto = next.parametrosPresupuesto || {};
+        next.parametrosPresupuesto.desbrozadoObraM2hPersona = Number(rendimientoDesbrozado) || 125;
+        persist(next);
+        setEditandoPrecios(false);
+    };
+    const guardar = () => {
+        if (!nombre.trim() || lineasCalculadas.length === 0)
+            return;
+        // Si algun precio introducido es mayor que el precio base guardado, se pregunta antes de actualizar
+        const subidas = lineasCalculadas.filter(l => {
+            if (!l.key)
+                return false;
+            const base = preciosBase[l.key];
+            return base && l.precio > base.precio;
+        });
+        const subidasRiego = riegoLineas.filter(l => {
+            const cant = Number(l.cantidad) || 0;
+            if (cant <= 0)
+                return false;
+            const base = catalogoRiego.find(it => it.id === l.catalogId);
+            return base && Number(l.precio) > base.precio;
+        });
+        if (subidas.length > 0 || subidasRiego.length > 0) {
+            const textoObra = subidas.map(l => `• ${l.label}: ${eurDec(preciosBase[l.key].precio)} → ${eurDec(l.precio)}`);
+            const textoRiego = subidasRiego.map(l => `• ${l.label}: ${eurDec(catalogoRiego.find(it => it.id === l.catalogId).precio)} → ${eurDec(l.precio)}`);
+            const texto = [...textoObra, ...textoRiego].join("\n");
+            const total = subidas.length + subidasRiego.length;
+            const confirmarSubida = confirm(`Has puesto un precio más alto que el guardado en ${total === 1 ? "esta partida" : "estas partidas"}:\n\n${texto}\n\n¿Quieres guardarlo como nuevo precio base para los próximos presupuestos?`);
+            if (confirmarSubida) {
+                const next = structuredClone(data);
+                next.preciosObra = next.preciosObra || {};
+                subidas.forEach(l => { if (next.preciosObra[l.key])
+                    next.preciosObra[l.key].precio = l.precio; });
+                next.catalogoRiego = next.catalogoRiego || [];
+                subidasRiego.forEach(l => {
+                    const item = next.catalogoRiego.find(it => it.id === l.catalogId);
+                    if (item)
+                        item.precio = Number(l.precio);
+                });
+                persist(next);
+            }
+        }
+        onGuardar({
+            nombre, direccion, telefono, email, fecha,
+            partidas: lineasCalculadas,
+            total: totalObra,
+        });
+        setNombre("");
+        setDireccion("");
+        setTelefono("");
+        setEmail("");
+        setCantidades({});
+        setEspeciales([]);
+        setRiegoLineas([]);
+        setSetosObra([]);
+    };
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Datos del cliente"),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Nombre"),
+                React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), placeholder: "Nombre del cliente" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
+                React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value) })),
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
+                    React.createElement("input", { className: "gj-input", value: telefono, onChange: e => setTelefono(e.target.value), placeholder: "34600111222" })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Email"),
+                    React.createElement("input", { className: "gj-input", value: email, onChange: e => setEmail(e.target.value) }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Fecha"),
+                React.createElement("input", { className: "gj-input", type: "date", value: fecha, onChange: e => setFecha(e.target.value) }))),
+        SECCIONES_OBRA.map(sec => (React.createElement("div", { className: "gj-card", key: sec.titulo },
+            React.createElement("div", { className: "gj-h3" }, sec.titulo),
+            sec.claves.map(k => {
+                var _a;
+                const info = preciosBase[k] || { label: k, unidad: "ud" };
+                return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" },
+                            info.label,
+                            " (",
+                            info.unidad,
+                            ")"),
+                        React.createElement("input", { className: "gj-input", type: "number", value: cantidades[k] || "", onChange: e => setCantidad(k, e.target.value), placeholder: "0" })),
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" },
+                            "Precio/",
+                            info.unidad,
+                            " (\u20AC)"),
+                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: (_a = preciosLinea[k]) !== null && _a !== void 0 ? _a : 0, onChange: e => setPrecioLinea(k, e.target.value) }))));
+            }),
+            sec.titulo === "Preparaciones / Adecuaciones" && (React.createElement("div", null,
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Rendimiento desbrozado (m\u00B2/hora/persona)"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: rendimientoDesbrozado, onChange: e => setRendimientoDesbrozado(e.target.value) }),
+                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
+                        "Precio calculado: ",
+                        eurDec(precioM2Desbrozado),
+                        "/m\u00B2 (",
+                        eur(costeHoraEmpresa),
+                        "/hora \u00F7 ",
+                        rendimientoDesbrozado,
+                        " m\u00B2/hora)")),
+                DESBROZADOS_OBRA.map(d => (React.createElement("div", { key: d.key, className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" },
+                        d.label,
+                        " (m\u00B2)"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })))))),
+            sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
+                React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Poda de setos"),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "A\u00F1adir nueva variedad al listado"),
+                    React.createElement("div", { style: { display: "flex", gap: 6 } },
+                        React.createElement("input", { className: "gj-input", value: nuevaVariedadObra, onChange: e => setNuevaVariedadObra(e.target.value), placeholder: "Ej: Laurel" }),
+                        React.createElement("button", { className: "gj-btn", onClick: añadirVariedadObra }, "A\u00F1adir"))),
+                setosObra.map(s => (React.createElement("div", { key: s.id, style: { border: "1px solid var(--line-soft)", borderRadius: 4, padding: 8, marginBottom: 8 } },
+                    React.createElement("div", { className: "gj-row" },
+                        React.createElement("select", { className: "gj-select", style: { flex: 1 }, value: s.variedad, onChange: e => updateSetoRowObra(s.id, "variedad", e.target.value) },
+                            React.createElement("option", { value: "" }, "Variedad..."),
+                            (data.variedadesSeto || []).map(v => React.createElement("option", { key: v, value: v }, v))),
+                        React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarSetoRowObra(s.id) },
+                            React.createElement(Trash2, { size: 13, color: "var(--warn)" }))),
+                    React.createElement("div", { className: "gj-field", style: { marginTop: 6 } },
+                        React.createElement("select", { className: "gj-select", value: s.tipoCorte, onChange: e => updateSetoRowObra(s.id, "tipoCorte", e.target.value) }, TIPOS_CORTE_OBRA.map(t => React.createElement("option", { key: t.id, value: t.id }, t.label)))),
+                    React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 } },
+                        React.createElement("div", null,
+                            React.createElement("label", { className: "gj-label" }, "Ml"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.ml, onChange: e => updateSetoRowObra(s.id, "ml", e.target.value) })),
+                        React.createElement("div", null,
+                            React.createElement("label", { className: "gj-label" }, "Altura (m)"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.altura, onChange: e => updateSetoRowObra(s.id, "altura", e.target.value) })),
+                        React.createElement("div", null,
+                            React.createElement("label", { className: "gj-label" }, "Anchura (m)"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.anchura, onChange: e => updateSetoRowObra(s.id, "anchura", e.target.value) }))),
+                    React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
+                        m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
+                        " m\u00B2")))),
+                React.createElement("button", { className: "gj-btn ghost block", onClick: addSetoRowObra },
+                    React.createElement(Plus, { size: 13 }),
+                    " A\u00F1adir tramo de seto"),
+                m2SetoObraTotal > 0 && (React.createElement("div", { className: "gj-field", style: { marginTop: 8 } },
+                    React.createElement("label", { className: "gj-label" },
+                        "Precio/m\u00B2 poda de setos (\u20AC) \u2014 total: ",
+                        m2SetoObraTotal.toFixed(1),
+                        " m\u00B2"),
+                    React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: precioPodaSeto, onChange: e => setPrecioPodaSeto(e.target.value) }))))),
+            sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
+                React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Podas especiales (partida libre)"),
+                especiales.map(e => (React.createElement("div", { key: e.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+                    React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: e.desc, onChange: ev => actualizarEspecial(e.id, "desc", ev.target.value), placeholder: "Descripci\u00F3n" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: e.cantidad, onChange: ev => actualizarEspecial(e.id, "cantidad", ev.target.value), placeholder: "Cant." }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: e.precio, onChange: ev => actualizarEspecial(e.id, "precio", ev.target.value), placeholder: "Precio" }),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarEspecial(e.id) },
+                        React.createElement(X, { size: 14 }))))),
+                React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
+                    React.createElement(Plus, { size: 14 }),
+                    " A\u00F1adir partida especial")))))),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Instalaci\u00F3n de riego"),
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } },
+                "Busca el art\u00EDculo por nombre y t\u00F3calo para a\u00F1adirlo a la lista. Hay ",
+                catalogoRiego.length,
+                " art\u00EDculos disponibles (Solem, Jimten, tuber\u00EDa polietileno)."),
+            React.createElement("input", { className: "gj-input", value: busquedaRiego, onChange: e => setBusquedaRiego(e.target.value), placeholder: "Ej: codo 90 macho 1 pulgada, v\u00E1lvula esfera..." }),
+            resultadosRiego.length > 0 && (React.createElement("div", { style: { border: "1px solid var(--line)", borderRadius: 6, marginTop: 4, maxHeight: 260, overflowY: "auto" } }, resultadosRiego.map(item => (React.createElement("div", { key: item.id, className: "gj-row", style: { padding: "8px 10px", borderBottom: "1px solid var(--line-soft)", cursor: "pointer" }, onClick: () => añadirLineaRiego(item) },
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5 } }, item.label),
+                    React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, item.categoria)),
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5 } },
+                    item.precio > 0 ? eurDec(item.precio) : "sin precio",
+                    "/",
+                    item.unidad)))))),
+            busquedaRiego.trim().length > 0 && resultadosRiego.length === 0 && (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 6 } }, "Ning\u00FAn art\u00EDculo coincide con esa b\u00FAsqueda.")),
+            riegoLineas.length > 0 && (React.createElement("div", { style: { marginTop: 12 } }, riegoLineas.map(l => (React.createElement("div", { key: l.id, className: "gj-row", style: { gap: 6, marginBottom: 6, alignItems: "center" } },
+                React.createElement("div", { style: { flex: 2, fontSize: 12 } }, l.label),
+                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: l.cantidad, onChange: e => actualizarLineaRiego(l.id, "cantidad", e.target.value), placeholder: l.unidad }),
+                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio, onChange: e => actualizarLineaRiego(l.id, "precio", e.target.value) }),
+                React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarLineaRiego(l.id) },
+                    React.createElement(X, { size: 14 })))))))),
+        React.createElement("div", { className: "gj-card" },
+            editandoPrecios ? (React.createElement("button", { className: "gj-btn primary block", onClick: guardarPreciosBase }, "Guardar precios base")) : (React.createElement("button", { className: "gj-btn ghost block", onClick: () => setEditandoPrecios(true) },
+                React.createElement(Pencil, { size: 13 }),
+                " Editar precios base")),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 6 } }, "Si al hacer un presupuesto pones un precio m\u00E1s alto que el guardado, se actualiza solo autom\u00E1ticamente para los pr\u00F3ximos presupuestos.")),
+        React.createElement("div", { className: "gj-card", style: { background: "var(--surface-2)" } },
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Valoraci\u00F3n total (partidas introducidas)"),
+            React.createElement("div", { style: { fontSize: 22, fontWeight: 700 } }, eur(totalObra)),
+            lineasCalculadas.length === 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Introduce alguna cantidad arriba para ver el total.")),
+        React.createElement("button", { className: "gj-btn accent block", onClick: guardar, disabled: !nombre.trim() || lineasCalculadas.length === 0 },
+            React.createElement(Plus, { size: 14 }),
+            " Guardar presupuesto de obra")));
+}
 function PresupuestosView({ data, persist }) {
     const [printId, setPrintId] = useState(null);
     const [tipoPresupuesto, setTipoPresupuesto] = useState("mantenimiento");
-    const blank = { nombre: "", direccion: "", telefono: "", email: "", importe: "", fecha: todayStr() };
-    const [form, setForm] = useState(blank);
-    const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
-    const añadir = () => {
-        if (!form.nombre.trim())
-            return;
+    const guardarObra = (datosCalc) => {
         const next = structuredClone(data);
         next.presupuestos = next.presupuestos || [];
         next.presupuestos.push({
-            id: uid("prs"), tipo: "obra", nombre: form.nombre, direccion: form.direccion, telefono: form.telefono, email: form.email,
-            importe: Number(form.importe) || 0, fecha: form.fecha, aprobado: false, convertido: false, desglose: null,
+            id: uid("prs"), tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
+            telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total,
+            fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
         });
         persist(next);
-        setForm(blank);
     };
     const guardarMantenimiento = (datosCalc) => {
         const next = structuredClone(data);
@@ -16015,9 +16897,27 @@ function PresupuestosView({ data, persist }) {
                         React.createElement("b", null, "Fecha:"),
                         " ",
                         p && fechaEs(p.fecha))),
-                React.createElement("div", { style: { marginTop: 24, padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
+                React.createElement("div", { style: { marginTop: 24 } }, (p === null || p === void 0 ? void 0 : p.partidas) && p.partidas.length > 0 ? (React.createElement(React.Fragment, null,
+                    React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
+                        React.createElement("thead", null,
+                            React.createElement("tr", { style: { borderBottom: "2px solid var(--line)" } },
+                                React.createElement("th", { style: { textAlign: "left", padding: "4px 2px" } }, "Partida"),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Cant."),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Precio/ud"),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Importe"))),
+                        React.createElement("tbody", null, p.partidas.map((l, i) => (React.createElement("tr", { key: i, style: { borderBottom: "1px solid var(--line-soft)" } },
+                            React.createElement("td", { style: { padding: "4px 2px" } }, l.label),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } },
+                                l.cantidad,
+                                " ",
+                                l.unidad),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } }, eurDec(l.precio)),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px", fontWeight: 600 } }, eur(l.subtotal))))))),
+                    React.createElement("div", { style: { textAlign: "right", marginTop: 10, fontSize: 18, fontWeight: 700 } },
+                        "Total: ",
+                        eur(p.importe)))) : (React.createElement("div", { style: { padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
                     React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Importe presupuestado"),
-                    React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))),
+                    React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))))),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, "Presupuesto v\u00E1lido durante 30 d\u00EDas desde la fecha indicada. Precio sujeto a confirmaci\u00F3n final tras visita de valoraci\u00F3n, si procede."),
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)" } },
                     React.createElement("div", null, "Firma y sello de la empresa"),
@@ -16033,31 +16933,7 @@ function PresupuestosView({ data, persist }) {
             React.createElement("select", { className: "gj-select", value: tipoPresupuesto, onChange: e => setTipoPresupuesto(e.target.value) },
                 React.createElement("option", { value: "mantenimiento" }, "Presupuestos de mantenimiento"),
                 React.createElement("option", { value: "obra" }, "Presupuestos de obras"))),
-        tipoPresupuesto === "mantenimiento" ? (React.createElement(CalculadoraMantenimiento, { data: data, persist: persist, onGuardar: guardarMantenimiento })) : (React.createElement("div", { className: "gj-card" },
-            React.createElement("div", { className: "gj-h3" }, "Nuevo presupuesto de obra"),
-            React.createElement("div", { className: "gj-field" },
-                React.createElement("label", { className: "gj-label" }, "Nombre"),
-                React.createElement("input", { className: "gj-input", value: form.nombre, onChange: e => set("nombre", e.target.value), placeholder: "Nombre del cliente" })),
-            React.createElement("div", { className: "gj-field" },
-                React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
-                React.createElement("input", { className: "gj-input", value: form.direccion, onChange: e => set("direccion", e.target.value) })),
-            React.createElement("div", { className: "gj-grid2" },
-                React.createElement("div", { className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
-                    React.createElement("input", { className: "gj-input", value: form.telefono, onChange: e => set("telefono", e.target.value), placeholder: "34600111222" })),
-                React.createElement("div", { className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" }, "Email"),
-                    React.createElement("input", { className: "gj-input", value: form.email, onChange: e => set("email", e.target.value) }))),
-            React.createElement("div", { className: "gj-grid2" },
-                React.createElement("div", { className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" }, "Importe (\u20AC)"),
-                    React.createElement("input", { className: "gj-input", type: "number", value: form.importe, onChange: e => set("importe", e.target.value), placeholder: "3000" })),
-                React.createElement("div", { className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" }, "Fecha"),
-                    React.createElement("input", { className: "gj-input", type: "date", value: form.fecha, onChange: e => set("fecha", e.target.value) }))),
-            React.createElement("button", { className: "gj-btn accent block", onClick: añadir },
-                React.createElement(Plus, { size: 14 }),
-                " A\u00F1adir presupuesto"))),
+        tipoPresupuesto === "mantenimiento" ? (React.createElement(CalculadoraMantenimiento, { data: data, persist: persist, onGuardar: guardarMantenimiento })) : (React.createElement(CalculadoraObra, { data: data, persist: persist, onGuardar: guardarObra })),
         React.createElement("h3", { className: "gj-h3" }, "Pendientes de aprobaci\u00F3n"),
         pendientes.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay presupuestos pendientes."),
         pendientes.map(p => (React.createElement("div", { className: "gj-card", key: p.id },
