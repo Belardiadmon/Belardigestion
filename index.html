@@ -16538,6 +16538,14 @@ function CalculadoraObra({ data, persist, onGuardar }) {
     const [preciosLinea, setPreciosLinea] = useState(() => {
         const ini = {};
         Object.keys(preciosBase).forEach(k => { ini[k] = preciosBase[k].precio; });
+        // Los 4 items de desbrozado empiezan con el precio calculado (m² / rendimiento x coste/hora), editable después
+        const rendimientoInicial = (data.parametrosPresupuesto && data.parametrosPresupuesto.desbrozadoObraM2hPersona) || 125;
+        const costeHoraInicial = (data.settings && data.settings.costeHora) || 0;
+        const precioCalculadoInicial = rendimientoInicial > 0 ? costeHoraInicial / rendimientoInicial : 0;
+        ["desbrozado_bajo_con", "desbrozado_bajo_sin", "desbrozado_alto_con", "desbrozado_alto_sin"].forEach(k => {
+            if (!ini[k])
+                ini[k] = Number(precioCalculadoInicial.toFixed(2));
+        });
         return ini;
     });
     const [editandoPrecios, setEditandoPrecios] = useState(false);
@@ -16635,7 +16643,8 @@ function CalculadoraObra({ data, persist, onGuardar }) {
     DESBROZADOS_OBRA.forEach(d => {
         const cant = Number(cantidades[d.key]) || 0;
         if (cant > 0) {
-            lineasCalculadas.push({ key: null, label: d.label, unidad: "m²", cantidad: cant, precio: precioM2Desbrozado, subtotal: cant * precioM2Desbrozado });
+            const precioLineaDesbrozado = Number(preciosLinea[d.key]) || 0;
+            lineasCalculadas.push({ key: d.key, label: d.label, unidad: "m²", cantidad: cant, precio: precioLineaDesbrozado, subtotal: cant * precioLineaDesbrozado });
         }
     });
     especiales.forEach(e => {
@@ -16788,11 +16797,18 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                         "/hora \u00F7 ",
                         rendimientoDesbrozado,
                         " m\u00B2/hora)")),
-                DESBROZADOS_OBRA.map(d => (React.createElement("div", { key: d.key, className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" },
-                        d.label,
-                        " (m\u00B2)"),
-                    React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })))))),
+                DESBROZADOS_OBRA.map(d => {
+                    var _a;
+                    return (React.createElement("div", { key: d.key, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" },
+                                d.label,
+                                " (m\u00B2)"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })),
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" }, "Precio/m\u00B2 (\u20AC)"),
+                            React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: (_a = preciosLinea[d.key]) !== null && _a !== void 0 ? _a : 0, onChange: e => setPrecioLinea(d.key, e.target.value) }))));
+                }))),
             sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
                 React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Poda de setos"),
                 React.createElement("div", { className: "gj-field" },
