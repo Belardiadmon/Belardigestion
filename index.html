@@ -12832,14 +12832,21 @@ function asignarNumeroPresupuesto(next, fecha) {
 }
 function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
     const telLimpio = (p.telefono || "").replace(/\D/g, "");
-    let cliente = telLimpio ? next.clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio) : null;
+    const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    let cliente = dniLimpio ? next.clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
+    if (!cliente && telLimpio) {
+        cliente = next.clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio);
+    }
     if (!cliente) {
         cliente = {
-            id: uid("cli"), nombre: p.nombre, direccion: p.direccion, telefono: p.telefono, email: p.email,
+            id: uid("cli"), nombre: p.nombre, direccion: p.direccion, telefono: p.telefono, email: p.email, dni: p.dni || "",
             esMantenimiento: false, esObra: false, cuotaMensual: 0, presupuesto: 0, estadoObra: "en_curso",
             personasEstimadas: 0, diasEstimados: 0, fechaInicioPlan: "", orden: 0, activo: true,
         };
         next.clients.push(cliente);
+    }
+    else if (p.dni && !cliente.dni) {
+        cliente.dni = p.dni;
     }
     if (tipoNuevo === "mantenimiento") {
         cliente.esMantenimiento = true;
@@ -12876,6 +12883,45 @@ function mapsLink(direccion) { return `https://www.google.com/maps/search/?api=1
 function mapsLinkCoord(coord) { return `https://www.google.com/maps/search/?api=1&query=${coord.lat},${coord.lng}`; }
 function mapsDirectionsLink(origen, destino) {
     return `https://www.google.com/maps/dir/?api=1&origin=${encodeURIComponent(origen)}&destination=${encodeURIComponent(destino)}`;
+}
+function normalizarTexto(s) {
+    return (s || "").toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9 ]/g, " ").replace(/\s+/g, " ").trim();
+}
+function similitudDirecciones(a, b) {
+    const na = normalizarTexto(a), nb = normalizarTexto(b);
+    if (!na || !nb)
+        return 0;
+    const wa = na.split(" ").filter(w => w.length > 2);
+    const wb = new Set(nb.split(" ").filter(w => w.length > 2));
+    if (wa.length === 0 || wb.size === 0)
+        return 0;
+    let comunes = 0;
+    wa.forEach(w => { if (wb.has(w))
+        comunes++; });
+    return comunes / Math.min(wa.length, wb.size);
+}
+function buscarClienteParecido(clients, { nombre, direccion, dni }) {
+    const dniNorm = normalizarTexto(dni).replace(/ /g, "");
+    if (dniNorm) {
+        const porDni = (clients || []).find(c => c.dni && normalizarTexto(c.dni).replace(/ /g, "") === dniNorm);
+        if (porDni)
+            return { cliente: porDni, motivo: "dni" };
+    }
+    if (direccion && direccion.trim().length > 4) {
+        let mejor = null, mejorScore = 0;
+        (clients || []).forEach(c => {
+            if (!c.direccion)
+                return;
+            const score = similitudDirecciones(direccion, c.direccion);
+            if (score > mejorScore) {
+                mejorScore = score;
+                mejor = c;
+            }
+        });
+        if (mejor && mejorScore >= 0.6)
+            return { cliente: mejor, motivo: "direccion" };
+    }
+    return null;
 }
 function m2Seto(tipoCorte, ml, altura, anchura) {
     ml = Number(ml) || 0;
@@ -13073,12 +13119,17 @@ function seedData() {
             alcorquesUh: 10,
             abonadoCoste: 0.07,
             desbrozadoObraM2hPersona: 125,
+            desbrozadoObraM2hMaquina: 300,
         },
         preciosObra: {
-            desbrozado_bajo_con: { label: "Desbrozado (hierba baja) — con recogida", unidad: "m²", precio: 0 },
-            desbrozado_bajo_sin: { label: "Desbrozado (hierba baja) — sin recogida", unidad: "m²", precio: 0 },
-            desbrozado_alto_con: { label: "Desbrozado (hierba alta) — con recogida", unidad: "m²", precio: 0 },
-            desbrozado_alto_sin: { label: "Desbrozado (hierba alta) — sin recogida", unidad: "m²", precio: 0 },
+            desbrozado_bajo_con: { label: "Desbrozado (hierba baja) — con recogida — a mano", unidad: "m²", precio: 0 },
+            desbrozado_bajo_sin: { label: "Desbrozado (hierba baja) — sin recogida — a mano", unidad: "m²", precio: 0 },
+            desbrozado_alto_con: { label: "Desbrozado (hierba alta) — con recogida — a mano", unidad: "m²", precio: 0 },
+            desbrozado_alto_sin: { label: "Desbrozado (hierba alta) — sin recogida — a mano", unidad: "m²", precio: 0 },
+            desbrozado_bajo_con_maquina: { label: "Desbrozado (hierba baja) — con recogida — a máquina", unidad: "m²", precio: 0 },
+            desbrozado_bajo_sin_maquina: { label: "Desbrozado (hierba baja) — sin recogida — a máquina", unidad: "m²", precio: 0 },
+            desbrozado_alto_con_maquina: { label: "Desbrozado (hierba alta) — con recogida — a máquina", unidad: "m²", precio: 0 },
+            desbrozado_alto_sin_maquina: { label: "Desbrozado (hierba alta) — sin recogida — a máquina", unidad: "m²", precio: 0 },
             poda_arbol_pequeno: { label: "Poda de arbolado — árbol pequeño", unidad: "ud", precio: 0 },
             poda_arbol_mediano: { label: "Poda de arbolado — árbol mediano", unidad: "ud", precio: 0 },
             poda_arbol_grande: { label: "Poda de arbolado — árbol grande", unidad: "ud", precio: 0 },
@@ -14292,13 +14343,13 @@ function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
                     React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 } },
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Ml"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.ml, onChange: e => updateSetoRow(s.id, "ml", e.target.value) })),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.ml || "", onChange: e => updateSetoRow(s.id, "ml", e.target.value), placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Altura (m)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.altura, onChange: e => updateSetoRow(s.id, "altura", e.target.value) })),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.altura || "", onChange: e => updateSetoRow(s.id, "altura", e.target.value), placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Anchura (m)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.anchura, onChange: e => updateSetoRow(s.id, "anchura", e.target.value) }))),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.anchura || "", onChange: e => updateSetoRow(s.id, "anchura", e.target.value), placeholder: "0" }))),
                     React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
                         m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
                         " m\u00B2")))),
@@ -15518,6 +15569,8 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
     const [direccion, setDireccion] = useState("");
     const [telefono, setTelefono] = useState("");
     const [email, setEmail] = useState("");
+    const [dniCliente, setDniCliente] = useState("");
+    const [avisoDuplicado, setAvisoDuplicado] = useState(null);
     const [tiempoDesplazamientoMin, setTiempoDesplazamientoMin] = useState(0);
     const [idaYVuelta, setIdaYVuelta] = useState(false);
     const [metodoCesped, setMetodoCesped] = useState("mano");
@@ -15660,7 +15713,7 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
         if (!nombre.trim())
             return;
         onGuardar({
-            nombre, direccion, telefono, email,
+            nombre, direccion, telefono, email, dniCliente,
             total: cuotaMensual,
             totalAnual,
             labores: construirLabores(),
@@ -15677,22 +15730,42 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
             },
         });
     };
+    const comprobarDuplicado = () => {
+        const encontrado = buscarClienteParecido(data.clients, { nombre, direccion, dni: dniCliente });
+        if (encontrado) {
+            if (encontrado.motivo === "dni") {
+                setAvisoDuplicado(`Ya existe un cliente con este DNI: ${encontrado.cliente.nombre} (${encontrado.cliente.direccion || "sin dirección"}). ¿Eres ${encontrado.cliente.nombre}? Si es así, no crees un presupuesto nuevo — usa el cliente ya existente.`);
+            }
+            else {
+                setAvisoDuplicado(`Ya hay un cliente con una dirección muy parecida: ${encontrado.cliente.nombre} (${encontrado.cliente.direccion}). ¿Eres ${encontrado.cliente.nombre}?`);
+            }
+        }
+        else {
+            setAvisoDuplicado(null);
+        }
+    };
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Datos del cliente"),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
-                React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value) })),
+                React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), onBlur: comprobarDuplicado })),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
-                React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value) })),
+                React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value), onBlur: comprobarDuplicado })),
             React.createElement("div", { className: "gj-grid2" },
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
                     React.createElement("input", { className: "gj-input", value: telefono, onChange: e => setTelefono(e.target.value) })),
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Email"),
-                    React.createElement("input", { className: "gj-input", value: email, onChange: e => setEmail(e.target.value) })))),
+                    React.createElement("input", { className: "gj-input", value: email, onChange: e => setEmail(e.target.value) }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "DNI (opcional, ayuda a evitar duplicados)"),
+                React.createElement("input", { className: "gj-input", value: dniCliente, onChange: e => setDniCliente(e.target.value), onBlur: comprobarDuplicado })),
+            avisoDuplicado && (React.createElement("div", { style: { background: "var(--warn-bg)", color: "var(--warn)", padding: 8, borderRadius: 4, fontSize: 12.5, marginTop: 6 } },
+                "\u26A0 ",
+                avisoDuplicado))),
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Desplazamiento (por visita)"),
             React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } },
@@ -15783,13 +15856,13 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
                 React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 } },
                     React.createElement("div", null,
                         React.createElement("label", { className: "gj-label" }, "Ml"),
-                        React.createElement("input", { className: "gj-input", type: "number", value: s.ml, onChange: e => updateSetoRow(s.id, "ml", e.target.value) })),
+                        React.createElement("input", { className: "gj-input", type: "number", value: s.ml || "", onChange: e => updateSetoRow(s.id, "ml", e.target.value), placeholder: "0" })),
                     React.createElement("div", null,
                         React.createElement("label", { className: "gj-label" }, "Altura (m)"),
-                        React.createElement("input", { className: "gj-input", type: "number", value: s.altura, onChange: e => updateSetoRow(s.id, "altura", e.target.value) })),
+                        React.createElement("input", { className: "gj-input", type: "number", value: s.altura || "", onChange: e => updateSetoRow(s.id, "altura", e.target.value), placeholder: "0" })),
                     React.createElement("div", null,
                         React.createElement("label", { className: "gj-label" }, "Anchura (m)"),
-                        React.createElement("input", { className: "gj-input", type: "number", value: s.anchura, onChange: e => updateSetoRow(s.id, "anchura", e.target.value) }))),
+                        React.createElement("input", { className: "gj-input", type: "number", value: s.anchura || "", onChange: e => updateSetoRow(s.id, "anchura", e.target.value), placeholder: "0" }))),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
                     m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
                     " m\u00B2")))),
@@ -16156,6 +16229,14 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
     const [dni, setDni] = useState(p.dni || "");
     const [cuenta, setCuenta] = useState(p.cuentaBancaria || "");
     const printRef = useRef(null);
+    const tabsDocumentos = p.aprobado && (React.createElement("div", { className: "gj-no-print" },
+        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+            React.createElement("button", { className: "gj-btn" + (etapa === "documento" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("documento") }, "Presupuesto"),
+            React.createElement("button", { className: "gj-btn" + (etapa === "sepa" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("sepa") }, "SEPA"),
+            React.createElement("button", { className: "gj-btn" + (etapa === "contrato" || etapa === "listo" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("contrato") }, "Contrato")),
+        React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 10 }, onClick: () => setEtapa("datos") },
+            React.createElement(Pencil, { size: 12 }),
+            " Editar datos del cliente")));
     const compartirArchivo = async (nombreArchivo, tituloCompartir) => {
         if (!printRef.current)
             return;
@@ -16207,6 +16288,15 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
     const guardarDatosCliente = () => {
         const next = structuredClone(data);
         const pres = next.presupuestos.find(x => x.id === p.id);
+        const yaFirmado = !!(pres.fechaFirma || pres.fechaFirmaSepa);
+        const cambio = pres.apellidos !== apellidos || pres.dni !== dni || pres.cuentaBancaria !== cuenta || pres.fechaInicioMantenimiento !== fechaInicio;
+        if (yaFirmado && cambio) {
+            pres.historialEdiciones = pres.historialEdiciones || [];
+            pres.historialEdiciones.push({
+                fechaHora: new Date().toISOString(),
+                apellidos: pres.apellidos, dni: pres.dni, cuentaBancaria: pres.cuentaBancaria, fechaInicioMantenimiento: pres.fechaInicioMantenimiento,
+            });
+        }
         pres.apellidos = apellidos;
         pres.dni = dni;
         pres.cuentaBancaria = cuenta;
@@ -16266,6 +16356,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
         const numeroPresupuesto = p.numeroFormateado || `${p.fecha.slice(0, 4)}/${p.id.slice(-3).toUpperCase()}`;
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn primary gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
             React.createElement("div", { className: "gj-print-area", ref: printRef, style: { background: "#fff", fontFamily: "var(--font-body)" } },
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "flex-start", padding: "16px 16px 10px", flexWrap: "wrap", gap: 10 } },
                     React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 60, maxWidth: 165, flexShrink: 0, objectFit: "contain" } }),
@@ -16376,12 +16467,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
                 React.createElement("button", { className: "gj-btn primary block", onClick: () => window.print() },
                     React.createElement(Printer, { size: 14 }),
                     " Guardar como PDF")),
-            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Pulsa aqu\u00ED y, en el cuadro de impresi\u00F3n que se abre, elige \"Guardar en PDF\" (o el icono de compartir de esa misma pantalla) \u2014 es el \u00FAnico m\u00E9todo que genera un PDF de verdad, apto para adjuntar en cualquier correo."),
-            React.createElement("div", { className: "gj-row gj-no-print", style: { gap: 6, marginTop: 10 } },
-                React.createElement("button", { className: "gj-btn ghost block", onClick: () => compartirArchivo(`presupuesto_${p.nombre.replace(/\s+/g, "_")}`, "Presupuesto de mantenimiento") },
-                    React.createElement(Send, { size: 14 }),
-                    " Compartir como p\u00E1gina web")),
-            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Esta otra opci\u00F3n manda el documento como p\u00E1gina web, no como PDF \u2014 funciona bien para verlo por WhatsApp, pero algunos correos no la abren correctamente. Para correo, usa siempre \"Guardar como PDF\"."),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Pulsa aqu\u00ED y, en el cuadro de impresi\u00F3n que se abre, elige \"Guardar en PDF\". Ese PDF ya se puede adjuntar tal cual en WhatsApp o en un correo \u2014 \u00E1brelo desde tus archivos/descargas y usa el bot\u00F3n de compartir de ah\u00ED."),
             React.createElement("div", { className: "gj-card gj-no-print", style: { marginTop: 14, background: "var(--pend-bg)" } },
                 React.createElement("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 8 } }, "\u00BFEl cliente responde en este momento?"),
                 React.createElement("button", { className: "gj-btn primary block", onClick: marcarAprobado }, "S\u00ED, aprobado"))));
@@ -16389,11 +16475,22 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
     if (etapa === "datos") {
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
             React.createElement("div", { className: "gj-card" },
                 React.createElement("div", { className: "gj-h3" },
                     "Presupuesto aprobado el ",
                     fechaEs(p.fechaAprobacion || todayStr())),
                 React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "El cliente ya est\u00E1 dado de alta en el listado de clientes de mantenimiento. Faltan estos datos para poder iniciar el servicio:")),
+            p.historialEdiciones && p.historialEdiciones.length > 0 && (React.createElement("div", { className: "gj-card", style: { background: "var(--surface-2)" } },
+                React.createElement("div", { className: "gj-h3", style: { fontSize: 12.5 } }, "Modificado despu\u00E9s de firmado"),
+                p.historialEdiciones.slice().reverse().map((h, i) => (React.createElement("div", { key: i, style: { fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 } },
+                    new Date(h.fechaHora).toLocaleString("es-ES"),
+                    " \u2014 datos anteriores: ",
+                    h.apellidos || "—",
+                    ", DNI ",
+                    h.dni || "—",
+                    ", cuenta ",
+                    h.cuentaBancaria || "—"))))),
             React.createElement("div", { className: "gj-card" },
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Fecha de inicio de mantenimiento"),
@@ -16415,6 +16512,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
         const numeroMandato = `SEPA-${p.numeroFormateado ? p.numeroFormateado.replace("/", "-") : p.id.slice(-6).toUpperCase()}`;
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
             React.createElement("div", { className: "gj-print-area gj-card", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 } },
                     React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 50, maxWidth: 140, objectFit: "contain" } })),
@@ -16482,6 +16580,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
         const mensajeContrato = `Contrato de mantenimiento nº ${numeroContrato} firmado con fecha ${fechaEs(todayStr())}. Cuota mensual: ${eur(p.importe)}. Adjuntamos copia para sus archivos.`;
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
             React.createElement("div", { className: "gj-print-area gj-card gj-contrato-print", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 } },
                     React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 50, maxWidth: 140, objectFit: "contain" } }),
@@ -16614,18 +16713,15 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
                 React.createElement("button", { className: "gj-btn primary block", onClick: () => window.print() },
                     React.createElement(Printer, { size: 14 }),
                     " Guardar como PDF")),
-            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "En el cuadro de impresi\u00F3n, elige \"Guardar en PDF\" \u2014 es lo \u00FAnico que genera un PDF de verdad, apto para adjuntar en cualquier correo. Si ya hay firmas guardadas, aparecer\u00E1n en el documento."),
-            React.createElement("div", { className: "gj-row gj-no-print", style: { gap: 6, marginTop: 10 } },
-                React.createElement("button", { className: "gj-btn ghost block", onClick: () => compartirArchivo(`contrato_${p.nombre.replace(/\s+/g, "_")}`, "Contrato de mantenimiento") },
-                    React.createElement(Send, { size: 14 }),
-                    " Compartir como p\u00E1gina web")),
-            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Manda el documento como p\u00E1gina web, no como PDF \u2014 para correo, usa siempre \"Guardar como PDF\".")));
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "En el cuadro de impresi\u00F3n, elige \"Guardar en PDF\". Si ya hay firmas guardadas, aparecer\u00E1n en el documento. Ese PDF ya se puede adjuntar tal cual en WhatsApp o correo \u2014 \u00E1brelo desde tus archivos/descargas y comparte desde ah\u00ED."),
+            React.createElement("button", { className: "gj-btn ghost block gj-no-print", style: { marginTop: 10 }, onClick: () => setEtapa("documento") }, "\u2190 Volver al presupuesto")));
     }
     // etapa === "listo"
     const asuntoFirmado = "Contrato de mantenimiento firmado";
     const mensajeFirmado = `Le adjuntamos copia del contrato de mantenimiento nº ${p.id.slice(-4).toUpperCase()} firmado con fecha ${fechaEs(p.fechaFirma)}. Gracias por confiar en Jardinería Belardi.`;
     return (React.createElement("div", null,
         React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+        tabsDocumentos,
         React.createElement("div", { className: "gj-card", style: { textAlign: "center" } },
             React.createElement(CheckCircle2, { size: 28, color: "var(--good)" }),
             React.createElement("div", { className: "gj-h3", style: { marginTop: 8 } },
@@ -16688,33 +16784,415 @@ const SECCIONES_OBRA = [
         ],
     },
 ];
-function CalculadoraObra({ data, persist, onGuardar }) {
-    var _a;
+function reconstruirPartidasObra(partidas) {
+    const cantidades = {}, precios = {}, riego = [], materiales = [];
+    (partidas || []).forEach(l => {
+        if (l.key === "poda_seto" || (l.label && l.label.startsWith("Césped artificial — ")) || (l.label && l.label.startsWith("Desplazamiento ("))) {
+            return; // estas se reconstruyen aparte, a partir de sus datos originales guardados
+        }
+        if (l.key) {
+            cantidades[l.key] = l.cantidad;
+            precios[l.key] = l.precio;
+        }
+        else if (l.catalogId) {
+            riego.push({ id: uid("rl"), catalogId: l.catalogId, label: l.label, unidad: l.unidad, cantidad: l.cantidad, precio: l.precio });
+        }
+        else {
+            materiales.push({ id: uid("mv"), desc: l.label, cantidad: l.cantidad, precio: l.precio });
+        }
+    });
+    return { cantidades, precios, riego, materiales };
+}
+function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar }) {
+    const [etapa, setEtapa] = useState(p.fechaFirmaContratoObra ? "listo" : p.aprobado ? "datos" : "documento");
+    const [apellidos, setApellidos] = useState(p.apellidos || "");
+    const [dni, setDni] = useState(p.dni || "");
+    const [cuenta, setCuenta] = useState(p.cuentaBancaria || "");
+    const [fechaInicio, setFechaInicio] = useState(p.fechaInicioObra || "");
+    const printRef = useRef(null);
+    const guardarFirmaEmpresaObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaEmpresaObra = firmaDataUrl;
+        persist(next);
+    };
+    const guardarFirmaClienteObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaClienteObra = firmaDataUrl;
+        persist(next);
+    };
+    const guardarDatosCliente = () => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        const yaFirmado = !!(pres.fechaFirmaContratoObra || pres.fechaFirmaSepaObra);
+        const cambio = pres.apellidos !== apellidos || pres.dni !== dni || pres.cuentaBancaria !== cuenta || pres.fechaInicioObra !== fechaInicio;
+        if (yaFirmado && cambio) {
+            pres.historialEdiciones = pres.historialEdiciones || [];
+            pres.historialEdiciones.push({
+                fechaHora: new Date().toISOString(),
+                apellidos: pres.apellidos, dni: pres.dni, cuentaBancaria: pres.cuentaBancaria, fechaInicioObra: pres.fechaInicioObra,
+            });
+        }
+        pres.apellidos = apellidos;
+        pres.dni = dni;
+        pres.cuentaBancaria = cuenta;
+        pres.fechaInicioObra = fechaInicio;
+        persist(next);
+    };
+    const datosCompletos = apellidos.trim() && dni.trim() && cuenta.trim() && fechaInicio;
+    const irAlContrato = () => { guardarDatosCliente(); setEtapa("sepa"); };
+    const guardarFirmaEmpresaSepaObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaEmpresaSepaObra = firmaDataUrl;
+        persist(next);
+    };
+    const guardarFirmaSepaObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaSepaObra = firmaDataUrl;
+        persist(next);
+    };
+    const finalizarSepaObra = () => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.fechaFirmaSepaObra = todayStr();
+        persist(next);
+        setEtapa("contrato");
+    };
+    const guardarFirmaEmpresaContratoObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaEmpresaContratoObra = firmaDataUrl;
+        persist(next);
+    };
+    const guardarFirmaClienteContratoObra = (firmaDataUrl) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.firmaClienteContratoObra = firmaDataUrl;
+        persist(next);
+    };
+    const finalizarContratoObra = () => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.fechaFirmaContratoObra = todayStr();
+        persist(next);
+        setEtapa("listo");
+    };
+    const tabsDocumentos = p.aprobado && (React.createElement("div", { className: "gj-no-print" },
+        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+            React.createElement("button", { className: "gj-btn" + (etapa === "documento" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("documento") }, "Presupuesto"),
+            React.createElement("button", { className: "gj-btn" + (etapa === "sepa" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("sepa") }, "SEPA"),
+            React.createElement("button", { className: "gj-btn" + (etapa === "contrato" || etapa === "listo" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("contrato") }, "Contrato")),
+        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 10 } },
+            React.createElement("button", { className: "gj-btn ghost block", onClick: () => setEtapa("datos") },
+                React.createElement(Pencil, { size: 12 }),
+                " Editar datos del cliente"),
+            React.createElement("button", { className: "gj-btn ghost block", onClick: onEditar },
+                React.createElement(Pencil, { size: 12 }),
+                " Editar presupuesto"))));
+    const historialBox = p.historialEdiciones && p.historialEdiciones.length > 0 && (React.createElement("div", { className: "gj-card gj-no-print", style: { marginTop: 10, background: "var(--surface-2)" } },
+        React.createElement("div", { className: "gj-h3", style: { fontSize: 12.5 } }, "Modificado despu\u00E9s de firmado/aprobado"),
+        p.historialEdiciones.slice().reverse().map((h, i) => (React.createElement("div", { key: i, style: { fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 } },
+            new Date(h.fechaHora).toLocaleString("es-ES"),
+            h.importe !== undefined ? ` — importe anterior: ${eur(h.importe)}` : ` — datos anteriores: ${h.apellidos || "—"}, DNI ${h.dni || "—"}`)))));
+    if (etapa === "documento") {
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
+            React.createElement("div", { className: "gj-print-area gj-card", ref: printRef, style: { background: "#fff", padding: 20 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 10 } },
+                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 54, maxWidth: 150, objectFit: "contain" } }),
+                    React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 44, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
+                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 4 } }, "PRESUPUESTO"),
+                React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "var(--ink-soft)", marginBottom: 16 } },
+                    "N\u00BA ",
+                    (p === null || p === void 0 ? void 0 : p.numeroFormateado) || "—"),
+                React.createElement("div", { style: { fontSize: 13.5, lineHeight: 1.9 } },
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Cliente:"),
+                        " ", p === null || p === void 0 ? void 0 :
+                        p.nombre),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Direcci\u00F3n:"),
+                        " ", p === null || p === void 0 ? void 0 :
+                        p.direccion),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Tel\u00E9fono:"),
+                        " ", p === null || p === void 0 ? void 0 :
+                        p.telefono),
+                    (p === null || p === void 0 ? void 0 : p.email) && React.createElement("div", null,
+                        React.createElement("b", null, "Email:"),
+                        " ",
+                        p.email),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Fecha:"),
+                        " ",
+                        p && fechaEs(p.fecha))),
+                React.createElement("div", { style: { marginTop: 24 } }, (p === null || p === void 0 ? void 0 : p.partidas) && p.partidas.length > 0 ? (React.createElement(React.Fragment, null,
+                    React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
+                        React.createElement("thead", null,
+                            React.createElement("tr", { style: { borderBottom: "2px solid var(--line)" } },
+                                React.createElement("th", { style: { textAlign: "left", padding: "4px 2px" } }, "Partida"),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Cant."),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Precio/ud"),
+                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Importe"))),
+                        React.createElement("tbody", null, p.partidas.map((l, i) => (React.createElement("tr", { key: i, style: { borderBottom: "1px solid var(--line-soft)" } },
+                            React.createElement("td", { style: { padding: "4px 2px" } }, l.label),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } },
+                                l.cantidad,
+                                " ",
+                                l.unidad),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } }, eurDec(l.precio)),
+                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px", fontWeight: 600 } }, eur(l.subtotal))))))),
+                    React.createElement("div", { style: { textAlign: "right", marginTop: 10, fontSize: 18, fontWeight: 700 } },
+                        "Total: ",
+                        eur(p.importe)))) : (React.createElement("div", { style: { padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
+                    React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Importe presupuestado"),
+                    React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))))),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, "Presupuesto v\u00E1lido durante 30 d\u00EDas desde la fecha indicada. Precio sujeto a confirmaci\u00F3n final tras visita de valoraci\u00F3n, si procede."),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)", gap: 20 } },
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaEmpresaObra ? (React.createElement("img", { src: p.firmaEmpresaObra, alt: "Firma empresa", style: { maxHeight: 70, maxWidth: 160 } })) : SELLO_EMPRESA_B64 ? (React.createElement("img", { src: `data:image/png;base64,${SELLO_EMPRESA_B64}`, alt: "Sello", style: { maxHeight: 70, maxWidth: 160, opacity: 0.9 } })) : null,
+                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Firma y sello de la empresa")),
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaClienteObra && React.createElement("img", { src: p.firmaClienteObra, alt: "Firma cliente", style: { maxHeight: 70, maxWidth: 160 } }),
+                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Conforme el cliente")))),
+            React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaEmpresaObra ? (React.createElement(FirmaPad, { etiqueta: "Firma de la empresa (Belardi Jardiner\u00EDa)", onGuardarFirma: guardarFirmaEmpresaObra, textoBoton: "Guardar firma de la empresa" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma de la empresa registrada"))),
+            React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaClienteObra ? (React.createElement(FirmaPad, { etiqueta: "Firma del cliente", onGuardarFirma: guardarFirmaClienteObra, textoBoton: "Guardar firma del cliente" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma del cliente registrada"))),
+            React.createElement("button", { className: "gj-btn primary block gj-no-print", style: { marginTop: 10 }, onClick: () => window.print() },
+                React.createElement(Printer, { size: 14 }),
+                " Imprimir / PDF"),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Pulsa aqu\u00ED y, en el cuadro de impresi\u00F3n que se abre, elige \"Guardar en PDF\". Ese PDF ya se puede adjuntar tal cual en WhatsApp o correo \u2014 \u00E1brelo desde tus archivos/descargas y comparte desde ah\u00ED."),
+            !p.aprobado && React.createElement("button", { className: "gj-btn ghost block gj-no-print", style: { marginTop: 6 }, onClick: onEditar },
+                React.createElement(Pencil, { size: 13 }),
+                " Editar presupuesto"),
+            historialBox));
+    }
+    if (etapa === "datos") {
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
+            React.createElement("div", { className: "gj-card" },
+                React.createElement("div", { className: "gj-h3" },
+                    "Presupuesto aprobado el ",
+                    fechaEs(p.fechaAprobacion || todayStr())),
+                React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "El cliente ya est\u00E1 dado de alta en el listado de clientes de obra. Faltan estos datos para el contrato y la domiciliaci\u00F3n:")),
+            historialBox,
+            React.createElement("div", { className: "gj-card" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Fecha de inicio de la obra"),
+                    React.createElement("input", { className: "gj-input", type: "date", value: fechaInicio, onChange: e => setFechaInicio(e.target.value), onBlur: guardarDatosCliente })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Nombre y apellidos completos"),
+                    React.createElement("input", { className: "gj-input", value: apellidos, onChange: e => setApellidos(e.target.value), onBlur: guardarDatosCliente, placeholder: p.nombre })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "DNI"),
+                    React.createElement("input", { className: "gj-input", value: dni, onChange: e => setDni(e.target.value), onBlur: guardarDatosCliente })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "N\u00FAmero de cuenta (IBAN)"),
+                    React.createElement("input", { className: "gj-input", value: cuenta, onChange: e => setCuenta(e.target.value), onBlur: guardarDatosCliente, placeholder: "Puede facilitarse m\u00E1s adelante" }))),
+            !datosCompletos && (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)", color: "var(--warn)" } }, "El contrato no podr\u00E1 cerrarse hasta que el cliente facilite todos los datos, incluyendo el n\u00FAmero de cuenta.")),
+            React.createElement("button", { className: "gj-btn primary block", disabled: !datosCompletos, onClick: irAlContrato }, "Continuar a la domiciliaci\u00F3n SEPA")));
+    }
+    if (etapa === "sepa") {
+        const nombreCompleto = apellidos ? `${p.nombre} ${apellidos}` : p.nombre;
+        const numeroMandato = `SEPA-OBRA-${p.numeroFormateado ? p.numeroFormateado.replace("/", "-") : p.id.slice(-6).toUpperCase()}`;
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
+            React.createElement("div", { className: "gj-print-area gj-card", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 } },
+                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 50, maxWidth: 140, objectFit: "contain" } })),
+                React.createElement("h3", { style: { textAlign: "center" } }, "MANDATO DE DOMICILIACI\u00D3N DE ADEUDO DIRECTO SEPA"),
+                React.createElement("p", { style: { textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)" } },
+                    "Referencia del mandato: ",
+                    numeroMandato),
+                React.createElement("div", { className: "gj-h3", style: { marginTop: 14 } }, "Acreedor"),
+                React.createElement("p", { style: { marginBottom: 2 } },
+                    React.createElement("b", null, data.settings.nombreEmpresa),
+                    " \u2014 NIF ",
+                    data.settings.cifEmpresa),
+                React.createElement("p", { style: { marginBottom: 2 } }, data.parametrosPresupuesto.origenEmpresa),
+                React.createElement("p", null,
+                    "Identificador de acreedor SEPA: ",
+                    data.settings.identificadorAcreedorSepa || "—"),
+                React.createElement("div", { className: "gj-h3", style: { marginTop: 14 } }, "Deudor (titular de la cuenta)"),
+                React.createElement("p", { style: { marginBottom: 2 } },
+                    "Nombre: ",
+                    nombreCompleto),
+                React.createElement("p", { style: { marginBottom: 2 } },
+                    "Direcci\u00F3n: ",
+                    p.direccion),
+                React.createElement("p", { style: { marginBottom: 2 } },
+                    "DNI/NIF: ",
+                    dni),
+                React.createElement("p", null,
+                    "IBAN: ",
+                    cuenta),
+                React.createElement("p", { style: { marginTop: 14 } },
+                    "Mediante la firma de este mandato, el deudor autoriza a ",
+                    data.settings.nombreEmpresa,
+                    " a enviar instrucciones a la entidad del deudor para adeudar su cuenta y a la entidad del deudor para efectuar los adeudos en su cuenta siguiendo las instrucciones de ",
+                    data.settings.nombreEmpresa,
+                    ". Como parte de sus derechos, el deudor est\u00E1 legitimado al reembolso por su entidad en los t\u00E9rminos y condiciones del contrato suscrito con la misma. La solicitud de reembolso deber\u00E1 efectuarse dentro de las ocho semanas que siguen a la fecha de adeudo en su cuenta."),
+                React.createElement("p", null,
+                    React.createElement("b", null, "Tipo de pago"),
+                    ": puntual, en 3 plazos \u2014 40% acopio de materiales (a la aprobaci\u00F3n), 30% inicio de obra, 30% fin de obra. Importe total: ",
+                    eur(p.importe),
+                    "."),
+                React.createElement("p", { style: { fontSize: 11, color: "var(--ink-soft)" } },
+                    "Fecha: ",
+                    fechaLargaEs(todayStr())),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 30, gap: 20 } },
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaEmpresaSepaObra ? (React.createElement("img", { src: p.firmaEmpresaSepaObra, alt: "Firma empresa", style: { maxHeight: 55, maxWidth: 160 } })) : SELLO_EMPRESA_B64 ? (React.createElement("img", { src: `data:image/png;base64,${SELLO_EMPRESA_B64}`, alt: "Sello", style: { maxHeight: 70, maxWidth: 160, opacity: 0.9 } })) : null,
+                        React.createElement("div", { style: { fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, data.settings.nombreEmpresa)),
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaSepaObra && React.createElement("img", { src: p.firmaSepaObra, alt: "Firma deudor", style: { maxHeight: 55, maxWidth: 160 } }),
+                        React.createElement("div", { style: { fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "EL DEUDOR / TITULAR DE LA CUENTA")))),
+            React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaEmpresaSepaObra ? (React.createElement(FirmaPad, { etiqueta: "Firma de la empresa (Belardi Jardiner\u00EDa)", onGuardarFirma: guardarFirmaEmpresaSepaObra, textoBoton: "Guardar firma de la empresa" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma de la empresa registrada"))),
+            React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaSepaObra ? (React.createElement(FirmaPad, { etiqueta: "Firma del titular de la cuenta", onGuardarFirma: guardarFirmaSepaObra, textoBoton: "Guardar firma del titular" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma del titular registrada"))),
+            p.firmaEmpresaSepaObra && p.firmaSepaObra && !p.fechaFirmaSepaObra && (React.createElement("button", { className: "gj-btn primary block gj-no-print", onClick: finalizarSepaObra }, "Confirmar mandato firmado por ambas partes")),
+            React.createElement("div", { className: "gj-row gj-no-print", style: { gap: 6, marginTop: 6 } },
+                React.createElement("button", { className: "gj-btn primary block", onClick: () => window.print() },
+                    React.createElement(Printer, { size: 14 }),
+                    " Guardar como PDF")),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "En el cuadro de impresi\u00F3n, elige \"Guardar en PDF\". Ese PDF ya se puede adjuntar tal cual en WhatsApp o correo.")));
+    }
+    if (etapa === "contrato" || etapa === "listo") {
+        const nombreCompleto = apellidos ? `${p.nombre} ${apellidos}` : p.nombre;
+        const numeroContrato = `OBRA-${p.numeroFormateado ? p.numeroFormateado.replace("/", "-") : p.id.slice(-6).toUpperCase()}`;
+        const [diaIni, mesIni, anioIni] = fechaInicio ? [Number(fechaInicio.split("-")[2]), MESES[Number(fechaInicio.split("-")[1]) - 1], fechaInicio.split("-")[0]] : ["", "", ""];
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
+            tabsDocumentos,
+            React.createElement("div", { className: "gj-print-area gj-card gj-contrato-print", ref: printRef, style: { background: "#fff", padding: 20, fontSize: 12.5, lineHeight: 1.7 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14, gap: 10 } },
+                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 50, maxWidth: 140, objectFit: "contain" } }),
+                    React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 40, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
+                React.createElement("h3", { style: { textAlign: "center" } },
+                    "CONTRATO DE OBRA N\u00BA ",
+                    numeroContrato),
+                React.createElement("p", null,
+                    "En Mutilva, (Navarra) a ",
+                    fechaLargaEs(todayStr())),
+                React.createElement("p", null,
+                    React.createElement("b", null, "REUNIDOS")),
+                React.createElement("p", null,
+                    "De una parte, ",
+                    nombreCompleto,
+                    ", con domicilio en ",
+                    p.direccion,
+                    ", con D.N.I. n\u00FAmero ",
+                    dni,
+                    ". \u2014 ",
+                    React.createElement("b", null, "EL CLIENTE"),
+                    "."),
+                React.createElement("p", null,
+                    "Y de otra, JARDINERIA BELARDI, S.L., NIF ",
+                    data.settings.cifEmpresa,
+                    ", y con domicilio en ",
+                    data.parametrosPresupuesto.origenEmpresa,
+                    "."),
+                React.createElement("p", null, "Acuerdan el presente contrato de ejecuci\u00F3n de obra de jardiner\u00EDa, con arreglo a las siguientes"),
+                React.createElement("p", null,
+                    React.createElement("b", null, "CL\u00C1USULAS:")),
+                React.createElement("p", null,
+                    "1\u00BA.- EL CLIENTE encarga a BELARDI la ejecuci\u00F3n de los trabajos detallados en el presupuesto n\u00BA ",
+                    p.numeroFormateado,
+                    ", de fecha ",
+                    fechaEs(p.fecha),
+                    ", que se incorpora como Anexo I y forma parte de este contrato."),
+                React.createElement("p", null,
+                    "2\u00BA.- El precio total de la obra se fija en ",
+                    eur(p.importe),
+                    ", IVA no incluido, conforme al desglose de partidas del presupuesto referido."),
+                React.createElement("p", null,
+                    "3\u00BA.- ",
+                    React.createElement("b", null, "Forma de pago"),
+                    ": el precio se abonar\u00E1 en tres plazos: 40% para acopio de materiales en la fecha de la aprobaci\u00F3n del presupuesto, 30% al inicio de la obra, y 30% al finalizar la obra."),
+                React.createElement("p", null,
+                    "4\u00BA.- La fecha prevista de inicio de la obra es el ",
+                    diaIni,
+                    " de ",
+                    mesIni,
+                    " de ",
+                    anioIni,
+                    ". El plazo de ejecuci\u00F3n podr\u00E1 verse alterado por causas climatol\u00F3gicas, de suministro de materiales o de fuerza mayor."),
+                React.createElement("p", null, "5\u00BA.- Cualquier modificaci\u00F3n o ampliaci\u00F3n de los trabajos contratados sobre lo especificado en el Anexo I deber\u00E1 documentarse por separado y contar con la aceptaci\u00F3n econ\u00F3mica de ambas partes."),
+                React.createElement("p", null, "6\u00BA.- Este contrato cubre exclusivamente los trabajos especificados en el presupuesto referido. Cualquier trabajo no incluido en esa relaci\u00F3n se facturar\u00E1 de forma separada, previa aceptaci\u00F3n del presupuesto correspondiente."),
+                React.createElement("p", null, "De acuerdo con lo anteriormente pactado, se firma el presente contrato, por duplicado, en el lugar y fecha mencionados al principio."),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 30, gap: 20 } },
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaEmpresaContratoObra ? (React.createElement("img", { src: p.firmaEmpresaContratoObra, alt: "Firma empresa", style: { maxHeight: 55, maxWidth: 160 } })) : SELLO_EMPRESA_B64 ? (React.createElement("img", { src: `data:image/png;base64,${SELLO_EMPRESA_B64}`, alt: "Sello", style: { maxHeight: 70, maxWidth: 160, opacity: 0.9 } })) : null,
+                        React.createElement("div", { style: { fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "BELARDI JARDINERIA")),
+                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
+                        p.firmaClienteContratoObra && React.createElement("img", { src: p.firmaClienteContratoObra, alt: "Firma cliente", style: { maxHeight: 55, maxWidth: 160 } }),
+                        React.createElement("div", { style: { fontSize: 12, borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "EL CLIENTE")))),
+            etapa === "contrato" && (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaEmpresaContratoObra ? (React.createElement(FirmaPad, { etiqueta: "Firma de la empresa (Belardi Jardiner\u00EDa)", onGuardarFirma: guardarFirmaEmpresaContratoObra, textoBoton: "Guardar firma de la empresa" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma de la empresa registrada"))),
+                React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaClienteContratoObra ? (React.createElement(FirmaPad, { etiqueta: "Firma del cliente", onGuardarFirma: guardarFirmaClienteContratoObra, textoBoton: "Guardar firma del cliente" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma del cliente registrada"))),
+                p.firmaEmpresaContratoObra && p.firmaClienteContratoObra && !p.fechaFirmaContratoObra && (React.createElement("button", { className: "gj-btn primary block gj-no-print", onClick: finalizarContratoObra }, "Confirmar contrato firmado por ambas partes")))),
+            React.createElement("div", { className: "gj-row gj-no-print", style: { gap: 6, marginTop: 6 } },
+                React.createElement("button", { className: "gj-btn primary block", onClick: () => window.print() },
+                    React.createElement(Printer, { size: 14 }),
+                    " Guardar como PDF")),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "En el cuadro de impresi\u00F3n, elige \"Guardar en PDF\". Si ya hay firmas guardadas, aparecer\u00E1n en el documento. Ese PDF ya se puede adjuntar tal cual en WhatsApp o correo."),
+            etapa === "listo" && (React.createElement("div", { className: "gj-card", style: { textAlign: "center", marginTop: 10 } },
+                React.createElement(CheckCircle2, { size: 28, color: "var(--good)" }),
+                React.createElement("div", { className: "gj-h3", style: { marginTop: 8 } },
+                    "Contrato de obra firmado el ",
+                    fechaEs(p.fechaFirmaContratoObra)))),
+            historialBox));
+    }
+    return null;
+}
+function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar }) {
+    var _a, _b, _c, _d;
     const preciosBase = data.preciosObra || {};
-    const [nombre, setNombre] = useState("");
-    const [direccion, setDireccion] = useState("");
-    const [telefono, setTelefono] = useState("");
-    const [email, setEmail] = useState("");
-    const [fecha, setFecha] = useState(todayStr());
-    const [cantidades, setCantidades] = useState({});
+    const reconstruido = presupuestoEditar ? reconstruirPartidasObra(presupuestoEditar.partidas) : null;
+    const [nombre, setNombre] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.nombre) || "");
+    const [direccion, setDireccion] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.direccion) || "");
+    const [telefono, setTelefono] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.telefono) || "");
+    const [email, setEmail] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.email) || "");
+    const [dniCliente, setDniCliente] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.dni) || "");
+    const [avisoDuplicado, setAvisoDuplicado] = useState(null);
+    const comprobarDuplicado = () => {
+        if (presupuestoEditar)
+            return; // ya es un cliente conocido, no hace falta avisar
+        const encontrado = buscarClienteParecido(data.clients, { nombre, direccion, dni: dniCliente });
+        if (encontrado) {
+            if (encontrado.motivo === "dni") {
+                setAvisoDuplicado(`Ya existe un cliente con este DNI: ${encontrado.cliente.nombre} (${encontrado.cliente.direccion || "sin dirección"}). ¿Eres ${encontrado.cliente.nombre}? Si es así, no crees un presupuesto nuevo — usa el cliente ya existente.`);
+            }
+            else {
+                setAvisoDuplicado(`Ya hay un cliente con una dirección muy parecida: ${encontrado.cliente.nombre} (${encontrado.cliente.direccion}). ¿Eres ${encontrado.cliente.nombre}?`);
+            }
+        }
+        else {
+            setAvisoDuplicado(null);
+        }
+    };
+    const [fecha, setFecha] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.fecha) || todayStr());
+    const [tiempoDesplazamientoObraMin, setTiempoDesplazamientoObraMin] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.tiempoDesplazamientoObraMin) || 0);
+    const [idaYVueltaObra, setIdaYVueltaObra] = useState((_a = presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.idaYVueltaObra) !== null && _a !== void 0 ? _a : true);
+    const [numeroDiasObra, setNumeroDiasObra] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.numeroDiasObra) || 1);
+    const [numeroPersonasObra, setNumeroPersonasObra] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.numeroPersonasObra) || 1);
+    const [cantidades, setCantidades] = useState(() => (reconstruido === null || reconstruido === void 0 ? void 0 : reconstruido.cantidades) || {});
     const [preciosLinea, setPreciosLinea] = useState(() => {
         const ini = {};
         Object.keys(preciosBase).forEach(k => { ini[k] = preciosBase[k].precio; });
-        // Los 4 items de desbrozado empiezan con el precio calculado (m² / rendimiento x coste/hora), editable después
-        const rendimientoInicial = (data.parametrosPresupuesto && data.parametrosPresupuesto.desbrozadoObraM2hPersona) || 125;
-        const costeHoraInicial = (data.settings && data.settings.costeHora) || 0;
-        const precioCalculadoInicial = rendimientoInicial > 0 ? costeHoraInicial / rendimientoInicial : 0;
-        ["desbrozado_bajo_con", "desbrozado_bajo_sin", "desbrozado_alto_con", "desbrozado_alto_sin"].forEach(k => {
-            if (!ini[k])
-                ini[k] = Number(precioCalculadoInicial.toFixed(2));
-        });
+        if (reconstruido)
+            Object.assign(ini, reconstruido.precios);
         return ini;
     });
     const [editandoPrecios, setEditandoPrecios] = useState(false);
     const [especiales, setEspeciales] = useState([]); // {id, desc, cantidad, precio}
     const catalogoRiego = data.catalogoRiego || [];
     const [busquedaRiego, setBusquedaRiego] = useState("");
-    const [riegoLineas, setRiegoLineas] = useState([]); // {id(uid), catalogId, label, unidad, cantidad, precio}
+    const [riegoLineas, setRiegoLineas] = useState(() => (reconstruido === null || reconstruido === void 0 ? void 0 : reconstruido.riego) || []); // {id(uid), catalogId, label, unidad, cantidad, precio}
     const añadirLineaRiego = (item) => {
         setRiegoLineas(r => [...r, { id: uid("rl"), catalogId: item.id, label: item.label, unidad: item.unidad, cantidad: 1, precio: item.precio }]);
         setBusquedaRiego("");
@@ -16728,7 +17206,7 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         { id: "solo_lateral", label: "Solo 1 lateral" },
         { id: "solo_altura", label: "Solo altura" },
     ];
-    const [setosObra, setSetosObra] = useState([]); // {id, variedad, tipoCorte, ml, altura, anchura}
+    const [setosObra, setSetosObra] = useState(() => (presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.setosObra) || []); // {id, variedad, tipoCorte, ml, altura, anchura}
     const [nuevaVariedadObra, setNuevaVariedadObra] = useState("");
     const addSetoRowObra = () => {
         setSetosObra(s => [...s, { id: uid("setoobra"), variedad: (data.variedadesSeto || [])[0] || "", tipoCorte: "3caras", ml: 0, altura: 0, anchura: 0 }]);
@@ -16744,20 +17222,26 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         setNuevaVariedadObra("");
     };
     const m2SetoObraTotal = setosObra.reduce((acc, s) => acc + m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura), 0);
-    const [precioPodaSeto, setPrecioPodaSeto] = useState(preciosBase.poda_seto ? preciosBase.poda_seto.precio : 0);
-    // Desbrozado de obra - calculo automatico igual que el cesped de mantenimiento (m² / rendimiento x coste/hora)
+    const [precioPodaSeto, setPrecioPodaSeto] = useState(() => { var _a; return (_a = presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.precioPodaSeto) !== null && _a !== void 0 ? _a : (preciosBase.poda_seto ? preciosBase.poda_seto.precio : 0); });
+    // Desbrozado de obra - calculo automatico igual que el cesped de mantenimiento (m² / rendimiento x coste/hora), diferenciado a mano / a maquina
     const parametrosObra = data.parametrosPresupuesto || {};
-    const [rendimientoDesbrozado, setRendimientoDesbrozado] = useState(parametrosObra.desbrozadoObraM2hPersona || 125);
-    const costeHoraEmpresa = ((_a = data.settings) === null || _a === void 0 ? void 0 : _a.costeHora) || 0;
-    const precioM2Desbrozado = rendimientoDesbrozado > 0 ? costeHoraEmpresa / rendimientoDesbrozado : 0;
+    const [rendimientoDesbrozadoMano, setRendimientoDesbrozadoMano] = useState(parametrosObra.desbrozadoObraM2hPersona || 125);
+    const [rendimientoDesbrozadoMaquina, setRendimientoDesbrozadoMaquina] = useState(parametrosObra.desbrozadoObraM2hMaquina || 300);
+    const costeHoraEmpresa = ((_b = data.settings) === null || _b === void 0 ? void 0 : _b.costeHora) || 0;
+    const precioM2DesbrozadoMano = rendimientoDesbrozadoMano > 0 ? costeHoraEmpresa / rendimientoDesbrozadoMano : 0;
+    const precioM2DesbrozadoMaquina = rendimientoDesbrozadoMaquina > 0 ? costeHoraEmpresa / rendimientoDesbrozadoMaquina : 0;
     const DESBROZADOS_OBRA = [
-        { key: "desbrozado_bajo_con", label: "Desbrozado (hierba baja) — con recogida" },
-        { key: "desbrozado_bajo_sin", label: "Desbrozado (hierba baja) — sin recogida" },
-        { key: "desbrozado_alto_con", label: "Desbrozado (hierba alta) — con recogida" },
-        { key: "desbrozado_alto_sin", label: "Desbrozado (hierba alta) — sin recogida" },
+        { key: "desbrozado_bajo_con", label: "Desbrozado (hierba baja) — con recogida — a mano", precioRef: precioM2DesbrozadoMano },
+        { key: "desbrozado_bajo_sin", label: "Desbrozado (hierba baja) — sin recogida — a mano", precioRef: precioM2DesbrozadoMano },
+        { key: "desbrozado_alto_con", label: "Desbrozado (hierba alta) — con recogida — a mano", precioRef: precioM2DesbrozadoMano },
+        { key: "desbrozado_alto_sin", label: "Desbrozado (hierba alta) — sin recogida — a mano", precioRef: precioM2DesbrozadoMano },
+        { key: "desbrozado_bajo_con_maquina", label: "Desbrozado (hierba baja) — con recogida — a máquina", precioRef: precioM2DesbrozadoMaquina },
+        { key: "desbrozado_bajo_sin_maquina", label: "Desbrozado (hierba baja) — sin recogida — a máquina", precioRef: precioM2DesbrozadoMaquina },
+        { key: "desbrozado_alto_con_maquina", label: "Desbrozado (hierba alta) — con recogida — a máquina", precioRef: precioM2DesbrozadoMaquina },
+        { key: "desbrozado_alto_sin_maquina", label: "Desbrozado (hierba alta) — sin recogida — a máquina", precioRef: precioM2DesbrozadoMaquina },
     ];
     // Cesped artificial - lista editable de variedades (igual que setos/arbustos) + materiales varios (partida libre)
-    const [cespedArtLineas, setCespedArtLineas] = useState([]); // {id, variedad, m2, precio}
+    const [cespedArtLineas, setCespedArtLineas] = useState(() => (presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.cespedArtLineas) || []); // {id, variedad, m2, precio}
     const [nuevaVariedadCespedArt, setNuevaVariedadCespedArt] = useState("");
     const addCespedArtRow = () => {
         setCespedArtLineas(l => [...l, { id: uid("ca"), variedad: (data.variedadesCespedArtificial || [])[0] || "", m2: 0, precio: 0 }]);
@@ -16772,7 +17256,7 @@ function CalculadoraObra({ data, persist, onGuardar }) {
         persist(next);
         setNuevaVariedadCespedArt("");
     };
-    const [materialesVarios, setMaterialesVarios] = useState([]); // {id, desc, cantidad, precio}
+    const [materialesVarios, setMaterialesVarios] = useState(() => (reconstruido === null || reconstruido === void 0 ? void 0 : reconstruido.materiales) || []); // {id, desc, cantidad, precio}
     const añadirMaterialVario = () => setMaterialesVarios(m => [...m, { id: uid("mv"), desc: "", cantidad: 1, precio: 0 }]);
     const actualizarMaterialVario = (id, campo, valor) => setMaterialesVarios(m => m.map(x => x.id === id ? { ...x, [campo]: valor } : x));
     const quitarMaterialVario = (id) => setMaterialesVarios(m => m.filter(x => x.id !== id));
@@ -16791,7 +17275,17 @@ function CalculadoraObra({ data, persist, onGuardar }) {
     const añadirEspecial = () => setEspeciales(e => [...e, { id: uid("pe"), desc: "", cantidad: 1, precio: 0 }]);
     const actualizarEspecial = (id, campo, valor) => setEspeciales(e => e.map(x => x.id === id ? { ...x, [campo]: valor } : x));
     const quitarEspecial = (id) => setEspeciales(e => e.filter(x => x.id !== id));
+    // Desplazamiento: tiempo por trayecto x (ida y vuelta) x nº de días de obra x nº de personas asignadas
+    const horasDesplazamientoObraTotal = ((Number(tiempoDesplazamientoObraMin) || 0) / 60) * (idaYVueltaObra ? 2 : 1) * (Number(numeroDiasObra) || 0) * (Number(numeroPersonasObra) || 0);
+    const costeDesplazamientoObra = horasDesplazamientoObraTotal * costeHoraEmpresa;
     const lineasCalculadas = [];
+    if (horasDesplazamientoObraTotal > 0) {
+        lineasCalculadas.push({
+            key: null,
+            label: `Desplazamiento (${numeroDiasObra} día${numeroDiasObra == 1 ? "" : "s"} × ${numeroPersonasObra} persona${numeroPersonasObra == 1 ? "" : "s"})`,
+            unidad: "h", cantidad: Number(horasDesplazamientoObraTotal.toFixed(2)), precio: costeHoraEmpresa, subtotal: costeDesplazamientoObra,
+        });
+    }
     SECCIONES_OBRA.forEach(sec => {
         sec.claves.forEach(k => {
             var _a, _b;
@@ -16851,7 +17345,8 @@ function CalculadoraObra({ data, persist, onGuardar }) {
             next.preciosObra[k].precio = Number(preciosLinea[k]) || 0;
         });
         next.parametrosPresupuesto = next.parametrosPresupuesto || {};
-        next.parametrosPresupuesto.desbrozadoObraM2hPersona = Number(rendimientoDesbrozado) || 125;
+        next.parametrosPresupuesto.desbrozadoObraM2hPersona = Number(rendimientoDesbrozadoMano) || 125;
+        next.parametrosPresupuesto.desbrozadoObraM2hMaquina = Number(rendimientoDesbrozadoMaquina) || 300;
         persist(next);
         setEditandoPrecios(false);
     };
@@ -16893,30 +17388,39 @@ function CalculadoraObra({ data, persist, onGuardar }) {
             }
         }
         onGuardar({
-            nombre, direccion, telefono, email, fecha,
+            nombre, direccion, telefono, email, fecha, dniCliente,
             partidas: lineasCalculadas,
             total: totalObra,
-        });
-        setNombre("");
-        setDireccion("");
-        setTelefono("");
-        setEmail("");
-        setCantidades({});
-        setEspeciales([]);
-        setRiegoLineas([]);
-        setSetosObra([]);
-        setCespedArtLineas([]);
-        setMaterialesVarios([]);
+            setosObra, precioPodaSeto, cespedArtLineas,
+            tiempoDesplazamientoObraMin: Number(tiempoDesplazamientoObraMin) || 0,
+            idaYVueltaObra, numeroDiasObra: Number(numeroDiasObra) || 0, numeroPersonasObra: Number(numeroPersonasObra) || 0,
+        }, presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.id);
+        if (!presupuestoEditar) {
+            setNombre("");
+            setDireccion("");
+            setTelefono("");
+            setEmail("");
+            setCantidades({});
+            setEspeciales([]);
+            setRiegoLineas([]);
+            setSetosObra([]);
+            setCespedArtLineas([]);
+            setMaterialesVarios([]);
+            setTiempoDesplazamientoObraMin(0);
+            setIdaYVueltaObra(true);
+            setNumeroDiasObra(1);
+            setNumeroPersonasObra(1);
+        }
     };
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Datos del cliente"),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
-                React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), placeholder: "Nombre del cliente" })),
+                React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), onBlur: comprobarDuplicado, placeholder: "Nombre del cliente" })),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
-                React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value) })),
+                React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value), onBlur: comprobarDuplicado })),
             React.createElement("div", { className: "gj-grid2" },
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
@@ -16925,12 +17429,46 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                     React.createElement("label", { className: "gj-label" }, "Email"),
                     React.createElement("input", { className: "gj-input", value: email, onChange: e => setEmail(e.target.value) }))),
             React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "DNI (opcional, ayuda a evitar duplicados)"),
+                React.createElement("input", { className: "gj-input", value: dniCliente, onChange: e => setDniCliente(e.target.value), onBlur: comprobarDuplicado })),
+            avisoDuplicado && (React.createElement("div", { style: { background: "var(--warn-bg)", color: "var(--warn)", padding: 8, borderRadius: 4, fontSize: 12.5, marginTop: 6 } },
+                "\u26A0 ",
+                avisoDuplicado)),
+            React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Fecha"),
                 React.createElement("input", { className: "gj-input", type: "date", value: fecha, onChange: e => setFecha(e.target.value) }))),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Desplazamiento"),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } },
+                "Origen: ", (_c = data.parametrosPresupuesto) === null || _c === void 0 ? void 0 :
+                _c.origenEmpresa),
+            direccion && (React.createElement("a", { className: "gj-btn ghost block", style: { marginBottom: 8 }, href: mapsDirectionsLink((_d = data.parametrosPresupuesto) === null || _d === void 0 ? void 0 : _d.origenEmpresa, direccion), target: "_blank", rel: "noreferrer" },
+                React.createElement(MapPin, { size: 13 }),
+                " Ver ruta y tiempo en Google Maps")),
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Tiempo de desplazamiento (min)"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: tiempoDesplazamientoObraMin || "", onChange: e => setTiempoDesplazamientoObraMin(e.target.value), placeholder: "0" })),
+                React.createElement("label", { className: "gj-row", style: { marginTop: 20, cursor: "pointer" } },
+                    React.createElement("span", { style: { fontSize: 12.5 } }, "Ida y vuelta (\u00D72)"),
+                    React.createElement("input", { type: "checkbox", checked: idaYVueltaObra, onChange: e => setIdaYVueltaObra(e.target.checked) }))),
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "N\u00FAmero de d\u00EDas de obra"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: numeroDiasObra || "", onChange: e => setNumeroDiasObra(e.target.value), placeholder: "0" })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "N\u00FAmero de personas asignadas"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: numeroPersonasObra || "", onChange: e => setNumeroPersonasObra(e.target.value), placeholder: "0" }))),
+            horasDesplazamientoObraTotal > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } },
+                "Total: ",
+                horasDesplazamientoObraTotal.toFixed(2),
+                " h \u00D7 ",
+                eur(costeHoraEmpresa),
+                "/hora = ",
+                eur(costeDesplazamientoObra)))),
         SECCIONES_OBRA.map(sec => (React.createElement("div", { className: "gj-card", key: sec.titulo },
             React.createElement("div", { className: "gj-h3" }, sec.titulo),
             sec.claves.map(k => {
-                var _a;
                 const info = preciosBase[k] || { label: k, unidad: "ud" };
                 return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
                     React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
@@ -16945,32 +17483,41 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                             "Precio/",
                             info.unidad,
                             " (\u20AC)"),
-                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: (_a = preciosLinea[k]) !== null && _a !== void 0 ? _a : 0, onChange: e => setPrecioLinea(k, e.target.value) }))));
+                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[k] || "", onChange: e => setPrecioLinea(k, e.target.value), placeholder: "0" }))));
             }),
             sec.titulo === "Preparaciones / Adecuaciones" && (React.createElement("div", null,
-                React.createElement("div", { className: "gj-field" },
-                    React.createElement("label", { className: "gj-label" }, "Rendimiento desbrozado (m\u00B2/hora/persona)"),
-                    React.createElement("input", { className: "gj-input", type: "number", value: rendimientoDesbrozado, onChange: e => setRendimientoDesbrozado(e.target.value) }),
-                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
-                        "Precio calculado: ",
-                        eurDec(precioM2Desbrozado),
-                        "/m\u00B2 (",
-                        eur(costeHoraEmpresa),
-                        "/hora \u00F7 ",
-                        rendimientoDesbrozado,
-                        " m\u00B2/hora)")),
-                DESBROZADOS_OBRA.map(d => {
-                    var _a;
-                    return (React.createElement("div", { key: d.key, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
-                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                            React.createElement("label", { className: "gj-label" },
-                                d.label,
-                                " (m\u00B2)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })),
-                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                            React.createElement("label", { className: "gj-label" }, "Precio/m\u00B2 (\u20AC)"),
-                            React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: (_a = preciosLinea[d.key]) !== null && _a !== void 0 ? _a : 0, onChange: e => setPrecioLinea(d.key, e.target.value) }))));
-                }))),
+                React.createElement("div", { className: "gj-grid2" },
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "Rendimiento a mano (m\u00B2/hora/persona)"),
+                        React.createElement("input", { className: "gj-input", type: "number", value: rendimientoDesbrozadoMano, onChange: e => setRendimientoDesbrozadoMano(e.target.value) }),
+                        React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
+                            "Ref.: ",
+                            eurDec(precioM2DesbrozadoMano),
+                            "/m\u00B2 (",
+                            eur(costeHoraEmpresa),
+                            "/hora \u00F7 ",
+                            rendimientoDesbrozadoMano,
+                            " m\u00B2/hora)")),
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "Rendimiento a m\u00E1quina (m\u00B2/hora/persona)"),
+                        React.createElement("input", { className: "gj-input", type: "number", value: rendimientoDesbrozadoMaquina, onChange: e => setRendimientoDesbrozadoMaquina(e.target.value) }),
+                        React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
+                            "Ref.: ",
+                            eurDec(precioM2DesbrozadoMaquina),
+                            "/m\u00B2 (",
+                            eur(costeHoraEmpresa),
+                            "/hora \u00F7 ",
+                            rendimientoDesbrozadoMaquina,
+                            " m\u00B2/hora)"))),
+                DESBROZADOS_OBRA.map(d => (React.createElement("div", { key: d.key, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" },
+                            d.label,
+                            " (m\u00B2)"),
+                        React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })),
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" }, "Precio/m\u00B2 (\u20AC)"),
+                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[d.key] || "", onChange: e => setPrecioLinea(d.key, e.target.value), placeholder: "0" }))))))),
             sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
                 React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Poda de setos"),
                 React.createElement("div", { className: "gj-field" },
@@ -16990,13 +17537,13 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                     React.createElement("div", { style: { display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 } },
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Ml"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.ml, onChange: e => updateSetoRowObra(s.id, "ml", e.target.value) })),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.ml || "", onChange: e => updateSetoRowObra(s.id, "ml", e.target.value), placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Altura (m)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.altura, onChange: e => updateSetoRowObra(s.id, "altura", e.target.value) })),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.altura || "", onChange: e => updateSetoRowObra(s.id, "altura", e.target.value), placeholder: "0" })),
                         React.createElement("div", null,
                             React.createElement("label", { className: "gj-label" }, "Anchura (m)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: s.anchura, onChange: e => updateSetoRowObra(s.id, "anchura", e.target.value) }))),
+                            React.createElement("input", { className: "gj-input", type: "number", value: s.anchura || "", onChange: e => updateSetoRowObra(s.id, "anchura", e.target.value), placeholder: "0" }))),
                     React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
                         m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
                         " m\u00B2")))),
@@ -17008,13 +17555,13 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                         "Precio/m\u00B2 poda de setos (\u20AC) \u2014 total: ",
                         m2SetoObraTotal.toFixed(1),
                         " m\u00B2"),
-                    React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: precioPodaSeto, onChange: e => setPrecioPodaSeto(e.target.value) }))))),
+                    React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: precioPodaSeto || "", onChange: e => setPrecioPodaSeto(e.target.value), placeholder: "0" }))))),
             sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
                 React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Podas especiales (partida libre)"),
                 especiales.map(e => (React.createElement("div", { key: e.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
                     React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: e.desc, onChange: ev => actualizarEspecial(e.id, "desc", ev.target.value), placeholder: "Descripci\u00F3n" }),
                     React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: e.cantidad, onChange: ev => actualizarEspecial(e.id, "cantidad", ev.target.value), placeholder: "Cant." }),
-                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: e.precio, onChange: ev => actualizarEspecial(e.id, "precio", ev.target.value), placeholder: "Precio" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: e.precio || "", onChange: ev => actualizarEspecial(e.id, "precio", ev.target.value), placeholder: "Precio" }),
                     React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarEspecial(e.id) },
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
@@ -17031,8 +17578,8 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                     React.createElement("select", { className: "gj-select", style: { flex: 2 }, value: l.variedad, onChange: e => updateCespedArtRow(l.id, "variedad", e.target.value) },
                         React.createElement("option", { value: "" }, "Variedad..."),
                         (data.variedadesCespedArtificial || []).map(v => React.createElement("option", { key: v, value: v }, v))),
-                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: l.m2, onChange: e => updateCespedArtRow(l.id, "m2", e.target.value), placeholder: "m\u00B2" }),
-                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio, onChange: e => updateCespedArtRow(l.id, "precio", e.target.value), placeholder: "\u20AC/m\u00B2" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: l.m2 || "", onChange: e => updateCespedArtRow(l.id, "m2", e.target.value), placeholder: "m\u00B2" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio || "", onChange: e => updateCespedArtRow(l.id, "precio", e.target.value), placeholder: "\u20AC/m\u00B2" }),
                     React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarCespedArtRow(l.id) },
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost block", onClick: addCespedArtRow },
@@ -17042,7 +17589,7 @@ function CalculadoraObra({ data, persist, onGuardar }) {
                 materialesVarios.map(mv => (React.createElement("div", { key: mv.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
                     React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: mv.desc, onChange: e => actualizarMaterialVario(mv.id, "desc", e.target.value), placeholder: "Descripci\u00F3n" }),
                     React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: mv.cantidad, onChange: e => actualizarMaterialVario(mv.id, "cantidad", e.target.value), placeholder: "Cant." }),
-                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: mv.precio, onChange: e => actualizarMaterialVario(mv.id, "precio", e.target.value), placeholder: "Precio" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: mv.precio || "", onChange: e => actualizarMaterialVario(mv.id, "precio", e.target.value), placeholder: "Precio" }),
                     React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarMaterialVario(mv.id) },
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost block", onClick: añadirMaterialVario },
@@ -17067,7 +17614,7 @@ function CalculadoraObra({ data, persist, onGuardar }) {
             riegoLineas.length > 0 && (React.createElement("div", { style: { marginTop: 12 } }, riegoLineas.map(l => (React.createElement("div", { key: l.id, className: "gj-row", style: { gap: 6, marginBottom: 6, alignItems: "center" } },
                 React.createElement("div", { style: { flex: 2, fontSize: 12 } }, l.label),
                 React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: l.cantidad, onChange: e => actualizarLineaRiego(l.id, "cantidad", e.target.value), placeholder: l.unidad }),
-                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio, onChange: e => actualizarLineaRiego(l.id, "precio", e.target.value) }),
+                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: l.precio || "", onChange: e => actualizarLineaRiego(l.id, "precio", e.target.value), placeholder: "0" }),
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarLineaRiego(l.id) },
                     React.createElement(X, { size: 14 })))))))),
         React.createElement("div", { className: "gj-card" },
@@ -17081,21 +17628,58 @@ function CalculadoraObra({ data, persist, onGuardar }) {
             lineasCalculadas.length === 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Introduce alguna cantidad arriba para ver el total.")),
         React.createElement("button", { className: "gj-btn accent block", onClick: guardar, disabled: !nombre.trim() || lineasCalculadas.length === 0 },
             React.createElement(Plus, { size: 14 }),
-            " Guardar presupuesto de obra")));
+            " ",
+            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra")));
 }
 function PresupuestosView({ data, persist }) {
     const [printId, setPrintId] = useState(null);
+    const [editandoObraId, setEditandoObraId] = useState(null);
     const [tipoPresupuesto, setTipoPresupuesto] = useState("mantenimiento");
-    const guardarObra = (datosCalc) => {
+    const guardarObra = (datosCalc, idExistente) => {
         const next = structuredClone(data);
         next.presupuestos = next.presupuestos || [];
-        const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
-        next.presupuestos.push({
-            id: uid("prs"), tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
-            telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total,
-            fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
-            numero, numeroFormateado,
-        });
+        if (idExistente) {
+            const pres = next.presupuestos.find(x => x.id === idExistente);
+            if (!pres)
+                return;
+            const yaFirmado = !!(pres.firmaEmpresaObra || pres.firmaClienteObra || pres.aprobado);
+            if (yaFirmado) {
+                pres.historialEdiciones = pres.historialEdiciones || [];
+                pres.historialEdiciones.push({
+                    fechaHora: new Date().toISOString(),
+                    nombre: pres.nombre, direccion: pres.direccion, telefono: pres.telefono, email: pres.email,
+                    importe: pres.importe, partidas: pres.partidas,
+                });
+            }
+            pres.nombre = datosCalc.nombre;
+            pres.direccion = datosCalc.direccion;
+            pres.telefono = datosCalc.telefono;
+            pres.email = datosCalc.email;
+            pres.dni = datosCalc.dniCliente || pres.dni || "";
+            pres.importe = datosCalc.total;
+            pres.partidas = datosCalc.partidas || [];
+            pres.setosObra = datosCalc.setosObra || [];
+            pres.precioPodaSeto = datosCalc.precioPodaSeto || 0;
+            pres.cespedArtLineas = datosCalc.cespedArtLineas || [];
+            pres.tiempoDesplazamientoObraMin = datosCalc.tiempoDesplazamientoObraMin || 0;
+            pres.idaYVueltaObra = datosCalc.idaYVueltaObra;
+            pres.numeroDiasObra = datosCalc.numeroDiasObra || 0;
+            pres.numeroPersonasObra = datosCalc.numeroPersonasObra || 0;
+        }
+        else {
+            const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
+            next.presupuestos.push({
+                id: uid("prs"), tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
+                telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, dni: datosCalc.dniCliente || "",
+                fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
+                numero, numeroFormateado,
+                setosObra: datosCalc.setosObra || [], precioPodaSeto: datosCalc.precioPodaSeto || 0,
+                cespedArtLineas: datosCalc.cespedArtLineas || [],
+                tiempoDesplazamientoObraMin: datosCalc.tiempoDesplazamientoObraMin || 0,
+                idaYVueltaObra: datosCalc.idaYVueltaObra, numeroDiasObra: datosCalc.numeroDiasObra || 0,
+                numeroPersonasObra: datosCalc.numeroPersonasObra || 0,
+            });
+        }
         persist(next);
     };
     const guardarMantenimiento = (datosCalc) => {
@@ -17106,7 +17690,7 @@ function PresupuestosView({ data, persist }) {
             id: uid("prs"), tipo: "mantenimiento", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
             telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, totalAnual: datosCalc.totalAnual,
             fecha: todayStr(), aprobado: false, convertido: false, labores: datosCalc.labores || [], fotos: datosCalc.fotos || [],
-            fechaInicioMantenimiento: "", dni: "", cuentaBancaria: "", caracteristicasJardin: datosCalc.caracteristicasJardin || null,
+            fechaInicioMantenimiento: "", dni: datosCalc.dniCliente || "", cuentaBancaria: "", caracteristicasJardin: datosCalc.caracteristicasJardin || null,
             numero, numeroFormateado,
         });
         persist(next);
@@ -17129,74 +17713,20 @@ function PresupuestosView({ data, persist }) {
     const todosPresupuestos = data.presupuestos || [];
     const pendientes = todosPresupuestos.filter(p => !p.convertido && (p.tipo || "obra") === tipoPresupuesto);
     const aprobados = todosPresupuestos.filter(p => p.convertido && (p.tipo || "obra") === tipoPresupuesto);
+    if (editandoObraId) {
+        const pEditar = todosPresupuestos.find(x => x.id === editandoObraId);
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setEditandoObraId(null) }, "\u2190 Cancelar edici\u00F3n"),
+            React.createElement(CalculadoraObra, { data: data, persist: persist, presupuestoEditar: pEditar, onGuardar: (datosCalc, id) => { guardarObra(datosCalc, id); setEditandoObraId(null); setPrintId(id); } })));
+    }
     if (printId) {
         const p = todosPresupuestos.find(x => x.id === printId);
         if (p && p.tipo === "mantenimiento") {
             return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null) });
         }
-        return (React.createElement("div", null,
-            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setPrintId(null) }, "\u2190 Volver"),
-            React.createElement("div", { className: "gj-print-area gj-card", style: { background: "#fff", padding: 20 } },
-                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 10 } },
-                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 54, maxWidth: 150, objectFit: "contain" } }),
-                    React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 44, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
-                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 4 } }, "PRESUPUESTO"),
-                React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "var(--ink-soft)", marginBottom: 16 } },
-                    "N\u00BA ",
-                    (p === null || p === void 0 ? void 0 : p.numeroFormateado) || "—"),
-                React.createElement("div", { style: { fontSize: 13.5, lineHeight: 1.9 } },
-                    React.createElement("div", null,
-                        React.createElement("b", null, "Cliente:"),
-                        " ", p === null || p === void 0 ? void 0 :
-                        p.nombre),
-                    React.createElement("div", null,
-                        React.createElement("b", null, "Direcci\u00F3n:"),
-                        " ", p === null || p === void 0 ? void 0 :
-                        p.direccion),
-                    React.createElement("div", null,
-                        React.createElement("b", null, "Tel\u00E9fono:"),
-                        " ", p === null || p === void 0 ? void 0 :
-                        p.telefono),
-                    (p === null || p === void 0 ? void 0 : p.email) && React.createElement("div", null,
-                        React.createElement("b", null, "Email:"),
-                        " ",
-                        p.email),
-                    React.createElement("div", null,
-                        React.createElement("b", null, "Fecha:"),
-                        " ",
-                        p && fechaEs(p.fecha))),
-                React.createElement("div", { style: { marginTop: 24 } }, (p === null || p === void 0 ? void 0 : p.partidas) && p.partidas.length > 0 ? (React.createElement(React.Fragment, null,
-                    React.createElement("table", { style: { width: "100%", borderCollapse: "collapse", fontSize: 12.5 } },
-                        React.createElement("thead", null,
-                            React.createElement("tr", { style: { borderBottom: "2px solid var(--line)" } },
-                                React.createElement("th", { style: { textAlign: "left", padding: "4px 2px" } }, "Partida"),
-                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Cant."),
-                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Precio/ud"),
-                                React.createElement("th", { style: { textAlign: "right", padding: "4px 2px" } }, "Importe"))),
-                        React.createElement("tbody", null, p.partidas.map((l, i) => (React.createElement("tr", { key: i, style: { borderBottom: "1px solid var(--line-soft)" } },
-                            React.createElement("td", { style: { padding: "4px 2px" } }, l.label),
-                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } },
-                                l.cantidad,
-                                " ",
-                                l.unidad),
-                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px" } }, eurDec(l.precio)),
-                            React.createElement("td", { style: { textAlign: "right", padding: "4px 2px", fontWeight: 600 } }, eur(l.subtotal))))))),
-                    React.createElement("div", { style: { textAlign: "right", marginTop: 10, fontSize: 18, fontWeight: 700 } },
-                        "Total: ",
-                        eur(p.importe)))) : (React.createElement("div", { style: { padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
-                    React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Importe presupuestado"),
-                    React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))))),
-                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, "Presupuesto v\u00E1lido durante 30 d\u00EDas desde la fecha indicada. Precio sujeto a confirmaci\u00F3n final tras visita de valoraci\u00F3n, si procede."),
-                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)", gap: 20 } },
-                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
-                        SELLO_EMPRESA_B64 && React.createElement("img", { src: `data:image/png;base64,${SELLO_EMPRESA_B64}`, alt: "Sello", style: { maxHeight: 70, maxWidth: 160, opacity: 0.9 } }),
-                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Firma y sello de la empresa")),
-                    React.createElement("div", { style: { textAlign: "center", flex: 1 } },
-                        React.createElement("div", { style: { height: 70 } }),
-                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Conforme el cliente")))),
-            React.createElement("button", { className: "gj-btn primary block gj-no-print", style: { marginTop: 10 }, onClick: () => window.print() },
-                React.createElement(Printer, { size: 14 }),
-                " Imprimir / PDF")));
+        if (p) {
+            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); } }));
+        }
     }
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Presupuestos"),
