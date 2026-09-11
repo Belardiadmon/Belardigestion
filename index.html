@@ -12830,6 +12830,74 @@ function asignarNumeroPresupuesto(next, fecha) {
     const año = (fecha || todayStr()).slice(0, 4);
     return { numero: n, numeroFormateado: `${año}/${String(n).padStart(3, "0")}` };
 }
+function guardarObraGlobal(data, persist, datosCalc, idExistente) {
+    const next = structuredClone(data);
+    next.presupuestos = next.presupuestos || [];
+    if (idExistente) {
+        const pres = next.presupuestos.find(x => x.id === idExistente);
+        if (!pres)
+            return;
+        const yaFirmado = !!(pres.firmaEmpresaObra || pres.firmaClienteObra || pres.aprobado);
+        if (yaFirmado) {
+            pres.historialEdiciones = pres.historialEdiciones || [];
+            pres.historialEdiciones.push({
+                fechaHora: new Date().toISOString(),
+                nombre: pres.nombre, direccion: pres.direccion, telefono: pres.telefono, email: pres.email,
+                importe: pres.importe, partidas: pres.partidas,
+            });
+        }
+        pres.nombre = datosCalc.nombre;
+        pres.direccion = datosCalc.direccion;
+        pres.telefono = datosCalc.telefono;
+        pres.email = datosCalc.email;
+        pres.dni = datosCalc.dniCliente || pres.dni || "";
+        pres.importe = datosCalc.total;
+        pres.partidas = datosCalc.partidas || [];
+        pres.setosObra = datosCalc.setosObra || [];
+        pres.precioPodaSeto = datosCalc.precioPodaSeto || 0;
+        pres.cespedArtLineas = datosCalc.cespedArtLineas || [];
+        pres.tiempoDesplazamientoObraMin = datosCalc.tiempoDesplazamientoObraMin || 0;
+        pres.idaYVueltaObra = datosCalc.idaYVueltaObra;
+        pres.numeroDiasObra = datosCalc.numeroDiasObra || 0;
+        pres.numeroPersonasObra = datosCalc.numeroPersonasObra || 0;
+    }
+    else {
+        const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
+        next.presupuestos.push({
+            id: uid("prs"), tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
+            telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, dni: datosCalc.dniCliente || "",
+            fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
+            numero, numeroFormateado,
+            setosObra: datosCalc.setosObra || [], precioPodaSeto: datosCalc.precioPodaSeto || 0,
+            cespedArtLineas: datosCalc.cespedArtLineas || [],
+            tiempoDesplazamientoObraMin: datosCalc.tiempoDesplazamientoObraMin || 0,
+            idaYVueltaObra: datosCalc.idaYVueltaObra, numeroDiasObra: datosCalc.numeroDiasObra || 0,
+            numeroPersonasObra: datosCalc.numeroPersonasObra || 0,
+        });
+    }
+    persist(next);
+}
+function guardarAmpliacionObraGlobal(data, persist, datosCalc, obraOriginalId) {
+    const next = structuredClone(data);
+    next.presupuestos = next.presupuestos || [];
+    const original = next.presupuestos.find(x => x.id === obraOriginalId);
+    const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
+    const nuevoId = uid("prs");
+    next.presupuestos.push({
+        id: nuevoId, tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
+        telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, dni: datosCalc.dniCliente || "",
+        fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
+        numero, numeroFormateado,
+        setosObra: datosCalc.setosObra || [], precioPodaSeto: datosCalc.precioPodaSeto || 0,
+        cespedArtLineas: datosCalc.cespedArtLineas || [],
+        tiempoDesplazamientoObraMin: datosCalc.tiempoDesplazamientoObraMin || 0,
+        idaYVueltaObra: datosCalc.idaYVueltaObra, numeroDiasObra: datosCalc.numeroDiasObra || 0,
+        numeroPersonasObra: datosCalc.numeroPersonasObra || 0,
+        ampliacionDeId: obraOriginalId, ampliacionDeNumero: original ? original.numeroFormateado : "",
+    });
+    persist(next);
+    return nuevoId;
+}
 function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
     const telLimpio = (p.telefono || "").replace(/\D/g, "");
     const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
@@ -13690,6 +13758,7 @@ const GROUPS = [
     { id: "operatividad", label: "Operatividad", icon: Smartphone, views: [
             { id: "trabajador", label: "Fichar", icon: Smartphone },
             { id: "pendientes", label: "Pendientes", icon: ClipboardList },
+            { id: "riego", label: "Riego", icon: Sprout },
             { id: "mapa", label: "Mapa", icon: Map },
         ] },
     { id: "administracion", label: "Administración", icon: Users, views: [
@@ -13958,6 +14027,7 @@ function App() {
                     React.createElement(EquipoView, { ...props })),
                 view === "rutas" && React.createElement(RutasView, { ...props }),
                 view === "pendientes" && React.createElement(PendientesView, { ...props }),
+                view === "riego" && React.createElement(RiegoView, { ...props }),
                 view === "trabajador" && React.createElement(TrabajadorView, { ...props }),
                 view === "horas" && React.createElement(AdminGate, { ...props },
                     React.createElement(HorasView, { ...props })),
@@ -14441,7 +14511,18 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
                     c.estadoObra === "finalizada" ? "Finalizada" : "En curso")),
                 showImportes && c.esMantenimiento && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4, fontWeight: 600 } },
                     eur(c.cuotaMensual),
-                    "/mes")),
+                    "/mes"),
+                c.esMantenimiento && c.riegoEstado === "on" && c.riegoDiasSemana && (React.createElement("div", { style: {
+                        display: "inline-block", marginTop: 4, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10,
+                        background: c.riegoDiasSemana <= 3 ? "#FDE68A" : c.riegoDiasSemana <= 6 ? "#FDBA74" : "#BBF7D0",
+                        color: "#3f3f1f",
+                    } },
+                    "\uD83D\uDCA7 Riego ",
+                    c.riegoDiasSemana,
+                    "d/sem \u00B7 ",
+                    c.riegoVecesDia || 1,
+                    "x/d\u00EDa")),
+                c.esMantenimiento && c.riegoEstado === "off" && (React.createElement("div", { style: { display: "inline-block", marginTop: 4, fontSize: 11, fontWeight: 600, padding: "2px 8px", borderRadius: 10, background: "var(--line-soft)", color: "var(--ink-soft)" } }, "\uD83D\uDCA7 Riego OFF"))),
             React.createElement("div", { style: { display: "flex", gap: 2 }, onClick: e => e.stopPropagation() },
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => { setFocusClienteId(c.id); setView("mapa"); }, title: "Ver en el mapa de la app" },
                     React.createElement(Map, { size: 14, color: "var(--primary)" })),
@@ -14796,6 +14877,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const worker = workerId ? getWorker(workerId) : null;
     const [notaAbierta, setNotaAbierta] = useState(null);
     const [laboresAbiertas, setLaboresAbiertas] = useState(null);
+    const [riegoPodaAbierto, setRiegoPodaAbierto] = useState(null);
+    const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
     const [notaTexto, setNotaTexto] = useState("");
     const today = todayStr();
     const misOrdenes = data.orders.filter(o => o.fecha === today && o.workerIds.includes(workerId));
@@ -14816,6 +14899,41 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         else
             stop.labores = [...stop.labores, labor];
         persist(next);
+    };
+    const guardarRiegoPoda = (clienteId) => {
+        const sel = riegoPodaSel[clienteId];
+        if (!sel || !sel.accion)
+            return;
+        const next = structuredClone(data);
+        const cliente = next.clients.find(c => c.id === clienteId);
+        if (!cliente)
+            return;
+        const nombreTrabajador = worker ? worker.nombre : "";
+        if (sel.accion === "revision") {
+            cliente.riegoRevisadoFecha = todayStr();
+            cliente.riegoRevisadoPor = nombreTrabajador;
+            cliente.revisionesRiego = cliente.revisionesRiego || [];
+            cliente.revisionesRiego.push({ trabajador: nombreTrabajador, fecha: todayStr() });
+        }
+        else if (sel.accion === "on") {
+            cliente.riegoEstado = "on";
+            cliente.riegoDiasSemana = Number(sel.dias) || 1;
+            cliente.riegoVecesDia = Number(sel.veces) || 1;
+            cliente.riegoActualizado = todayStr();
+            cliente.riegoActualizadoPor = nombreTrabajador;
+        }
+        else if (sel.accion === "off") {
+            cliente.riegoEstado = "off";
+            cliente.riegoActualizado = todayStr();
+            cliente.riegoActualizadoPor = nombreTrabajador;
+        }
+        else if (sel.accion === "poda") {
+            cliente.podaCompletaFecha = todayStr();
+            cliente.podaCompletaPor = nombreTrabajador;
+        }
+        persist(next);
+        setRiegoPodaAbierto(null);
+        setRiegoPodaSel(sel2 => ({ ...sel2, [clienteId]: {} }));
     };
     const marcarNoHecho = (orderId, clienteId) => {
         var _a;
@@ -14953,6 +15071,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                             React.createElement("b", null, fmtHM(totalDesplazamiento / 60)))) : null;
                     })(),
                     o.stops.map((s, idxStop) => {
+                        var _a, _b, _c, _d;
                         const cli = getClient(s.clienteId);
                         const dur = s.estado === "completado" ? diffHours(s.horaInicio, s.horaFin) : 0;
                         const key = o.id + s.clienteId;
@@ -14994,6 +15113,39 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                         React.createElement("span", { style: { fontSize: 12.5 } }, labor),
                                         React.createElement("input", { type: "checkbox", checked: (s.labores || []).includes(labor), onChange: () => toggleLabor(o.id, s.clienteId, labor) })))))),
                                     !laboresAbiertas && s.labores && s.labores.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, s.labores.join(", "))))),
+                                (cli === null || cli === void 0 ? void 0 : cli.esMantenimiento) && (React.createElement("div", { style: { marginTop: 6 } },
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "4px 6px", fontSize: 11.5 }, onClick: () => setRiegoPodaAbierto(riegoPodaAbierto === key ? null : key) },
+                                        React.createElement(Sprout, { size: 12 }),
+                                        " Riego y poda"),
+                                    riegoPodaAbierto === key && (React.createElement("div", { style: { marginTop: 4, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
+                                        React.createElement("select", { className: "gj-select", value: ((_a = riegoPodaSel[s.clienteId]) === null || _a === void 0 ? void 0 : _a.accion) || "", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], accion: e.target.value } })) },
+                                            React.createElement("option", { value: "" }, "Selecciona..."),
+                                            React.createElement("option", { value: "revision" }, "Revisi\u00F3n de riego completa"),
+                                            React.createElement("option", { value: "on" }, "Riego ON"),
+                                            React.createElement("option", { value: "off" }, "Riego OFF"),
+                                            React.createElement("option", { value: "poda" }, "Poda COMPLETA")),
+                                        ((_b = riegoPodaSel[s.clienteId]) === null || _b === void 0 ? void 0 : _b.accion) === "on" && (React.createElement("div", { className: "gj-grid2", style: { marginTop: 6 } },
+                                            React.createElement("div", null,
+                                                React.createElement("label", { className: "gj-label" }, "D\u00EDas/semana"),
+                                                React.createElement("select", { className: "gj-select", value: ((_c = riegoPodaSel[s.clienteId]) === null || _c === void 0 ? void 0 : _c.dias) || "", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], dias: e.target.value } })) },
+                                                    React.createElement("option", { value: "" }, "-"),
+                                                    [1, 2, 3, 4, 5, 6, 7].map(d => React.createElement("option", { key: d, value: d }, d)))),
+                                            React.createElement("div", null,
+                                                React.createElement("label", { className: "gj-label" }, "Veces/d\u00EDa"),
+                                                React.createElement("select", { className: "gj-select", value: ((_d = riegoPodaSel[s.clienteId]) === null || _d === void 0 ? void 0 : _d.veces) || "", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], veces: e.target.value } })) },
+                                                    React.createElement("option", { value: "" }, "-"),
+                                                    React.createElement("option", { value: "1" }, "1"),
+                                                    React.createElement("option", { value: "2" }, "2"))))),
+                                        React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: () => guardarRiegoPoda(s.clienteId) }, "Guardar"))),
+                                    !riegoPodaAbierto && cli.riegoEstado === "on" && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } },
+                                        "Riego ON \u2014 ",
+                                        cli.riegoDiasSemana,
+                                        " d\u00EDa",
+                                        cli.riegoDiasSemana == 1 ? "" : "s",
+                                        "/semana, ",
+                                        cli.riegoVecesDia,
+                                        "x/d\u00EDa")),
+                                    !riegoPodaAbierto && cli.riegoEstado === "off" && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, "Riego OFF")))),
                                 React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Materiales aportados/utilizados (opcional)"),
                                     React.createElement("input", { className: "gj-input", defaultValue: s.materiales || "", placeholder: "Ej: 2 sacos de sustrato, manguera 10m", onBlur: e => updateStop(o.id, s.clienteId, { materiales: e.target.value }) })),
@@ -15030,6 +15182,40 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                             ")")))),
                     o.jornadaFinalizada ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Jornada finalizada \u2713")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, disabled: !todosCompletados, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada"))));
             })))));
+}
+function RiegoView({ data }) {
+    const clientesMantenimiento = (data.clients || []).filter(c => c.esMantenimiento).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const colorRiego = (dias) => dias <= 3 ? "#FDE68A" : dias <= 6 ? "#FDBA74" : "#BBF7D0";
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Control de riego"),
+        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 } }, "Estado de activaci\u00F3n del riego en cada jard\u00EDn de mantenimiento. \uD83D\uDFE1 1-3 d\u00EDas/semana \u00B7 \uD83D\uDFE0 4-6 d\u00EDas/semana \u00B7 \uD83D\uDFE2 7 d\u00EDas/semana."),
+        clientesMantenimiento.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay clientes de mantenimiento todav\u00EDa."),
+        clientesMantenimiento.map(c => (React.createElement("div", { className: "gj-card", key: c.id },
+            React.createElement("div", { style: { fontWeight: 600 } }, c.nombre),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 } }, c.direccion),
+            c.riegoEstado === "on" && c.riegoDiasSemana ? (React.createElement("div", { style: {
+                    display: "inline-block", fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 10,
+                    background: colorRiego(c.riegoDiasSemana), color: "#3f3f1f",
+                } },
+                "\uD83D\uDCA7 Riego ON \u2014 ",
+                c.riegoDiasSemana,
+                " d\u00EDa",
+                c.riegoDiasSemana == 1 ? "" : "s",
+                "/semana \u00B7 ",
+                c.riegoVecesDia || 1,
+                "x/d\u00EDa")) : c.riegoEstado === "off" ? (React.createElement("div", { style: { display: "inline-block", fontSize: 12, fontWeight: 600, padding: "3px 10px", borderRadius: 10, background: "var(--line-soft)", color: "var(--ink-soft)" } }, "\uD83D\uDCA7 Riego OFF")) : (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Sin datos de riego todav\u00EDa.")),
+            c.riegoActualizadoPor && (React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
+                "Actualizado por ",
+                c.riegoActualizadoPor,
+                " el ",
+                fechaEs(c.riegoActualizado))),
+            c.revisionesRiego && c.revisionesRiego.length > 0 && (React.createElement("div", { style: { marginTop: 8, paddingTop: 6, borderTop: "1px solid var(--line-soft)" } },
+                React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 2 } }, "Revisiones completas de riego:"),
+                c.revisionesRiego.slice().reverse().map((r, i) => (React.createElement("div", { key: i, style: { fontSize: 11.5, color: "var(--ink-soft)" } },
+                    "\u2713 ",
+                    fechaEs(r.fecha),
+                    " \u2014 ",
+                    r.trabajador || "trabajador sin identificar"))))))))));
 }
 function PendientesView({ data, persist, getClient, adminMode }) {
     const [clienteId, setClienteId] = useState("");
@@ -16930,10 +17116,14 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 10 } },
                     React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 54, maxWidth: 150, objectFit: "contain" } }),
                     React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 44, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
-                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 4 } }, "PRESUPUESTO"),
+                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 4 } }, (p === null || p === void 0 ? void 0 : p.ampliacionDeId) ? "AUTORIZACIÓN DE AMPLIACIÓN DE OBRA" : "PRESUPUESTO"),
                 React.createElement("div", { style: { textAlign: "center", fontSize: 12, color: "var(--ink-soft)", marginBottom: 16 } },
                     "N\u00BA ",
                     (p === null || p === void 0 ? void 0 : p.numeroFormateado) || "—"),
+                (p === null || p === void 0 ? void 0 : p.ampliacionDeId) && (React.createElement("div", { style: { fontSize: 12.5, marginBottom: 14, padding: 8, border: "1px solid var(--line)", borderRadius: 4 } },
+                    "Ampliaci\u00F3n de trabajos o materiales sobre la obra contratada en el presupuesto N\u00BA ",
+                    p.ampliacionDeNumero,
+                    ", solicitada durante la ejecuci\u00F3n. El cliente autoriza su realizaci\u00F3n y acepta la valoraci\u00F3n econ\u00F3mica que se detalla a continuaci\u00F3n.")),
                 React.createElement("div", { style: { fontSize: 13.5, lineHeight: 1.9 } },
                     React.createElement("div", null,
                         React.createElement("b", null, "Cliente:"),
@@ -16976,14 +17166,16 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
                         eur(p.importe)))) : (React.createElement("div", { style: { padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
                     React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Importe presupuestado"),
                     React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))))),
-                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, "Presupuesto v\u00E1lido durante 30 d\u00EDas desde la fecha indicada. Precio sujeto a confirmaci\u00F3n final tras visita de valoraci\u00F3n, si procede."),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, (p === null || p === void 0 ? void 0 : p.ampliacionDeId)
+                    ? "Al firmar, el cliente autoriza la ejecución de estos trabajos adicionales y acepta el importe indicado."
+                    : "Presupuesto válido durante 30 días desde la fecha indicada. Precio sujeto a confirmación final tras visita de valoración, si procede."),
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)", gap: 20 } },
                     React.createElement("div", { style: { textAlign: "center", flex: 1 } },
                         p.firmaEmpresaObra ? (React.createElement("img", { src: p.firmaEmpresaObra, alt: "Firma empresa", style: { maxHeight: 70, maxWidth: 160 } })) : SELLO_EMPRESA_B64 ? (React.createElement("img", { src: `data:image/png;base64,${SELLO_EMPRESA_B64}`, alt: "Sello", style: { maxHeight: 70, maxWidth: 160, opacity: 0.9 } })) : null,
                         React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Firma y sello de la empresa")),
                     React.createElement("div", { style: { textAlign: "center", flex: 1 } },
                         p.firmaClienteObra && React.createElement("img", { src: p.firmaClienteObra, alt: "Firma cliente", style: { maxHeight: 70, maxWidth: 160 } }),
-                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, "Conforme el cliente")))),
+                        React.createElement("div", { style: { borderTop: "1px solid var(--line)", paddingTop: 4, marginTop: 4 } }, (p === null || p === void 0 ? void 0 : p.ampliacionDeId) ? "El cliente autoriza la ampliación" : "Conforme el cliente")))),
             React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaEmpresaObra ? (React.createElement(FirmaPad, { etiqueta: "Firma de la empresa (Belardi Jardiner\u00EDa)", onGuardarFirma: guardarFirmaEmpresaObra, textoBoton: "Guardar firma de la empresa" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma de la empresa registrada"))),
             React.createElement("div", { className: "gj-card gj-no-print" }, !p.firmaClienteObra ? (React.createElement(FirmaPad, { etiqueta: "Firma del cliente", onGuardarFirma: guardarFirmaClienteObra, textoBoton: "Guardar firma del cliente" })) : (React.createElement("div", { style: { fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "\u2714 Firma del cliente registrada"))),
             React.createElement("button", { className: "gj-btn primary block gj-no-print", style: { marginTop: 10 }, onClick: () => window.print() },
@@ -17690,74 +17882,8 @@ function PresupuestosView({ data, persist }) {
     const [editandoObraId, setEditandoObraId] = useState(null);
     const [ampliandoObraId, setAmpliandoObraId] = useState(null);
     const [tipoPresupuesto, setTipoPresupuesto] = useState("mantenimiento");
-    const guardarObra = (datosCalc, idExistente) => {
-        const next = structuredClone(data);
-        next.presupuestos = next.presupuestos || [];
-        if (idExistente) {
-            const pres = next.presupuestos.find(x => x.id === idExistente);
-            if (!pres)
-                return;
-            const yaFirmado = !!(pres.firmaEmpresaObra || pres.firmaClienteObra || pres.aprobado);
-            if (yaFirmado) {
-                pres.historialEdiciones = pres.historialEdiciones || [];
-                pres.historialEdiciones.push({
-                    fechaHora: new Date().toISOString(),
-                    nombre: pres.nombre, direccion: pres.direccion, telefono: pres.telefono, email: pres.email,
-                    importe: pres.importe, partidas: pres.partidas,
-                });
-            }
-            pres.nombre = datosCalc.nombre;
-            pres.direccion = datosCalc.direccion;
-            pres.telefono = datosCalc.telefono;
-            pres.email = datosCalc.email;
-            pres.dni = datosCalc.dniCliente || pres.dni || "";
-            pres.importe = datosCalc.total;
-            pres.partidas = datosCalc.partidas || [];
-            pres.setosObra = datosCalc.setosObra || [];
-            pres.precioPodaSeto = datosCalc.precioPodaSeto || 0;
-            pres.cespedArtLineas = datosCalc.cespedArtLineas || [];
-            pres.tiempoDesplazamientoObraMin = datosCalc.tiempoDesplazamientoObraMin || 0;
-            pres.idaYVueltaObra = datosCalc.idaYVueltaObra;
-            pres.numeroDiasObra = datosCalc.numeroDiasObra || 0;
-            pres.numeroPersonasObra = datosCalc.numeroPersonasObra || 0;
-        }
-        else {
-            const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
-            next.presupuestos.push({
-                id: uid("prs"), tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
-                telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, dni: datosCalc.dniCliente || "",
-                fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
-                numero, numeroFormateado,
-                setosObra: datosCalc.setosObra || [], precioPodaSeto: datosCalc.precioPodaSeto || 0,
-                cespedArtLineas: datosCalc.cespedArtLineas || [],
-                tiempoDesplazamientoObraMin: datosCalc.tiempoDesplazamientoObraMin || 0,
-                idaYVueltaObra: datosCalc.idaYVueltaObra, numeroDiasObra: datosCalc.numeroDiasObra || 0,
-                numeroPersonasObra: datosCalc.numeroPersonasObra || 0,
-            });
-        }
-        persist(next);
-    };
-    const guardarAmpliacionObra = (datosCalc, obraOriginalId) => {
-        const next = structuredClone(data);
-        next.presupuestos = next.presupuestos || [];
-        const original = next.presupuestos.find(x => x.id === obraOriginalId);
-        const { numero, numeroFormateado } = asignarNumeroPresupuesto(next, datosCalc.fecha);
-        const nuevoId = uid("prs");
-        next.presupuestos.push({
-            id: nuevoId, tipo: "obra", nombre: datosCalc.nombre, direccion: datosCalc.direccion,
-            telefono: datosCalc.telefono, email: datosCalc.email, importe: datosCalc.total, dni: datosCalc.dniCliente || "",
-            fecha: datosCalc.fecha, aprobado: false, convertido: false, partidas: datosCalc.partidas || [],
-            numero, numeroFormateado,
-            setosObra: datosCalc.setosObra || [], precioPodaSeto: datosCalc.precioPodaSeto || 0,
-            cespedArtLineas: datosCalc.cespedArtLineas || [],
-            tiempoDesplazamientoObraMin: datosCalc.tiempoDesplazamientoObraMin || 0,
-            idaYVueltaObra: datosCalc.idaYVueltaObra, numeroDiasObra: datosCalc.numeroDiasObra || 0,
-            numeroPersonasObra: datosCalc.numeroPersonasObra || 0,
-            ampliacionDeId: obraOriginalId, ampliacionDeNumero: original ? original.numeroFormateado : "",
-        });
-        persist(next);
-        return nuevoId;
-    };
+    const guardarObra = (datosCalc, idExistente) => guardarObraGlobal(data, persist, datosCalc, idExistente);
+    const guardarAmpliacionObra = (datosCalc, obraOriginalId) => guardarAmpliacionObraGlobal(data, persist, datosCalc, obraOriginalId);
     const guardarMantenimiento = (datosCalc) => {
         const next = structuredClone(data);
         next.presupuestos = next.presupuestos || [];
@@ -17858,14 +17984,37 @@ function PresupuestosView({ data, persist }) {
 }
 function HistorialPresupuestosView({ data, persist }) {
     const [printId, setPrintId] = useState(null);
+    const [editandoObraId, setEditandoObraId] = useState(null);
+    const [ampliandoObraId, setAmpliandoObraId] = useState(null);
     const todosPresupuestos = data.presupuestos || [];
+    if (editandoObraId) {
+        const pEditar = todosPresupuestos.find(x => x.id === editandoObraId);
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setEditandoObraId(null) }, "\u2190 Cancelar edici\u00F3n"),
+            React.createElement(CalculadoraObra, { data: data, persist: persist, presupuestoEditar: pEditar, onGuardar: (datosCalc, id) => { guardarObraGlobal(data, persist, datosCalc, id); setEditandoObraId(null); setPrintId(id); } })));
+    }
+    if (ampliandoObraId) {
+        const obraOriginal = todosPresupuestos.find(x => x.id === ampliandoObraId);
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setAmpliandoObraId(null) }, "\u2190 Cancelar ampliaci\u00F3n"),
+            React.createElement("div", { className: "gj-card gj-no-print", style: { background: "var(--pend-bg)" } },
+                "Nueva ampliaci\u00F3n del presupuesto N\u00BA ", obraOriginal === null || obraOriginal === void 0 ? void 0 :
+                obraOriginal.numeroFormateado,
+                " \u2014 ", obraOriginal === null || obraOriginal === void 0 ? void 0 :
+                obraOriginal.nombre),
+            React.createElement(CalculadoraObra, { data: data, persist: persist, datosClienteIniciales: obraOriginal ? { nombre: obraOriginal.nombre, direccion: obraOriginal.direccion, telefono: obraOriginal.telefono, email: obraOriginal.email, dni: obraOriginal.dni } : null, onGuardar: (datosCalc) => {
+                    const nuevoId = guardarAmpliacionObraGlobal(data, persist, datosCalc, ampliandoObraId);
+                    setAmpliandoObraId(null);
+                    setPrintId(nuevoId);
+                } })));
+    }
     if (printId) {
         const p = todosPresupuestos.find(x => x.id === printId);
         if (p && p.tipo === "mantenimiento") {
             return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null) });
         }
         if (p) {
-            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => setPrintId(null), onNuevaAmpliacion: () => setPrintId(null), onAbrirDoc: (id) => setPrintId(id) }));
+            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); }, onNuevaAmpliacion: () => { setPrintId(null); setAmpliandoObraId(p.id); }, onAbrirDoc: (id) => setPrintId(id) }));
         }
     }
     return (React.createElement("div", null,
