@@ -15463,6 +15463,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const [extraNuevoLugar, setExtraNuevoLugar] = useState("");
     const [extraTipoTaller, setExtraTipoTaller] = useState(""); // "" | "consumibles" | "dejar" | "recogida"
     const [extraMaquinaId, setExtraMaquinaId] = useState("");
+    const [extraNuevaMaquina, setExtraNuevaMaquina] = useState("");
     const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
     const [notaTexto, setNotaTexto] = useState("");
     const today = todayStr();
@@ -15553,6 +15554,18 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         next.listasFichaje[categoria] = [...(next.listasFichaje[categoria] || []), extraNuevoLugar.trim()];
         persist(next);
         setExtraNuevoLugar("");
+    };
+    const añadirMaquinaDesdeFichar = () => {
+        if (!extraNuevaMaquina.trim())
+            return;
+        const next = structuredClone(data);
+        next.maquinaria = next.maquinaria || [];
+        next.contadorMaquinaria = (next.contadorMaquinaria || 0) + 1;
+        const nuevaId = uid("maq");
+        next.maquinaria.push({ id: nuevaId, numero: next.contadorMaquinaria, nombre: extraNuevaMaquina.trim(), fechaCompra: "", enTaller: null });
+        persist(next);
+        setExtraNuevaMaquina("");
+        setExtraMaquinaId(nuevaId);
     };
     const subirFotoStop = async (orderId, clienteId, campo, files) => {
         const archivos = Array.from(files || []);
@@ -15902,7 +15915,10 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                             "N\u00BA ",
                                             m.numero,
                                             " \u2014 ",
-                                            m.nombre)))))),
+                                            m.nombre)))),
+                                    adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
+                                        React.createElement("input", { className: "gj-input", value: extraNuevaMaquina, onChange: e => setExtraNuevaMaquina(e.target.value), placeholder: "\u00BFNo est\u00E1 en la lista? A\u00F1\u00E1dela aqu\u00ED" }),
+                                        React.createElement("button", { className: "gj-btn ghost", onClick: añadirMaquinaDesdeFichar }, "A\u00F1adir"))))),
                                 extraTipoTaller === "recogida" && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("div", { className: "gj-label" }, "\u00BFQu\u00E9 m\u00E1quina se recoge?"),
                                     (data.maquinaria || []).filter(m => m.enTaller).length === 0 ? (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay ninguna m\u00E1quina dejada en talleres o almacenes ahora mismo.")) : (React.createElement("select", { className: "gj-select", value: extraMaquinaId, onChange: e => setExtraMaquinaId(e.target.value) },
@@ -15920,15 +15936,19 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
                                 React.createElement("button", { className: "gj-btn ghost", onClick: () => añadirOpcionListaFichaje(extraCategoria) }, "A\u00F1adir"))))),
                         React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => { setExtraAbierto(null); setExtraCategoria(null); setExtraLugar(""); setExtraTipoTaller(""); setExtraMaquinaId(""); } }, "Cerrar"))),
-                    (o.entradaMananaCoord || o.salidaJornadaCoord) && adminMode && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, marginBottom: 4 } },
-                        o.entradaMananaCoord && (React.createElement("a", { href: mapsLinkCoord(o.entradaMananaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
+                    (o.entradaMananaCoord || o.salidaJornadaCoord) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, marginBottom: 4, fontSize: 11.5 } },
+                        o.entradaMananaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(o.entradaMananaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
                             "\uD83D\uDCCD Ver entrada (",
                             o.entradaMananaHora,
-                            ")")),
-                        o.salidaJornadaCoord && (React.createElement("a", { href: mapsLinkCoord(o.salidaJornadaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
+                            ")")) : (React.createElement("span", { style: { color: "var(--ink-soft)" } },
+                            "Entrada: ",
+                            o.entradaMananaHora))),
+                        o.salidaJornadaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(o.salidaJornadaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
                             "\uD83D\uDCCD Ver salida (",
                             o.salidaJornadaHora,
-                            ")")))),
+                            ")")) : (React.createElement("span", { style: { color: "var(--ink-soft)" } },
+                            "Salida: ",
+                            o.salidaJornadaHora))))),
                     o.jornadaFinalizada ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Jornada finalizada \u2713")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, disabled: !todosCompletados, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada"))));
             })))));
 }
@@ -19059,6 +19079,9 @@ function FestivoForm({ data, persist, adminRole }) {
     const [fecha, setFecha] = useState(todayStr());
     const [tipo, setTipo] = useState("oficial");
     const [nombre, setNombre] = useState("");
+    const now = new Date();
+    const [mesCal, setMesCal] = useState(now.getMonth());
+    const [anioCal, setAnioCal] = useState(now.getFullYear());
     const añadir = () => {
         const afectadas = festivoAfectaObras(data, fecha);
         if (afectadas.length > 0 && adminRole !== "admin1") {
@@ -19069,6 +19092,9 @@ function FestivoForm({ data, persist, adminRole }) {
         next.festivos[fecha] = { tipo, nombre: nombre.trim() };
         persist(next);
         setNombre("");
+        const [y, m] = fecha.split("-").map(Number);
+        setAnioCal(y);
+        setMesCal(m - 1);
     };
     const quitar = (dateStr) => {
         const next = structuredClone(data);
@@ -19076,6 +19102,8 @@ function FestivoForm({ data, persist, adminRole }) {
         persist(next);
     };
     const festivos = Object.entries(data.festivos || {}).sort((a, b) => a[0].localeCompare(b[0]));
+    const diasEnMesCal = new Date(anioCal, mesCal + 1, 0).getDate();
+    const offsetCal = (new Date(anioCal, mesCal, 1).getDay() + 6) % 7;
     return (React.createElement("div", { className: "gj-card" },
         React.createElement("div", { className: "gj-h3" }, "D\u00EDas festivos"),
         React.createElement("div", { className: "gj-grid2" },
@@ -19093,6 +19121,45 @@ function FestivoForm({ data, persist, adminRole }) {
         React.createElement("button", { className: "gj-btn block", onClick: añadir },
             React.createElement(PartyPopper, { size: 14 }),
             " A\u00F1adir festivo"),
+        React.createElement("div", { style: { marginTop: 14 } },
+            React.createElement("div", { className: "gj-row", style: { justifyContent: "center", gap: 14, marginBottom: 6 } },
+                React.createElement("button", { className: "gj-btn ghost", onClick: () => { if (mesCal === 0) {
+                        setMesCal(11);
+                        setAnioCal(a => a - 1);
+                    }
+                    else
+                        setMesCal(m => m - 1); } },
+                    React.createElement(ChevronLeft, { size: 16 })),
+                React.createElement("div", { style: { fontWeight: 700 } },
+                    MESES[mesCal],
+                    " ",
+                    anioCal),
+                React.createElement("button", { className: "gj-btn ghost", onClick: () => { if (mesCal === 11) {
+                        setMesCal(0);
+                        setAnioCal(a => a + 1);
+                    }
+                    else
+                        setMesCal(m => m + 1); } },
+                    React.createElement(ChevronRight, { size: 16 }))),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, maxWidth: 320, margin: "0 auto" } },
+                DIAS_SEMANA.map(dl => React.createElement("div", { key: dl, style: { textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--ink-soft)" } }, dl)),
+                Array.from({ length: offsetCal }, (_, i) => React.createElement("div", { key: "off" + i })),
+                Array.from({ length: diasEnMesCal }, (_, i) => i + 1).map(d => {
+                    const dateStr = `${anioCal}-${String(mesCal + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                    const f = (data.festivos || {})[dateStr];
+                    return (React.createElement("div", { key: d, title: f ? (f.nombre || f.tipo) : "", style: {
+                            textAlign: "center", fontSize: 11, padding: "4px 0", borderRadius: 4,
+                            background: f ? (f.tipo === "oficial" ? "#FCA5A5" : "#FDBA74") : "transparent",
+                            color: f ? "#3f1f1f" : "var(--ink)", fontWeight: f ? 700 : 400,
+                        } }, d));
+                })),
+            React.createElement("div", { style: { display: "flex", gap: 14, marginTop: 8, fontSize: 11, justifyContent: "center" } },
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#FCA5A5", display: "inline-block" } }),
+                    " festivo oficial"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#FDBA74", display: "inline-block" } }),
+                    " festivo de empresa"))),
         festivos.length > 0 && (React.createElement("div", { style: { marginTop: 10 } }, festivos.map(([d, f]) => (React.createElement("div", { className: "gj-row", key: d, style: { padding: "4px 0", borderBottom: "1px solid var(--line-soft)" } },
             React.createElement("span", { style: { fontSize: 12.5 } },
                 fechaEs(d),
