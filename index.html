@@ -13009,6 +13009,23 @@ function gjCrc32(bytes) {
         crc = GJ_CRC_TABLA[(crc ^ bytes[i]) & 0xFF] ^ (crc >>> 8);
     return (crc ^ 0xFFFFFFFF) >>> 0;
 }
+function aligerarDatosParaCopia(data) {
+    const ligero = structuredClone(data);
+    const quitarDataUrl = (arr) => (arr || []).map(f => ({ name: f.name, dataUrl: null }));
+    (ligero.orders || []).forEach(o => {
+        (o.stops || []).forEach(s => {
+            if (s.fotosAntes)
+                s.fotosAntes = quitarDataUrl(s.fotosAntes);
+            if (s.fotosDespues)
+                s.fotosDespues = quitarDataUrl(s.fotosDespues);
+        });
+    });
+    (ligero.pendientes || []).forEach(p => { if (p.fotos)
+        p.fotos = quitarDataUrl(p.fotos); });
+    (ligero.presupuestos || []).forEach(p => { if (p.fotos)
+        p.fotos = quitarDataUrl(p.fotos); });
+    return ligero;
+}
 function gjCrearZip(archivos) {
     // archivos: [{ nombre, contenido (string) }]
     const enc = new TextEncoder();
@@ -13994,6 +14011,7 @@ const GROUPS = [
             { id: "gerencia", label: "Gerencia", icon: LayoutDashboard },
             { id: "rentabilidad", label: "Rentabilidad", icon: TrendingUp },
             { id: "rentabilidad-obras", label: "Rent. Obras", icon: Hammer },
+            { id: "comparativa", label: "Comparativa", icon: UserCheck },
             { id: "exportar", label: "Exportar", icon: Download },
         ] },
 ];
@@ -14094,7 +14112,7 @@ function App() {
             if (horaActual < "22:00")
                 return;
             try {
-                const datosConFecha = { ...data, _copiaGeneradaEl: `${hoy} ${horaActual}` };
+                const datosConFecha = { ...aligerarDatosParaCopia(data), _copiaGeneradaEl: `${hoy} ${horaActual}`, _fotosIncluidas: false };
                 const contenido = JSON.stringify(datosConFecha, null, 2);
                 const zip = gjCrearZip([{ nombre: "datos_belardi.json", contenido }]);
                 const url = URL.createObjectURL(zip);
@@ -14304,6 +14322,8 @@ function App() {
                     React.createElement(CalendarioObrasView, { ...props })),
                 view === "gerencia" && React.createElement(AdminGate, { ...props },
                     React.createElement(GerenciaView, { ...props })),
+                view === "comparativa" && React.createElement(AdminGate, { ...props },
+                    React.createElement(ComparativaTrabajadoresView, { ...props })),
                 view === "rentabilidad" && React.createElement(AdminGate, { ...props },
                     React.createElement(RentabilidadView, { ...props })),
                 view === "rentabilidad-obras" && React.createElement(AdminGate, { ...props },
@@ -14933,12 +14953,14 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
 function CopiaSeguridadView({ data, persist }) {
     const [generando, setGenerando] = useState(false);
     const [ultimoResultado, setUltimoResultado] = useState(null);
+    const [incluirFotos, setIncluirFotos] = useState(false);
     const copiaAutomatica = data.settings.copiaAutomatica !== false;
     const ultimaCopiaFecha = data.settings.ultimaCopiaFecha || null;
     const generarCopia = (marcarAutomatica) => {
         setGenerando(true);
         try {
-            const datosConFecha = { ...data, _copiaGeneradaEl: `${todayStr()} ${nowTime()}` };
+            const base = incluirFotos ? data : aligerarDatosParaCopia(data);
+            const datosConFecha = { ...base, _copiaGeneradaEl: `${todayStr()} ${nowTime()}`, _fotosIncluidas: incluirFotos };
             const contenido = JSON.stringify(datosConFecha, null, 2);
             const zip = gjCrearZip([{ nombre: "datos_belardi.json", contenido }]);
             const url = URL.createObjectURL(zip);
@@ -14954,7 +14976,7 @@ function CopiaSeguridadView({ data, persist }) {
                 next.settings.ultimaCopiaFecha = todayStr();
                 persist(next);
             }
-            setUltimoResultado({ ok: true, hora: nowTime() });
+            setUltimoResultado({ ok: true, hora: nowTime(), tamano: contenido.length });
         }
         catch (err) {
             setUltimoResultado({ ok: false, error: err.message });
@@ -14983,12 +15005,18 @@ function CopiaSeguridadView({ data, persist }) {
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "\u00DAltima copia"),
             React.createElement("div", { style: { fontSize: 13 } }, ultimaCopiaFecha ? fechaEs(ultimaCopiaFecha) : "Todavía no se ha hecho ninguna copia.")),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("label", { className: "gj-row", style: { cursor: "pointer" } },
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, "Incluir fotos en la copia"),
+                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)" } }, "Las fotos (incidencias, antes/despu\u00E9s de cada visita) son lo que m\u00E1s pesa. Con esto desmarcado, la copia guarda todos los dem\u00E1s datos pero no las fotos \u2014 m\u00E1s fiable en m\u00F3viles con poca conexi\u00F3n o espacio.")),
+                React.createElement("input", { type: "checkbox", checked: incluirFotos, onChange: e => setIncluirFotos(e.target.checked) }))),
         React.createElement("button", { className: "gj-btn accent block", disabled: generando, onClick: () => generarCopia(true) },
             React.createElement(Download, { size: 14 }),
             " Hacer copia de seguridad ahora"),
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 6 } }, "Descarga un archivo .zip con todos los datos de la app (clientes, presupuestos, rutas, fichajes, etc.) en formato .json dentro. Siempre se llama igual (\"copia_belardi.zip\") para que, si tu m\u00F3vil lo permite, se sobrescriba solo en vez de acumular copias \u2014 en algunos m\u00F3viles en su lugar se guardar\u00E1 como \"copia_belardi (1).zip\", eso ya lo decide el propio tel\u00E9fono, no la app. Se guarda donde tu navegador guarde las descargas (normalmente la carpeta \"Descargas\" o la app Archivos) \u2014 no hay forma de elegir otra carpeta desde aqu\u00ED."),
         ultimoResultado && (React.createElement("div", { className: "gj-card", style: { marginTop: 10, background: ultimoResultado.ok ? "var(--good-bg, #eaf7ee)" : "var(--warn-bg)" } }, ultimoResultado.ok
-            ? `✔ Copia generada a las ${ultimoResultado.hora}. Revisa la carpeta de descargas del móvil.`
+            ? `✔ Copia generada a las ${ultimoResultado.hora} (${(ultimoResultado.tamano / 1024).toFixed(0)} KB). Revisa la carpeta de descargas del móvil.`
             : `No se ha podido generar la copia: ${ultimoResultado.error}`))));
 }
 function VehiculosView({ data, persist }) {
@@ -15478,7 +15506,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             if (cliente && cliente.esMantenimiento) {
                 next.historialDuracionVisitas = next.historialDuracionVisitas || {};
                 next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
-                next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60) });
+                next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60), workerIds: [...order.workerIds] });
             }
         }
         persist(next);
@@ -19490,6 +19518,65 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
                             React.createElement("div", { className: "gj-daycell" + (esUltima ? " latest" : done ? " done" : "") + (dateStr === todayKey ? " today" : ""), style: { cursor: adminMode ? "pointer" : "default" }, onClick: () => toggleMark(c.id, dateStr) }, done ? React.createElement(CheckCircle2, { size: 13 }) : "")));
                     }))))))),
         data.clients.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "A\u00F1ade clientes para verlos aqu\u00ED.")));
+}
+function ComparativaTrabajadoresView({ data, getWorker }) {
+    const [clienteId, setClienteId] = useState("");
+    const clientesMantenimiento = (data.clients || []).filter(c => c.esMantenimiento).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const costeHora = data.settings.costeHora || 0;
+    const historial = clienteId ? ((data.historialDuracionVisitas || {})[clienteId] || []) : [];
+    const grupos = {};
+    historial.forEach(h => {
+        const ids = (h.workerIds || []).slice().sort();
+        const clave = ids.length > 0 ? ids.join(",") : "sin_registrar";
+        grupos[clave] = grupos[clave] || { ids, visitas: [] };
+        grupos[clave].visitas.push(h);
+    });
+    const filas = Object.values(grupos).map(g => {
+        const minutos = g.visitas.map(v => v.minutos);
+        const media = minutos.reduce((a, b) => a + b, 0) / minutos.length;
+        const nombres = g.ids.length > 0 ? g.ids.map(id => { var _a; return ((_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre) || "?"; }).join(" + ") : "Sin registrar quién lo hizo";
+        return {
+            nombres, numVisitas: g.visitas.length, media,
+            minima: Math.min(...minutos), maxima: Math.max(...minutos),
+            costeMedio: (media / 60) * costeHora,
+        };
+    }).sort((a, b) => a.media - b.media);
+    const clienteSel = clientesMantenimiento.find(c => c.id === clienteId);
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Comparativa por trabajador"),
+        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 10 } }, "Compara, para el mismo cliente de mantenimiento, cu\u00E1nto tarda cada trabajador (o cuadrilla) en hacer la misma visita. Los datos se toman de las visitas ya completadas y registradas por el fichaje."),
+        React.createElement("div", { className: "gj-field" },
+            React.createElement("label", { className: "gj-label" }, "Cliente de mantenimiento"),
+            React.createElement("select", { className: "gj-select", value: clienteId, onChange: e => setClienteId(e.target.value) },
+                React.createElement("option", { value: "" }, "Selecciona un cliente..."),
+                clientesMantenimiento.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
+        clienteId && historial.length === 0 && (React.createElement("div", { className: "gj-card gj-empty" },
+            "Todav\u00EDa no hay visitas completadas y registradas para ", clienteSel === null || clienteSel === void 0 ? void 0 :
+            clienteSel.nombre,
+            ".")),
+        filas.map((f, i) => (React.createElement("div", { className: "gj-card", key: i },
+            React.createElement("div", { className: "gj-row" },
+                React.createElement("div", { style: { fontWeight: 600 } }, f.nombres),
+                i === 0 && filas.length > 1 && React.createElement("span", { className: "gj-badge completado" }, "M\u00E1s r\u00E1pido"),
+                i === filas.length - 1 && filas.length > 1 && React.createElement("span", { className: "gj-badge no_hecho" }, "M\u00E1s lento")),
+            React.createElement("div", { style: { fontSize: 13, marginTop: 4 } },
+                f.numVisitas,
+                " visita",
+                f.numVisitas === 1 ? "" : "s",
+                " \u00B7 media ",
+                fmtHM(f.media / 60),
+                " (entre ",
+                fmtHM(f.minima / 60),
+                " y ",
+                fmtHM(f.maxima / 60),
+                ")"),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 2 } },
+                "Coste medio estimado por visita: ",
+                eur(f.costeMedio))))),
+        filas.length > 1 && (React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 6 } },
+            "La diferencia entre el m\u00E1s r\u00E1pido y el m\u00E1s lento es de ",
+            fmtHM((filas[filas.length - 1].media - filas[0].media) / 60),
+            " por visita."))));
 }
 function GerenciaView({ data }) {
     const hoy = new Date();
