@@ -14885,6 +14885,9 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
     const [editing, setEditing] = useState(null);
     const [busqueda, setBusqueda] = useState("");
     const [clienteJardin, setClienteJardin] = useState(null);
+    const [importando, setImportando] = useState(false);
+    const [textoImport, setTextoImport] = useState("");
+    const [resultadoImport, setResultadoImport] = useState(null);
     const blank = { id: "", nombre: "", direccion: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
     const save = (form) => {
         const next = structuredClone(data);
@@ -14962,9 +14965,51 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-row", style: { marginBottom: 10 } },
             React.createElement("h2", { className: "gj-h2", style: { margin: 0 } }, "Clientes"),
-            React.createElement("button", { className: "gj-btn primary", onClick: () => setEditing(blank) },
-                React.createElement(Plus, { size: 14 }),
-                " A\u00F1adir")),
+            React.createElement("div", { style: { display: "flex", gap: 6 } },
+                React.createElement("button", { className: "gj-btn ghost", onClick: () => { setImportando(true); setResultadoImport(null); } }, "Importar"),
+                React.createElement("button", { className: "gj-btn primary", onClick: () => setEditing(blank) },
+                    React.createElement(Plus, { size: 14 }),
+                    " A\u00F1adir"))),
+        importando && (React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Importar clientes de mantenimiento"),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 } },
+                "Una l\u00EDnea por cliente, con este orden separado por punto y coma: ",
+                React.createElement("b", null, "nombre;direcci\u00F3n;tel\u00E9fono;email;NIF"),
+                ". Los campos que no tengas, d\u00E9jalos vac\u00EDos entre los punto y coma. Se dan todos de alta como clientes de mantenimiento."),
+            React.createElement("textarea", { className: "gj-input", rows: 8, value: textoImport, onChange: e => setTextoImport(e.target.value), placeholder: "Familia Pérez;Calle Mayor 3, Madrid;600111222;correo@ejemplo.com;12345678A", style: { fontFamily: "monospace", fontSize: 12 } }),
+            React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
+                React.createElement("button", { className: "gj-btn ghost block", onClick: () => { setImportando(false); setTextoImport(""); setResultadoImport(null); } }, "Cancelar"),
+                React.createElement("button", { className: "gj-btn accent block", onClick: () => {
+                        const next = structuredClone(data);
+                        next.clients = next.clients || [];
+                        let creados = 0, saltados = 0;
+                        textoImport.split("\n").forEach(linea => {
+                            if (!linea.trim())
+                                return;
+                            const partes = linea.split(";");
+                            const nombre = (partes[0] || "").trim();
+                            if (!nombre) {
+                                saltados++;
+                                return;
+                            }
+                            next.clients.push({
+                                id: uid("cli"), nombre, direccion: (partes[1] || "").trim(), telefono: (partes[2] || "").trim(),
+                                email: (partes[3] || "").trim(), dni: (partes[4] || "").trim(),
+                                esMantenimiento: true, esObra: false, cuotaMensual: 0, presupuesto: 0, estadoObra: "en_curso",
+                                personasEstimadas: 0, diasEstimados: 0, fechaInicioPlan: "", orden: 0, activo: true,
+                            });
+                            creados++;
+                        });
+                        persist(next);
+                        setResultadoImport({ creados, saltados });
+                        setTextoImport("");
+                    } }, "Importar")),
+            resultadoImport && (React.createElement("div", { style: { fontSize: 12.5, marginTop: 8, color: "var(--good)" } },
+                "\u2714 ",
+                resultadoImport.creados,
+                " clientes importados",
+                resultadoImport.saltados > 0 ? `, ${resultadoImport.saltados} líneas sin nombre se han saltado` : "",
+                ".")))),
         React.createElement("div", { className: "gj-field" },
             React.createElement("input", { className: "gj-input", value: busqueda, onChange: e => setBusqueda(e.target.value), placeholder: "Buscar cliente por nombre..." })),
         React.createElement("label", { className: "gj-row", style: { marginBottom: 10, cursor: "pointer" } },
