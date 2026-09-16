@@ -13381,6 +13381,27 @@ function fechaEs(iso) {
     const [y, m, d] = iso.split("-");
     return `${d}/${m}/${y}`;
 }
+function diasEnAnio(year) {
+    return (new Date(year, 1, 29).getMonth() === 1) ? 366 : 365;
+}
+function horasObjetivoAnual(worker, year, horasBase) {
+    const base = Number(horasBase) || 1700;
+    if (!worker || worker.tipoContrato !== "discontinuo" && worker.tipoContrato !== "eventual") {
+        return base;
+    }
+    if (!worker.contratoInicio && !worker.contratoFin) {
+        return base;
+    }
+    const inicioAnio = new Date(year, 0, 1);
+    const finAnio = new Date(year, 11, 31);
+    const inicioContrato = worker.contratoInicio ? new Date(worker.contratoInicio) : inicioAnio;
+    const finContrato = worker.contratoFin ? new Date(worker.contratoFin) : finAnio;
+    const desde = inicioContrato > inicioAnio ? inicioContrato : inicioAnio;
+    const hasta = finContrato < finAnio ? finContrato : finAnio;
+    const diasSolapados = Math.max(0, Math.round((hasta - desde) / 86400000) + 1);
+    const proporcion = Math.min(1, diasSolapados / diasEnAnio(year));
+    return Math.round(base * proporcion);
+}
 function fechaLargaEs(iso) {
     if (!iso)
         return "";
@@ -14092,7 +14113,7 @@ function seedData() {
             { id: "rb_espsm6", categoria: "Programadores", label: "Módulo de ampliación de 6 estaciones para ESP-Me", unidad: "ud", precio: 128.06 },
             { id: "rb_lnk2wifi", categoria: "Programadores", label: "Módulo WiFi LNK2 (para RZX, TM-2, ESP-Me)", unidad: "ud", precio: 221.01 },
         ],
-        settings: { costeHora: 14, nombreEmpresa: "Belardi Jardinería", emailEmpresa: "belardijardin@gmail.com", telefonoEmpresa: "660 42 22 82 / 606 10 11 27", webEmpresa: "www.belardijardineria.es", cifEmpresa: "B71216774", identificadorAcreedorSepa: "", adminPin1: "1111", adminPin2: "2222", adminNombre1: "Rafa", adminNombre2: "Gonzalo", vacacionesAnuales: 22, almuerzoEstandarMin: 15, copiaAutomatica: true, ultimaCopiaFecha: "" },
+        settings: { costeHora: 14, nombreEmpresa: "Belardi Jardinería", emailEmpresa: "belardijardin@gmail.com", telefonoEmpresa: "660 42 22 82 / 606 10 11 27", webEmpresa: "www.belardijardineria.es", cifEmpresa: "B71216774", identificadorAcreedorSepa: "", adminPin1: "1111", adminPin2: "2222", adminNombre1: "Rafa", adminNombre2: "Gonzalo", vacacionesAnuales: 22, almuerzoEstandarMin: 15, horasAnualesBase: 1700, copiaAutomatica: true, ultimaCopiaFecha: "" },
     };
 }
 async function loadData() {
@@ -15358,7 +15379,7 @@ function EquipoView({ data, persist }) {
     const [editing, setEditing] = useState(null);
     const [nuevoVehiculo, setNuevoVehiculo] = useState("");
     const [editandoVehiculo, setEditandoVehiculo] = useState(null);
-    const blank = { id: "", nombre: "", telefono: "", activo: true };
+    const blank = { id: "", nombre: "", telefono: "", activo: true, tipoContrato: "completo", contratoInicio: "", contratoFin: "" };
     const save = (form) => {
         const next = structuredClone(data);
         if (form.id) {
@@ -15418,6 +15439,20 @@ function EquipoView({ data, persist }) {
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono (con prefijo, para WhatsApp)"),
                 React.createElement("input", { className: "gj-input", value: editing.telefono, onChange: e => setEditing({ ...editing, telefono: e.target.value }), placeholder: "34600111222" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Tipo de contrato"),
+                React.createElement("select", { className: "gj-select", value: editing.tipoContrato || "completo", onChange: e => setEditing({ ...editing, tipoContrato: e.target.value }) },
+                    React.createElement("option", { value: "completo" }, "Todo el a\u00F1o (12 meses)"),
+                    React.createElement("option", { value: "discontinuo" }, "Fijo discontinuo"),
+                    React.createElement("option", { value: "eventual" }, "Eventual"))),
+            (editing.tipoContrato === "discontinuo" || editing.tipoContrato === "eventual") && (React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Inicio de contrato"),
+                    React.createElement("input", { className: "gj-input", type: "date", value: editing.contratoInicio || "", onChange: e => setEditing({ ...editing, contratoInicio: e.target.value }) })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Fin de contrato"),
+                    React.createElement("input", { className: "gj-input", type: "date", value: editing.contratoFin || "", onChange: e => setEditing({ ...editing, contratoFin: e.target.value }) })))),
+            (editing.tipoContrato === "discontinuo" || editing.tipoContrato === "eventual") && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: -4, marginBottom: 8 } }, "Con estas fechas se calcular\\u00E1n autom\\u00E1ticamente las horas anuales que le corresponden, de forma proporcional al tiempo trabajado respecto a los 12 meses.")),
             React.createElement("div", { className: "gj-row", style: { gap: 6 } },
                 React.createElement("button", { className: "gj-btn block", onClick: () => setEditing(null) }, "Cancelar"),
                 React.createElement("button", { className: "gj-btn primary block", onClick: () => editing.nombre.trim() && editing.telefono.trim() && save(editing) }, "Guardar")))),
@@ -15427,7 +15462,10 @@ function EquipoView({ data, persist }) {
                 React.createElement("div", { style: { fontWeight: 600, display: "flex", alignItems: "center", gap: 6 } },
                     w.nombre,
                     w.activo === false && React.createElement("span", { className: "gj-badge", style: { background: "var(--warn-bg)", color: "var(--warn)" } }, "Inactivo")),
-                React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, w.telefono)),
+                React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, w.telefono),
+                (w.tipoContrato === "discontinuo" || w.tipoContrato === "eventual") && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } },
+                    w.tipoContrato === "discontinuo" ? "Fijo discontinuo" : "Eventual",
+                    (w.contratoInicio || w.contratoFin) ? ` · ${w.contratoInicio ? fechaEs(w.contratoInicio) : "?"} – ${w.contratoFin ? fechaEs(w.contratoFin) : "?"}` : ""))),
             React.createElement("div", { style: { display: "flex", gap: 2 } },
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => toggleActivo(w.id), title: w.activo === false ? "Reactivar" : "Desactivar (ha dejado la empresa)" }, w.activo === false ? React.createElement(UserCheck, { size: 14, color: "var(--good)" }) : React.createElement(UserX, { size: 14, color: "var(--warn)" })),
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditing(w) },
@@ -16440,6 +16478,8 @@ function HorasView({ data, persist, getWorker, adminMode }) {
         }
     });
     const vacacionesTrabajador = todoElEquipo ? {} : (data.vacaciones[workerId] || {});
+    const trabajadorSel = todoElEquipo ? null : getWorker(workerId);
+    const horasObjetivoAnio = todoElEquipo ? null : horasObjetivoAnual(trabajadorSel, year, data.settings.horasAnualesBase);
     const diasTrabajadosAnio = Object.keys(horasPorDia).filter(d => d.startsWith(String(year))).length;
     const horasAnio = Object.entries(horasPorDia).filter(([d]) => d.startsWith(String(year))).reduce((a, [, h]) => a + h, 0);
     let vacacionesAnio, bajaAnio, permisoAnio;
@@ -16524,6 +16564,14 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                 React.createElement("div", { className: "l" },
                     "Horas trabajadas en ",
                     year)),
+            !todoElEquipo && (React.createElement("div", { className: "gj-stat" },
+                React.createElement("div", { className: "n" },
+                    fmtHM(horasAnio),
+                    " / ",
+                    horasObjetivoAnio,
+                    "h"),
+                React.createElement("div", { className: "l" }, "Horas objetivo del a\u00F1o"),
+                (trabajadorSel && (trabajadorSel.tipoContrato === "discontinuo" || trabajadorSel.tipoContrato === "eventual")) && (React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", marginTop: 2 } }, trabajadorSel.tipoContrato === "discontinuo" ? "Fijo discontinuo" : "Eventual")))),
             React.createElement("div", { className: "gj-stat" },
                 React.createElement("div", { className: "n" }, diasTrabajadosAnio),
                 React.createElement("div", { className: "l" },
@@ -19953,6 +20001,7 @@ function RentabilidadView({ data, persist }) {
     const [nombreAdmin1, setNombreAdmin1] = useState(data.settings.adminNombre1 || "Rafa");
     const [nombreAdmin2, setNombreAdmin2] = useState(data.settings.adminNombre2 || "Gonzalo");
     const [almuerzoMin, setAlmuerzoMin] = useState(data.settings.almuerzoEstandarMin || 15);
+    const [horasAnualesBase, setHorasAnualesBase] = useState(data.settings.horasAnualesBase || 1700);
     const [telefonoEmpresa, setTelefonoEmpresa] = useState(data.settings.telefonoEmpresa || "");
     const [webEmpresa, setWebEmpresa] = useState(data.settings.webEmpresa || "");
     const [identificadorAcreedorSepa, setIdentificadorAcreedorSepa] = useState(data.settings.identificadorAcreedorSepa || "");
@@ -19971,6 +20020,11 @@ function RentabilidadView({ data, persist }) {
     const guardarAlmuerzo = () => {
         const next = structuredClone(data);
         next.settings.almuerzoEstandarMin = Number(almuerzoMin) || 0;
+        persist(next);
+    };
+    const guardarHorasAnuales = () => {
+        const next = structuredClone(data);
+        next.settings.horasAnualesBase = Number(horasAnualesBase) || 1700;
         persist(next);
     };
     const guardarPin1 = () => {
@@ -20038,6 +20092,12 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("input", { className: "gj-input", type: "number", value: almuerzoMin, onChange: e => setAlmuerzoMin(e.target.value) }),
                     React.createElement("button", { className: "gj-btn", onClick: guardarAlmuerzo }, "Guardar")),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Este valor aparece ya rellenado en Fichar cuando una cuadrilla crea su jornada, aunque pueden ajustarlo ese d\u00EDa si hiciera falta.")),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Horas anuales de referencia (jornada completa)"),
+                React.createElement("div", { style: { display: "flex", gap: 6 } },
+                    React.createElement("input", { className: "gj-input", type: "number", value: horasAnualesBase, onChange: e => setHorasAnualesBase(e.target.value) }),
+                    React.createElement("button", { className: "gj-btn", onClick: guardarHorasAnuales }, "Guardar")),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Horas que debe trabajar en el a\u00F1o un trabajador con contrato de los 12 meses. Para los fijos discontinuos o eventuales (con fecha de inicio y fin en Equipo), se calcula autom\u00E1ticamente la parte proporcional en la pesta\u00F1a Horas.")),
             React.createElement("hr", { className: "gj-divider" }),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono de la empresa (para presupuestos)"),
