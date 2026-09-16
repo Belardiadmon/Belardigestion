@@ -15305,6 +15305,10 @@ function SincronizacionView({ data, persist }) {
     };
     const sincronizarAhora = async () => {
         setSincronizando(true);
+        // Primero reintentamos SUBIR los datos de este móvil, por si el último guardado se quedó
+        // a medias (sin llegar a Supabase). Así nunca se sustituyen cambios locales sin subir por
+        // una versión más antigua que estuviera en el servidor.
+        await persist(data);
         await window.gjSyncManualAhora(STORAGE_KEY);
         setSincronizando(false);
     };
