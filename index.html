@@ -15880,14 +15880,16 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         setRiegoPodaAbierto(null);
         setRiegoPodaSel(sel2 => ({ ...sel2, [clienteId]: {} }));
     };
-    const marcarNoHecho = (orderId, clienteId) => {
+    const marcarNoHecho = async (orderId, clienteId) => {
         var _a;
+        const coord = await getPosicionActual();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.estado = "completado";
         stop.resultado = "no_hecho";
         stop.horaFin = nowTime();
+        stop.coordFin = coord;
         stop.notaTrabajador = notaTexto;
         stop.crewSize = order.workerIds.length;
         next.pendientes = next.pendientes || [];
@@ -15919,8 +15921,37 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.estado = "en_progreso";
         stop.horaInicio = nowTime();
+        stop.coordInicio = coord;
         order.entradaMananaHora = nowTime();
         order.entradaMananaCoord = coord;
+        persist(next);
+    };
+    const iniciarParada = async (orderId, clienteId) => {
+        const coord = await getPosicionActual();
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.estado = "en_progreso";
+        stop.horaInicio = nowTime();
+        stop.coordInicio = coord;
+        persist(next);
+    };
+    const marcarHecho = async (orderId, clienteId) => {
+        const coord = await getPosicionActual();
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.estado = "completado";
+        stop.resultado = "hecho";
+        stop.horaFin = nowTime();
+        stop.coordFin = coord;
+        stop.crewSize = order.workerIds.length;
+        const cliente = next.clients.find(c => c.id === clienteId);
+        if (cliente && cliente.esMantenimiento) {
+            next.historialDuracionVisitas = next.historialDuracionVisitas || {};
+            next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
+            next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60), workerIds: [...order.workerIds] });
+        }
         persist(next);
     };
     const updateTiempoOrden = (orderId, campo, valor) => {
@@ -16113,15 +16144,18 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                         (s.fotosDespues || []).length > 0 && (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } }, s.fotosDespues.map((f, i) => (React.createElement("div", { key: i, style: { position: "relative" } },
                                             React.createElement("img", { src: f.dataUrl, alt: "", style: { width: 44, height: 44, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
                                             React.createElement("button", { onClick: () => quitarFotoStop(o.id, s.clienteId, "fotosDespues", i), style: { position: "absolute", top: -5, right: -5, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 16, height: 16, fontSize: 10, lineHeight: 1 } }, "\u00D7")))))))),
+                                adminMode && (s.coordInicio || s.coordFin) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4, fontSize: 11.5 } },
+                                    s.coordInicio ? (React.createElement("a", { href: mapsLinkCoord(s.coordInicio), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de inicio")) : React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
+                                    s.coordFin ? (React.createElement("a", { href: mapsLinkCoord(s.coordFin), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de fin")) : (s.estado === "completado" ? React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin") : null))),
                                 React.createElement("div", { className: "gj-row", style: { marginTop: 6 } },
                                     React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } },
                                         s.horaInicio ? `Inicio ${s.horaInicio}` : "",
                                         s.horaFin ? ` · Fin ${s.horaFin} · ${fmtHM(dur)}` : ""),
-                                    s.estado === "pendiente" && (React.createElement("button", { className: "gj-btn accent", onClick: () => idxStop === 0 ? iniciarPrimeraParada(o.id, s.clienteId) : updateStop(o.id, s.clienteId, { estado: "en_progreso", horaInicio: nowTime() }) },
+                                    s.estado === "pendiente" && (React.createElement("button", { className: "gj-btn accent", onClick: () => idxStop === 0 ? iniciarPrimeraParada(o.id, s.clienteId) : iniciarParada(o.id, s.clienteId) },
                                         React.createElement(Play, { size: 13 }),
                                         " Iniciar")),
                                     s.estado === "en_progreso" && notaAbierta !== key && (React.createElement("div", { style: { display: "flex", gap: 6 } },
-                                        React.createElement("button", { className: "gj-btn primary", onClick: () => updateStop(o.id, s.clienteId, { estado: "completado", resultado: "hecho", horaFin: nowTime(), crewSize: o.workerIds.length }) },
+                                        React.createElement("button", { className: "gj-btn primary", onClick: () => marcarHecho(o.id, s.clienteId) },
                                             React.createElement(CheckCircle2, { size: 13 }),
                                             " Hecho"),
                                         React.createElement("button", { className: "gj-btn danger", onClick: () => { setNotaAbierta(key); setNotaTexto(""); } },
