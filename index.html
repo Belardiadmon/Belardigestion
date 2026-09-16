@@ -13257,19 +13257,50 @@ function aMinutosDelDia(hhmm) {
     const [h, m] = hhmm.split(":").map(Number);
     return h * 60 + m;
 }
-function duracionStopHoras(s, o) {
-    // Igual que diffHours(s.horaInicio, s.horaFin), pero restando el solape con el almuerzo de la ruta,
+function duracionEntreHoras(horaInicio, horaFin, o) {
+    // Igual que diffHours(horaInicio, horaFin), pero restando el solape con el almuerzo de la ruta,
     // para que el tiempo de almuerzo no compute como tiempo de mantenimiento/obra.
-    const base = diffHours(s.horaInicio, s.horaFin);
+    const base = diffHours(horaInicio, horaFin);
     if (!o || !o.almuerzoInicio || !o.almuerzoFin)
         return base;
-    const sIni = aMinutosDelDia(s.horaInicio), sFin = aMinutosDelDia(s.horaFin);
+    const sIni = aMinutosDelDia(horaInicio), sFin = aMinutosDelDia(horaFin);
     const aIni = aMinutosDelDia(o.almuerzoInicio), aFin = aMinutosDelDia(o.almuerzoFin);
     if (sIni === null || sFin === null || aIni === null || aFin === null)
         return base;
     const solapeMin = Math.max(0, Math.min(sFin, aFin) - Math.max(sIni, aIni));
     const resultado = base - solapeMin / 60;
     return resultado > 0 ? resultado : 0;
+}
+function duracionStopHoras(s, o) {
+    return duracionEntreHoras(s.horaInicio, s.horaFin, o);
+}
+function duracionActividadHoras(a, o) {
+    if (!a.horaInicio || !a.horaFin)
+        return 0;
+    return duracionEntreHoras(a.horaInicio, a.horaFin, o);
+}
+function duracionStopHorasTrabajador(s, workerId, o) {
+    // Tiempo que ESE trabajador en concreto fichó en esta parada (puede ser distinto del de sus
+    // compañeros si la cuadrilla se separó). Si no fichó nada aquí, devuelve 0.
+    const pt = s.porTrabajador && s.porTrabajador[workerId];
+    if (!pt || !pt.horaInicio || !pt.horaFin)
+        return 0;
+    return duracionEntreHoras(pt.horaInicio, pt.horaFin, o);
+}
+function personaHorasStop(s, o) {
+    // Horas-persona reales de una parada: suma de lo que fichó cada trabajador individualmente.
+    // Si es una parada antigua (de antes de que cada uno fichara por separado), se usa el cálculo
+    // anterior como aproximación (duración de la parada × nº de trabajadores asignados ese día).
+    if (s.porTrabajador) {
+        return Object.keys(s.porTrabajador).reduce((acc, wid) => {
+            const ficha = s.porTrabajador[wid];
+            if (ficha.estado === "completado" && ficha.horaInicio && ficha.horaFin) {
+                return acc + duracionStopHorasTrabajador(s, wid, o);
+            }
+            return acc;
+        }, 0);
+    }
+    return duracionStopHoras(s, o) * (s.crewSize || (o.workerIds ? o.workerIds.length : 1));
 }
 // --- Motor de sugerencias de rutas ---
 const GJ_ORIGEN_LAT = 42.7961, GJ_ORIGEN_LNG = -1.6086; // Polígono Industrial de Mutilva, aproximado
@@ -13480,6 +13511,23 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
     const dLng = (lng2 - lng1) * Math.PI / 180;
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+function avisoUbicacionCliente(coord, cliente) {
+    // Compara el punto fichado con la ubicación conocida del cliente. Usa el GPS exacto guardado a
+    // mano (gpsLat/gpsLng) si existe, porque es más preciso; si no, la dirección geocodificada
+    // (lat/lng). Si no hay ninguna ubicación de referencia, no se puede comparar (no da aviso).
+    if (!coord || !cliente)
+        return false;
+    const lat = cliente.gpsLat || cliente.lat;
+    const lng = cliente.gpsLng || cliente.lng;
+    if (!lat || !lng)
+        return false;
+    return distanciaKm(coord.lat, coord.lng, lat, lng) > 0.15;
+}
+function avisoUbicacionPunto(coord, lat, lng) {
+    if (!coord || !lat || !lng)
+        return false;
+    return distanciaKm(coord.lat, coord.lng, lat, lng) > 0.15;
 }
 function downloadCSV(filename, headers, rows) {
     const esc = (v) => {
@@ -14554,8 +14602,11 @@ function allStopsToday(data) {
     });
     return list;
 }
-function PanelView({ data, persist, getClient, getWorker, adminMode }) {
+function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }) {
     const [printStop, setPrintStop] = useState(null); // { orderId, clienteId }
+    const [confirmarReset, setConfirmarReset] = useState(false);
+    const [resetPinValue, setResetPinValue] = useState("");
+    const [resetPinError, setResetPinError] = useState("");
     const stops = allStopsToday(data);
     const pendientes = stops.filter(s => s.stop.estado === "pendiente").length;
     const enProgreso = stops.filter(s => s.stop.estado === "en_progreso").length;
@@ -14576,12 +14627,25 @@ function PanelView({ data, persist, getClient, getWorker, adminMode }) {
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.notificado = true;
+        stop.notificadoCanal = canal;
+        stop.notificadoFecha = todayStr();
+        stop.notificadoHora = nowTime();
         persist(next);
     };
     const resetAll = () => {
-        if (!confirm("Esto borra todos los datos actuales y vuelve a cargar los datos de ejemplo. ¿Continuar?"))
+        if (adminRole !== "admin1") {
+            return;
+        }
+        if (resetPinValue.trim() !== (data.settings.adminPin1 || "1111")) {
+            setResetPinError("PIN incorrecto.");
+            return;
+        }
+        if (!confirm("Esto borra TODOS los datos actuales (clientes, trabajadores, rutas, historial...) y los sustituye por los datos de ejemplo. Esta acción no se puede deshacer. ¿Seguro que quieres continuar?"))
             return;
         persist(seedData());
+        setConfirmarReset(false);
+        setResetPinValue("");
+        setResetPinError("");
     };
     if (printStop) {
         const order = data.orders.find(o => o.id === printStop.orderId);
@@ -14705,36 +14769,17 @@ function PanelView({ data, persist, getClient, getWorker, adminMode }) {
                     React.createElement(Printer, { size: 13 }),
                     " Imprimir parte")));
         }),
-        React.createElement("h3", { className: "gj-h3", style: { marginTop: 12 } }, "Mantenimientos avisados"),
-        avisados.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no se ha avisado a ning\u00FAn cliente hoy."),
-        avisados.map(({ order, stop }) => {
-            const cliente = getClient(stop.clienteId);
-            const crew = order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
-            const dur = duracionStopHoras(stop, order);
-            return (React.createElement("div", { className: "gj-card", key: cliente.id + stop.horaInicio, style: { opacity: 0.75 } },
-                React.createElement("div", { className: "gj-row" },
-                    React.createElement("div", null,
-                        React.createElement("div", { style: { fontWeight: 600 } }, cliente.nombre),
-                        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } },
-                            stop.horaInicio,
-                            "\u2013",
-                            stop.horaFin,
-                            " \u00B7 ",
-                            fmtHM(dur),
-                            " \u00B7 cuadrilla: ",
-                            crew),
-                        stop.labores && stop.labores.length > 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } },
-                            "Trabajos: ",
-                            stop.labores.join(", "))),
-                    React.createElement("span", { className: "gj-badge completado" }, "Avisado")),
-                React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6, opacity: 1 }, onClick: () => setPrintStop({ orderId: order.id, clienteId: cliente.id }) },
-                    React.createElement(Printer, { size: 13 }),
-                    " Imprimir parte")));
-        }),
-        React.createElement("hr", { className: "gj-divider" }),
-        React.createElement("button", { className: "gj-btn ghost", onClick: resetAll },
-            React.createElement(RotateCcw, { size: 13 }),
-            " Restablecer datos de ejemplo")));
+        adminRole === "admin1" && (React.createElement(React.Fragment, null,
+            React.createElement("hr", { className: "gj-divider" }),
+            !confirmarReset ? (React.createElement("button", { className: "gj-btn ghost", onClick: () => { setConfirmarReset(true); setResetPinValue(""); setResetPinError(""); } },
+                React.createElement(RotateCcw, { size: 13 }),
+                " Restablecer datos de ejemplo")) : (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5, color: "var(--warn)" } }, "\u26A0\uFE0F Esto borra TODOS los datos reales (clientes, trabajadores, rutas, historial...). Introduce de nuevo el PIN de administrador 1 para confirmar:"),
+                React.createElement("input", { className: "gj-input", type: "password", inputMode: "numeric", style: { marginTop: 6 }, value: resetPinValue, onChange: e => setResetPinValue(e.target.value), placeholder: "PIN administrador 1" }),
+                resetPinError && React.createElement("div", { style: { color: "var(--warn)", fontSize: 12, marginTop: 4 } }, resetPinError),
+                React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
+                    React.createElement("button", { className: "gj-btn danger", onClick: resetAll }, "Confirmar borrado"),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarReset(false) }, "Cancelar"))))))));
 }
 function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
     const p = data.parametrosPresupuesto;
@@ -15727,6 +15772,27 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 4px", fontSize: 11.5, marginTop: 2 }, onClick: () => setEditingCrew(null) }, "Listo"))) : (React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 4px", fontSize: 11.5, marginBottom: 4 }, onClick: () => setEditingCrew(o.id) },
                     React.createElement(Pencil, { size: 11 }),
                     " Editar cuadrilla"))),
+                adminMode && o.workerIds.length > 0 && (React.createElement("div", { className: "gj-card", style: { background: "var(--pend-bg)", padding: 8, marginBottom: 6 } },
+                    React.createElement("div", { style: { fontWeight: 600, fontSize: 12 } }, "Jornada"),
+                    o.workerIds.map(wid => {
+                        const w = getWorker(wid);
+                        const j = (o.porTrabajadorJornada && o.porTrabajadorJornada[wid]) || null;
+                        if (!w)
+                            return null;
+                        return (React.createElement("div", { key: wid, style: { fontSize: 11.5, marginTop: 2 } },
+                            React.createElement("span", { style: { fontWeight: 600 } }, w.nombre, ": "),
+                            (j === null || j === void 0 ? void 0 : j.entradaCoord) ? (React.createElement("a", { href: mapsLinkCoord(j.entradaCoord), target: "_blank", rel: "noreferrer" },
+                                "\uD83D\uDCCD entrada ",
+                                j.entradaHora)) : (j === null || j === void 0 ? void 0 : j.entradaHora) ? `entrada ${j.entradaHora}` : "sin entrada",
+                            " \u00B7 ",
+                            (j === null || j === void 0 ? void 0 : j.salidaCoord) ? (React.createElement("a", { href: mapsLinkCoord(j.salidaCoord), target: "_blank", rel: "noreferrer" },
+                                "\uD83D\uDCCD salida ",
+                                j.salidaHora)) : (j === null || j === void 0 ? void 0 : j.salidaHora) ? `salida ${j.salidaHora}` : "sin salida",
+                            (j === null || j === void 0 ? void 0 : j.avisoUbicacionSalida) && (React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F la salida no coincide con la nave"))));
+                    }),
+                    (o.almuerzoInicio || o.almuerzoFin) && (React.createElement("div", { style: { fontSize: 11.5, marginTop: 4, display: "flex", gap: 10 } },
+                        o.almuerzoInicioCoord ? (React.createElement("a", { href: mapsLinkCoord(o.almuerzoInicioCoord), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD Almuerzo inicio ", o.almuerzoInicio)) : (o.almuerzoInicio ? `Almuerzo inicio ${o.almuerzoInicio}` : null),
+                        o.almuerzoFinCoord ? (React.createElement("a", { href: mapsLinkCoord(o.almuerzoFinCoord), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD Almuerzo fin ", o.almuerzoFin)) : (o.almuerzoFin ? `Almuerzo fin ${o.almuerzoFin}` : null))))),
                 o.stops.map((s, i) => {
                     const cli = getClient(s.clienteId);
                     return (React.createElement("div", { key: s.clienteId, style: { padding: "6px 0", borderBottom: "1px solid var(--line-soft)" } },
@@ -15736,6 +15802,28 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                 ". ", cli === null || cli === void 0 ? void 0 :
                                 cli.nombre),
                             React.createElement("span", { className: "gj-badge " + (s.resultado === "no_hecho" ? "no_hecho" : s.estado) }, s.resultado === "no_hecho" ? "no hecho" : s.estado.replace("_", " "))),
+                        adminMode && o.workerIds.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, o.workerIds.map(wid => {
+                            const w = getWorker(wid);
+                            const ficha = s.porTrabajador && s.porTrabajador[wid];
+                            if (!w)
+                                return null;
+                            let txt = "sin empezar";
+                            if (ficha && ficha.estado === "en_progreso")
+                                txt = `en curso desde ${ficha.horaInicio}`;
+                            else if (ficha && ficha.estado === "completado")
+                                txt = `${ficha.resultado === "no_hecho" ? "no hecho" : "hecho"} ${ficha.horaInicio || "?"}\u2013${ficha.horaFin}`;
+                            return `${w.nombre}: ${txt}`;
+                        }).filter(Boolean).join(" \u00B7 "))),
+                        adminMode && (s.coordInicio || s.coordFin) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 2, fontSize: 11.5 } },
+                            s.coordInicio ? (React.createElement("a", { href: mapsLinkCoord(s.coordInicio), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de inicio")) : React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
+                            s.coordFin ? (React.createElement("a", { href: mapsLinkCoord(s.coordFin), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de fin")) : (s.estado === "completado" ? React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin") : null))),
+                        adminMode && (s.avisoUbicacionInicio || s.avisoUbicacionFin) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", fontWeight: 600, marginTop: 2 } },
+                            "\u26A0\uFE0F La ubicaci\u00F3n fichada no coincide con la del cliente",
+                            s.avisoUbicacionInicio && !s.avisoUbicacionFin ? " (al empezar)" : (!s.avisoUbicacionInicio && s.avisoUbicacionFin ? " (al terminar)" : ""))),
+                        s.notificado && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--good)", marginTop: 2 } },
+                            "\u2713 Parte avisado al cliente",
+                            s.notificadoCanal ? ` por ${s.notificadoCanal}` : "",
+                            s.notificadoHora ? ` a las ${s.notificadoHora}` : "")),
                         s.observaciones && !editingObs && (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 2 } },
                             "Obs: ",
                             s.observaciones)),
@@ -15825,7 +15913,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         order.actividadesExtra = order.actividadesExtra || [];
         const nombreTrabajador = worker ? worker.nombre : "";
         order.actividadesExtra.push({
-            id: uid("ext"), categoria, lugar, horaInicio: nowTime(), horaFin: null, trabajador: nombreTrabajador,
+            id: uid("ext"), categoria, lugar, horaInicio: nowTime(), horaFin: null, trabajador: nombreTrabajador, workerId,
             tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
             maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
         });
@@ -15931,13 +16019,23 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const marcarNoHecho = async (orderId, clienteId) => {
         var _a;
         const coord = await getPosicionActual();
+        const hora = nowTime();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
+        const cliente = next.clients.find(c => c.id === clienteId);
+        const aviso = avisoUbicacionCliente(coord, cliente);
+        stop.porTrabajador = stop.porTrabajador || {};
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "completado", resultado: "no_hecho", horaFin: hora, coordFin: coord, notaTrabajador: notaTexto, avisoUbicacionFin: aviso };
+        // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
+        // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
+        if (!stop.horaFin || hora > stop.horaFin) {
+            stop.horaFin = hora;
+            stop.coordFin = coord;
+            stop.resultado = "no_hecho";
+            stop.avisoUbicacionFin = aviso;
+        }
         stop.estado = "completado";
-        stop.resultado = "no_hecho";
-        stop.horaFin = nowTime();
-        stop.coordFin = coord;
         stop.notaTrabajador = notaTexto;
         stop.crewSize = order.workerIds.length;
         next.pendientes = next.pendientes || [];
@@ -15951,50 +16049,90 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     };
     const finalizarJornada = async (orderId) => {
         const coord = await getPosicionActual();
+        const hora = nowTime();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
-        order.jornadaFinalizada = true;
-        order.salidaJornadaHora = nowTime();
-        order.salidaJornadaCoord = coord;
-        if (order.tiempoCargaMin > 0) {
+        const aviso = avisoUbicacionPunto(coord, next.settings.naveLat, next.settings.naveLng);
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), salidaHora: hora, salidaCoord: coord, avisoUbicacionSalida: aviso };
+        // Resumen de la ruta: la salida se amplía si alguien sigue trabajando y se va más tarde.
+        if (!order.salidaJornadaHora || hora > order.salidaJornadaHora) {
+            order.salidaJornadaHora = hora;
+            order.salidaJornadaCoord = coord;
+        }
+        // La jornada de la ruta se da por finalizada solo cuando TODOS los asignados han fichado su salida.
+        order.jornadaFinalizada = order.workerIds.every(wid => { var _a; return !!((_a = order.porTrabajadorJornada[wid]) === null || _a === void 0 ? void 0 : _a.salidaHora); });
+        if (order.tiempoCargaMin > 0 && !order.tiempoCargaRegistrado) {
             next.historialTiempoCarga = next.historialTiempoCarga || [];
             next.historialTiempoCarga.push({ fecha: order.fecha, minutos: Number(order.tiempoCargaMin) });
+            order.tiempoCargaRegistrado = true;
         }
         persist(next);
     };
     const iniciarPrimeraParada = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
+        const hora = nowTime();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.estado = "en_progreso";
-        stop.horaInicio = nowTime();
-        stop.coordInicio = coord;
-        order.entradaMananaHora = nowTime();
-        order.entradaMananaCoord = coord;
+        const cliente = next.clients.find(c => c.id === clienteId);
+        const aviso = avisoUbicacionCliente(coord, cliente);
+        stop.porTrabajador = stop.porTrabajador || {};
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso };
+        if (stop.estado === "pendiente") {
+            stop.estado = "en_progreso";
+            stop.horaInicio = hora;
+            stop.coordInicio = coord;
+            stop.avisoUbicacionInicio = aviso;
+        }
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
+            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: hora, entradaCoord: coord };
+        }
+        if (!order.entradaMananaHora) {
+            order.entradaMananaHora = hora;
+            order.entradaMananaCoord = coord;
+        }
         persist(next);
     };
     const iniciarParada = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
+        const hora = nowTime();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.estado = "en_progreso";
-        stop.horaInicio = nowTime();
-        stop.coordInicio = coord;
+        const cliente = next.clients.find(c => c.id === clienteId);
+        const aviso = avisoUbicacionCliente(coord, cliente);
+        stop.porTrabajador = stop.porTrabajador || {};
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso };
+        if (stop.estado === "pendiente") {
+            stop.estado = "en_progreso";
+            stop.horaInicio = hora;
+            stop.coordInicio = coord;
+            stop.avisoUbicacionInicio = aviso;
+        }
         persist(next);
     };
     const marcarHecho = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
+        const hora = nowTime();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.estado = "completado";
-        stop.resultado = "hecho";
-        stop.horaFin = nowTime();
-        stop.coordFin = coord;
-        stop.crewSize = order.workerIds.length;
         const cliente = next.clients.find(c => c.id === clienteId);
+        const aviso = avisoUbicacionCliente(coord, cliente);
+        stop.porTrabajador = stop.porTrabajador || {};
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "completado", resultado: "hecho", horaFin: hora, coordFin: coord, avisoUbicacionFin: aviso };
+        // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
+        // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
+        if (!stop.horaFin || hora > stop.horaFin) {
+            stop.horaFin = hora;
+            stop.coordFin = coord;
+            stop.resultado = "hecho";
+            stop.avisoUbicacionFin = aviso;
+        }
+        stop.estado = "completado";
+        stop.crewSize = order.workerIds.length;
         if (cliente && cliente.esMantenimiento) {
             next.historialDuracionVisitas = next.historialDuracionVisitas || {};
             next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
@@ -16058,7 +16196,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             misOrdenes.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No tienes ninguna ruta asignada hoy."),
             misOrdenes.map(o => {
                 var _a, _b;
-                const todosCompletados = o.stops.every(s => s.estado === "completado");
+                const miTrabajoPendiente = o.stops.some(s => { var _c; const f = (_c = s.porTrabajador) === null || _c === void 0 ? void 0 : _c[workerId]; return f && f.estado === "en_progreso"; });
+                const miJornada = (o.porTrabajadorJornada && o.porTrabajadorJornada[workerId]) || null;
                 const excesoHoras = minutosTotalesOrden(o) > 490;
                 return (React.createElement("div", { className: "gj-card", key: o.id },
                     React.createElement("div", { className: "gj-h3", style: { marginBottom: 10 } }, "Tu ruta de hoy"),
@@ -16101,8 +16240,10 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                     o.stops.map((s, idxStop) => {
                         var _a, _b, _c, _d;
                         const cli = getClient(s.clienteId);
-                        const dur = s.estado === "completado" ? duracionStopHoras(s, o) : 0;
                         const key = o.id + s.clienteId;
+                        const miFicha = (s.porTrabajador && s.porTrabajador[workerId]) || null;
+                        const miEstado = (miFicha && miFicha.estado) || "pendiente";
+                        const miDur = miEstado === "completado" ? duracionStopHorasTrabajador(s, workerId, o) : 0;
                         const anterior = idxStop > 0 ? o.stops[idxStop - 1] : null;
                         const desplazamientoMin = (anterior && anterior.estado === "completado" && s.horaInicio) ? diffMinutos(anterior.horaFin, s.horaInicio) : null;
                         return (React.createElement("div", { key: s.clienteId },
@@ -16195,22 +16336,35 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 adminMode && (s.coordInicio || s.coordFin) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 4, fontSize: 11.5 } },
                                     s.coordInicio ? (React.createElement("a", { href: mapsLinkCoord(s.coordInicio), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de inicio")) : React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
                                     s.coordFin ? (React.createElement("a", { href: mapsLinkCoord(s.coordFin), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de fin")) : (s.estado === "completado" ? React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin") : null))),
+                                (o.workerIds.length > 1) && (React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } }, o.workerIds.filter(wid => wid !== workerId).map(wid => {
+                                    var _e;
+                                    const w = getWorker(wid);
+                                    if (!w)
+                                        return null;
+                                    const ficha = s.porTrabajador && s.porTrabajador[wid];
+                                    let estadoTxt = "sin empezar";
+                                    if (ficha && ficha.estado === "en_progreso")
+                                        estadoTxt = `en curso desde ${ficha.horaInicio}`;
+                                    else if (ficha && ficha.estado === "completado")
+                                        estadoTxt = `${ficha.resultado === "no_hecho" ? "no hecho" : "hecho"} a las ${ficha.horaFin}`;
+                                    return `${w.nombre}: ${estadoTxt}`;
+                                }).filter(Boolean).join(" \u00B7 "))),
                                 React.createElement("div", { className: "gj-row", style: { marginTop: 6 } },
                                     React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } },
-                                        s.horaInicio ? `Inicio ${s.horaInicio}` : "",
-                                        s.horaFin ? ` · Fin ${s.horaFin} · ${fmtHM(dur)}` : ""),
-                                    s.estado === "pendiente" && (React.createElement("button", { className: "gj-btn accent", onClick: () => idxStop === 0 ? iniciarPrimeraParada(o.id, s.clienteId) : iniciarParada(o.id, s.clienteId) },
+                                        (miFicha === null || miFicha === void 0 ? void 0 : miFicha.horaInicio) ? `Inicio ${miFicha.horaInicio}` : "",
+                                        (miFicha === null || miFicha === void 0 ? void 0 : miFicha.horaFin) ? ` · Fin ${miFicha.horaFin} · ${fmtHM(miDur)}` : ""),
+                                    miEstado === "pendiente" && (React.createElement("button", { className: "gj-btn accent", onClick: () => idxStop === 0 ? iniciarPrimeraParada(o.id, s.clienteId) : iniciarParada(o.id, s.clienteId) },
                                         React.createElement(Play, { size: 13 }),
                                         " Iniciar")),
-                                    s.estado === "en_progreso" && notaAbierta !== key && (React.createElement("div", { style: { display: "flex", gap: 6 } },
+                                    miEstado === "en_progreso" && notaAbierta !== key && (React.createElement("div", { style: { display: "flex", gap: 6 } },
                                         React.createElement("button", { className: "gj-btn primary", onClick: () => marcarHecho(o.id, s.clienteId) },
                                             React.createElement(CheckCircle2, { size: 13 }),
                                             " Hecho"),
                                         React.createElement("button", { className: "gj-btn danger", onClick: () => { setNotaAbierta(key); setNotaTexto(""); } },
                                             React.createElement(XCircle, { size: 13 }),
                                             " No hecho"))),
-                                    s.estado === "completado" && s.resultado !== "no_hecho" && React.createElement(CheckCircle2, { size: 16, color: "var(--good)" }),
-                                    s.resultado === "no_hecho" && React.createElement(AlertTriangle, { size: 16, color: "var(--warn)" })),
+                                    miEstado === "completado" && (miFicha === null || miFicha === void 0 ? void 0 : miFicha.resultado) !== "no_hecho" && React.createElement(CheckCircle2, { size: 16, color: "var(--good)" }),
+                                    (miFicha === null || miFicha === void 0 ? void 0 : miFicha.resultado) === "no_hecho" && React.createElement(AlertTriangle, { size: 16, color: "var(--warn)" })),
                                 notaAbierta === key && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("textarea", { className: "gj-input", rows: 2, placeholder: "\u00BFQu\u00E9 ha pasado o qu\u00E9 falta?", value: notaTexto, onChange: e => setNotaTexto(e.target.value) }),
                                     React.createElement("div", { className: "gj-row", style: { marginTop: 4, gap: 6 } },
@@ -16278,20 +16432,20 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
                                 React.createElement("button", { className: "gj-btn ghost", onClick: () => añadirOpcionListaFichaje(extraCategoria) }, "A\u00F1adir"))))),
                         React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => { setExtraAbierto(null); setExtraCategoria(null); setExtraLugar(""); setExtraTipoTaller(""); setExtraMaquinaId(""); } }, "Cerrar"))),
-                    (o.entradaMananaCoord || o.salidaJornadaCoord) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, marginBottom: 4, fontSize: 11.5 } },
-                        o.entradaMananaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(o.entradaMananaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
+                    (miJornada && (miJornada.entradaCoord || miJornada.salidaCoord)) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, marginBottom: 4, fontSize: 11.5 } },
+                        miJornada.entradaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(miJornada.entradaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
                             "\uD83D\uDCCD Ver entrada (",
-                            o.entradaMananaHora,
+                            miJornada.entradaHora,
                             ")")) : (React.createElement("span", { style: { color: "var(--ink-soft)" } },
                             "Entrada: ",
-                            o.entradaMananaHora))),
-                        o.salidaJornadaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(o.salidaJornadaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
+                            miJornada.entradaHora))),
+                        miJornada.salidaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(miJornada.salidaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
                             "\uD83D\uDCCD Ver salida (",
-                            o.salidaJornadaHora,
+                            miJornada.salidaHora,
                             ")")) : (React.createElement("span", { style: { color: "var(--ink-soft)" } },
                             "Salida: ",
-                            o.salidaJornadaHora))))),
-                    o.jornadaFinalizada ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Jornada finalizada \u2713")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, disabled: !todosCompletados, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada"))));
+                            miJornada.salidaHora))))),
+                    (miJornada === null || miJornada === void 0 ? void 0 : miJornada.salidaHora) ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Tu jornada ha finalizado \u2713")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, disabled: miTrabajoPendiente, title: miTrabajoPendiente ? "Termina o marca como no hecho el mantenimiento que tienes en curso antes de finalizar tu jornada" : "", onClick: () => finalizarJornada(o.id) }, "Finalizar jornada"))));
             })))));
 }
 function MaquinariaEnTalleresView({ data }) {
@@ -16476,10 +16630,47 @@ function HorasView({ data, persist, getWorker, adminMode }) {
             return;
         let algunaCompletada = false;
         o.stops.forEach(s => {
-            if (s.estado === "completado") {
-                algunaCompletada = true;
-                const factor = todoElEquipo ? (o.workerIds.length || 1) : 1;
-                horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionStopHoras(s, o) * factor;
+            if (s.estado !== "completado")
+                return;
+            if (todoElEquipo) {
+                if (s.porTrabajador) {
+                    Object.keys(s.porTrabajador).forEach(wid => {
+                        const ficha = s.porTrabajador[wid];
+                        if (ficha.estado === "completado" && ficha.horaInicio && ficha.horaFin) {
+                            algunaCompletada = true;
+                            horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionStopHorasTrabajador(s, wid, o);
+                        }
+                    });
+                }
+                else {
+                    // Parada antigua, fichada antes de que cada trabajador ficharan por separado: se mantiene el cálculo previo.
+                    algunaCompletada = true;
+                    horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionStopHoras(s, o) * (o.workerIds.length || 1);
+                }
+            }
+            else {
+                const miFicha = s.porTrabajador && s.porTrabajador[workerId];
+                if (miFicha && miFicha.estado === "completado" && miFicha.horaInicio && miFicha.horaFin) {
+                    algunaCompletada = true;
+                    horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionStopHorasTrabajador(s, workerId, o);
+                }
+                else if (!s.porTrabajador) {
+                    // Parada antigua: se mantiene el cálculo previo (se contaba para todos los asignados).
+                    algunaCompletada = true;
+                    horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionStopHoras(s, o);
+                }
+            }
+        });
+        (o.actividadesExtra || []).forEach(a => {
+            if (!a.horaFin)
+                return;
+            if (todoElEquipo) {
+                horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionActividadHoras(a, o);
+            }
+            else if (a.workerId === workerId || (!a.workerId && o.workerIds.length === 1 && o.workerIds.includes(workerId))) {
+                // Los registros de antes de este cambio no guardan a qué trabajador pertenecen; en ese
+                // caso solo se atribuyen si ese día iba un único trabajador en la cuadrilla.
+                horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionActividadHoras(a, o);
             }
         });
         if (algunaCompletada) {
@@ -16716,7 +16907,7 @@ function ExportarView({ data, getClient, getWorker }) {
                     return;
                 o.stops.forEach(s => {
                     if (s.clienteId === c.id && s.estado === "completado") {
-                        horasPersona += duracionStopHoras(s, o) * (s.crewSize || o.workerIds.length);
+                        horasPersona += personaHorasStop(s, o);
                     }
                 });
             });
@@ -16735,7 +16926,7 @@ function ExportarView({ data, getClient, getWorker }) {
             data.orders.forEach(o => {
                 o.stops.forEach(s => {
                     if (s.clienteId === c.id && s.estado === "completado") {
-                        horasPersona += duracionStopHoras(s, o) * (s.crewSize || o.workerIds.length);
+                        horasPersona += personaHorasStop(s, o);
                     }
                 });
             });
@@ -19915,7 +20106,7 @@ function GerenciaView({ data }) {
             return;
         o.stops.forEach(s => {
             if (s.estado === "completado") {
-                horasMes += duracionStopHoras(s, o) * (s.crewSize || o.workerIds.length);
+                horasMes += personaHorasStop(s, o);
             }
         });
     });
@@ -20012,6 +20203,32 @@ function RentabilidadView({ data, persist }) {
     const [nombreAdmin2, setNombreAdmin2] = useState(data.settings.adminNombre2 || "Gonzalo");
     const [almuerzoMin, setAlmuerzoMin] = useState(data.settings.almuerzoEstandarMin || 15);
     const [horasAnualesBase, setHorasAnualesBase] = useState(data.settings.horasAnualesBase || 1700);
+    const [naveLat, setNaveLat] = useState(data.settings.naveLat || null);
+    const [naveLng, setNaveLng] = useState(data.settings.naveLng || null);
+    const [capturandoNave, setCapturandoNave] = useState(false);
+    const capturarNave = async () => {
+        setCapturandoNave(true);
+        const coord = await getPosicionActual();
+        setCapturandoNave(false);
+        if (!coord) {
+            alert("No se ha podido obtener la ubicación. Comprueba que el navegador tiene permiso de ubicación.");
+            return;
+        }
+        const next = structuredClone(data);
+        next.settings.naveLat = coord.lat;
+        next.settings.naveLng = coord.lng;
+        persist(next);
+        setNaveLat(coord.lat);
+        setNaveLng(coord.lng);
+    };
+    const borrarNave = () => {
+        const next = structuredClone(data);
+        next.settings.naveLat = null;
+        next.settings.naveLng = null;
+        persist(next);
+        setNaveLat(null);
+        setNaveLng(null);
+    };
     const [telefonoEmpresa, setTelefonoEmpresa] = useState(data.settings.telefonoEmpresa || "");
     const [webEmpresa, setWebEmpresa] = useState(data.settings.webEmpresa || "");
     const [identificadorAcreedorSepa, setIdentificadorAcreedorSepa] = useState(data.settings.identificadorAcreedorSepa || "");
@@ -20070,7 +20287,7 @@ function RentabilidadView({ data, persist }) {
                 return;
             o.stops.forEach(s => {
                 if (s.clienteId === c.id && s.estado === "completado") {
-                    horasPersona += duracionStopHoras(s, o) * (s.crewSize || o.workerIds.length);
+                    horasPersona += personaHorasStop(s, o);
                 }
             });
         });
@@ -20108,6 +20325,13 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("input", { className: "gj-input", type: "number", value: horasAnualesBase, onChange: e => setHorasAnualesBase(e.target.value) }),
                     React.createElement("button", { className: "gj-btn", onClick: guardarHorasAnuales }, "Guardar")),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Horas que debe trabajar en el a\u00F1o un trabajador con contrato de los 12 meses. Para los fijos discontinuos o eventuales (con fecha de inicio y fin en Equipo), se calcula autom\u00E1ticamente la parte proporcional en la pesta\u00F1a Horas.")),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Ubicaci\u00F3n de la nave/almac\u00E9n"),
+                (naveLat && naveLng) ? (React.createElement("div", { style: { fontSize: 12.5, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
+                    React.createElement("a", { href: mapsLinkCoord({ lat: naveLat, lng: naveLng }), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD Ver ubicaci\u00F3n guardada"),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: capturarNave, disabled: capturandoNave }, capturandoNave ? "Capturando..." : "Actualizar (estando all\u00ED)"),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: borrarNave }, "Borrar"))) : (React.createElement("button", { className: "gj-btn", onClick: capturarNave, disabled: capturandoNave }, capturandoNave ? "Obteniendo ubicaci\u00F3n..." : "Capturar ubicaci\u00F3n actual como nave")),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Estando f\u00EDsicamente en la nave, pulsa el bot\u00F3n para guardarla. A partir de entonces, si la salida de jornada de un trabajador no coincide con este punto, se avisar\u00E1 al administrador en Rutas.")),
             React.createElement("hr", { className: "gj-divider" }),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono de la empresa (para presupuestos)"),
@@ -20192,7 +20416,7 @@ function RentabilidadObrasView({ data, persist }) {
         data.orders.forEach(o => {
             o.stops.forEach(s => {
                 if (s.clienteId === c.id && s.estado === "completado") {
-                    horasPersona += duracionStopHoras(s, o) * (s.crewSize || o.workerIds.length);
+                    horasPersona += personaHorasStop(s, o);
                     if (!primera || o.fecha < primera)
                         primera = o.fecha;
                     if (!ultima || o.fecha > ultima)
