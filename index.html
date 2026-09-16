@@ -14123,6 +14123,16 @@ async function loadData() {
             return JSON.parse(res.value);
     }
     catch (e) { /* no existe todavía */ }
+    // IMPORTANTE: si hay una conexión a Supabase configurada pero la lectura ha fallado
+    // (sin internet, error del servidor, permisos, etc.), NUNCA generamos datos de ejemplo
+    // ni los subimos automáticamente: eso podría sobrescribir datos reales ya guardados.
+    // En su lugar se muestra un error claro para revisar la conexión, sin tocar nada.
+    if (gjGetSupabaseClient() && window.gjSyncStatus && window.gjSyncStatus.estado === "error") {
+        throw new Error("No se ha podido conectar con la base de datos. Por seguridad no se han creado datos de ejemplo, para no sobrescribir los datos reales. Comprueba tu conexión a internet e inténtalo de nuevo. (" + (window.gjSyncStatus.ultimoError || "sin detalle") + ")");
+    }
+    // Solo se llega aquí si de verdad no hay ningún dato todavía: primera instalación real
+    // sin Supabase configurado, o tabla recién creada y aún vacía. En ese caso sí es seguro
+    // crear los datos base de la aplicación.
     const seed = seedData();
     try {
         await window.storage.set(STORAGE_KEY, JSON.stringify(seed), true);
@@ -14180,7 +14190,7 @@ function App() {
     const [pinValue, setPinValue] = useState("");
     const [pinError, setPinError] = useState("");
     const [deviceWorkerId, setDeviceWorkerId] = useState(undefined); // undefined=cargando, null=sin asignar, "__admin__"=solo admin, o id de trabajador
-    useEffect(() => { loadData().then(d => { setData(d); setLoading(false); }); }, []);
+    useEffect(() => { loadData().then(d => { setData(d); setLoading(false); }).catch(e => { gjShowError("Error al cargar los datos: " + (e && e.message ? e.message : e)); }); }, []);
     useEffect(() => {
         if (typeof window === "undefined" || !window.gjOnRemoteChange)
             return;
@@ -14624,7 +14634,7 @@ function PanelView({ data, persist, getClient, getWorker, adminMode }) {
         React.createElement("div", { className: "gj-grid2", style: { marginBottom: 12 } },
             React.createElement("div", { className: "gj-stat" },
                 React.createElement("div", { className: "n" }, pendientes + enProgreso),
-                React.createElement("div", { className: "l" }, "Mantenimientos por hacer hoy")),
+                React.createElement("div", { className: "l" }, "Intervenciones para hacer hoy")),
             React.createElement("div", { className: "gj-stat" },
                 React.createElement("div", { className: "n" }, fmtHM(horasPersonaHoy)),
                 React.createElement("div", { className: "l" }, "Horas-persona invertidas hoy"))),
