@@ -13313,6 +13313,29 @@ function duracionActividadHoras(a, o) {
         return 0;
     return duracionEntreHoras(a.horaInicio, a.horaFin, o);
 }
+function desplazamientoHorasOrden(o, workerId) {
+    // Suma el hueco real entre el fin de una actividad (mantenimiento, taller, almac\u00E9n, repostaje...) y
+    // el inicio de la siguiente, fichadas por el mismo trabajador ese d\u00EDa, como tiempo de desplazamiento.
+    // Se juntan mantenimientos y actividades extra en una sola l\u00EDnea de tiempo, por orden real de
+    // fichaje. Se resta el solape con el almuerzo (v\u00EDa duracionEntreHoras) para no contar dos veces ese
+    // tiempo. Huecos negativos o raros se ignoran.
+    const deStops = (o.stops || [])
+        .map(s => s.porTrabajador && s.porTrabajador[workerId])
+        .filter(f => f && f.estado === "completado" && f.horaInicio && f.horaFin)
+        .map(f => ({ horaInicio: f.horaInicio, horaFin: f.horaFin }));
+    const deExtra = (o.actividadesExtra || [])
+        .filter(a => a.horaInicio && a.horaFin && (a.workerId === workerId || (!a.workerId && o.workerIds.length === 1 && o.workerIds.includes(workerId))))
+        .map(a => ({ horaInicio: a.horaInicio, horaFin: a.horaFin }));
+    const fichas = [...deStops, ...deExtra].sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
+    let total = 0;
+    for (let i = 0; i < fichas.length - 1; i++) {
+        const gap = duracionEntreHoras(fichas[i].horaFin, fichas[i + 1].horaInicio, o);
+        if (gap > 0 && gap < 3) { // se ignoran huecos absurdos (datos corregidos a mano, etc.)
+            total += gap;
+        }
+    }
+    return total;
+}
 function duracionStopHorasTrabajador(s, workerId, o) {
     // Tiempo que ESE trabajador en concreto fichó en esta parada (puede ser distinto del de sus
     // compañeros si la cuadrilla se separó). Si no fichó nada aquí, devuelve 0.
@@ -13524,7 +13547,10 @@ const LABORES_CUADRO = [
 ];
 const MESES_CORTOS = ["ENERO", "FEBR", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIE", "OCTUB", "NOVIEM", "DICIEM"];
 function minutosExtraOrden(o) {
-    return (o.tiempoCargaMin || 0) + (o.tiempoAlmuerzoMin || 0);
+    // Si ya hay una "Carga en nave" fichada como actividad (con horas reales), no se suma también el
+    // número manual antiguo de tiempoCargaMin, para no contar la carga dos veces.
+    const cargaYaFichada = (o.actividadesExtra || []).some(a => a.categoria === "carga");
+    return (cargaYaFichada ? 0 : (o.tiempoCargaMin || 0)) + (o.tiempoAlmuerzoMin || 0);
 }
 function minutosTotalesOrden(o) {
     const minStops = o.stops.reduce((acc, s) => acc + (s.estado === "completado" ? duracionStopHoras(s, o) * 60 : 0), 0);
@@ -15976,6 +16002,14 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const [extraNuevoLugar, setExtraNuevoLugar] = useState("");
     const [extraTipoTaller, setExtraTipoTaller] = useState(""); // "" | "consumibles" | "dejar" | "recogida"
     const [extraMaquinaId, setExtraMaquinaId] = useState("");
+    const [materialProveedor, setMaterialProveedor] = useState("");
+    const [materialNuevoProveedor, setMaterialNuevoProveedor] = useState("");
+    const [materialNombre, setMaterialNombre] = useState("");
+    const [materialNuevoNombre, setMaterialNuevoNombre] = useState("");
+    const [materialCantidad, setMaterialCantidad] = useState("");
+    const [materialesLista, setMaterialesLista] = useState([]);
+    const [materialObraId, setMaterialObraId] = useState("");
+    const [materialFoto, setMaterialFoto] = useState(null);
     const [extraNuevaMaquina, setExtraNuevaMaquina] = useState("");
     const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
     const [notaTexto, setNotaTexto] = useState("");
@@ -16030,6 +16064,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             return;
         if (esTallerAlmacen && extraTipoTaller !== "consumibles" && !extraMaquinaId)
             return;
+        const esRecogidaMaterial = categoria === "almacenes" && extraTipoTaller === "consumibles";
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         order.actividadesExtra = order.actividadesExtra || [];
@@ -16038,6 +16073,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             id: uid("ext"), categoria, lugar, horaInicio: nowTime(), horaFin: null, trabajador: nombreTrabajador, workerId,
             tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
             maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
+            obraId: esRecogidaMaterial ? (materialObraId || null) : null,
+            fotoAlbaran: esRecogidaMaterial ? materialFoto : null,
+            materialesImputados: esRecogidaMaterial ? materialesLista.map(m => ({ ...m, bloqueado: false })) : [],
         });
         if (esTallerAlmacen && extraTipoTaller === "dejar" && extraMaquinaId) {
             const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
@@ -16055,6 +16093,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         setExtraLugar("");
         setExtraTipoTaller("");
         setExtraMaquinaId("");
+        setMaterialesLista([]);
+        setMaterialObraId("");
+        setMaterialFoto(null);
     };
     const finalizarActividadExtra = (orderId, actividadId) => {
         const next = structuredClone(data);
@@ -16084,6 +16125,44 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         persist(next);
         setExtraNuevaMaquina("");
         setExtraMaquinaId(nuevaId);
+    };
+    const añadirProveedorMaterial = () => {
+        if (!materialNuevoProveedor.trim())
+            return;
+        const nombre = materialNuevoProveedor.trim();
+        const next = structuredClone(data);
+        next.materialesProveedor = next.materialesProveedor || {};
+        if (!next.materialesProveedor[nombre])
+            next.materialesProveedor[nombre] = [];
+        persist(next);
+        setMaterialProveedor(nombre);
+        setMaterialNuevoProveedor("");
+    };
+    const añadirMaterialCatalogo = () => {
+        if (!materialProveedor || !materialNuevoNombre.trim())
+            return;
+        const nombre = materialNuevoNombre.trim();
+        const next = structuredClone(data);
+        next.materialesProveedor = next.materialesProveedor || {};
+        next.materialesProveedor[materialProveedor] = [...(next.materialesProveedor[materialProveedor] || []), nombre];
+        persist(next);
+        setMaterialNombre(nombre);
+        setMaterialNuevoNombre("");
+    };
+    const añadirLineaMaterial = () => {
+        if (!materialProveedor || !materialNombre || !materialCantidad)
+            return;
+        setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: materialCantidad }]);
+        setMaterialNombre("");
+        setMaterialCantidad("");
+    };
+    const quitarLineaMaterial = (id) => setMaterialesLista(materialesLista.filter(m => m.id !== id));
+    const subirFotoAlbaran = async (files) => {
+        const archivos = Array.from(files || []);
+        if (archivos.length === 0)
+            return;
+        const dataUrl = await leerFotoBase64(archivos[0]);
+        setMaterialFoto(dataUrl);
     };
     const subirFotoStop = async (orderId, clienteId, campo, files) => {
         const archivos = Array.from(files || []);
@@ -16498,10 +16577,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                     (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, o.actividadesExtra.map(a => {
                         const maq = a.maquinaId ? (data.maquinaria || []).find(m => m.id === a.maquinaId) : null;
                         const etiquetaTipo = a.tipoTaller === "dejar" ? " · Dejar maquinaria" : a.tipoTaller === "recogida" ? " · Recogida de maquinaria" : a.tipoTaller === "consumibles" ? " · Consumibles" : "";
+                        const iconoCat = a.categoria === "repostaje" ? "\u26FD" : a.categoria === "talleres" ? "\uD83D\uDD27" : a.categoria === "carga" ? "\uD83D\uDE9B" : "\uD83D\uDCE6";
+                        const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : "Almac\u00E9n";
                         return (React.createElement("div", { key: a.id, style: { fontSize: 12, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", justifyContent: "space-between", alignItems: "center" } },
                             React.createElement("span", null,
-                                "\u26FD ",
-                                a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : "Almacén",
+                                iconoCat,
+                                " ",
+                                etiquetaCat,
                                 " \u2014 ",
                                 a.lugar,
                                 etiquetaTipo,
@@ -16512,12 +16594,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 ")"),
                             !a.horaFin && (React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => finalizarActividadExtra(o.id, a.id) }, "Finalizar"))));
                     }))),
-                    extraAbierto !== o.id ? (React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 8 }, onClick: () => setExtraAbierto(o.id) }, "+ Repostaje / Taller / Almac\u00E9n")) : (React.createElement("div", { className: "gj-card", style: { marginTop: 8 } },
-                        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+                    extraAbierto !== o.id ? (React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 8 }, onClick: () => setExtraAbierto(o.id) }, "+ Carga / Repostaje / Taller / Almac\u00E9n")) : (React.createElement("div", { className: "gj-card", style: { marginTop: 8 } },
+                        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6, flexWrap: "wrap" } },
+                            React.createElement("button", { className: "gj-btn" + (extraCategoria === "carga" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("carga"); setExtraLugar("Nave"); } }, "Carga en nave"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "repostaje" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("repostaje"); setExtraLugar(""); } }, "Repostaje"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "talleres" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("talleres"); setExtraLugar(""); } }, "Talleres"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "almacenes" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("almacenes"); setExtraLugar(""); } }, "Almacenes")),
-                        extraCategoria && (React.createElement("div", null,
+                        extraCategoria && extraCategoria !== "carga" && (React.createElement("div", null,
                             React.createElement("select", { className: "gj-select", value: extraLugar, onChange: e => { setExtraLugar(e.target.value); setExtraTipoTaller(""); setExtraMaquinaId(""); } },
                                 React.createElement("option", { value: "" }, "Selecciona..."),
                                 (((_b = data.listasFichaje) === null || _b === void 0 ? void 0 : _b[extraCategoria]) || []).map(op => React.createElement("option", { key: op, value: op }, op))),
@@ -16527,6 +16610,40 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                     React.createElement("option", { value: "consumibles" }, "Consumibles"),
                                     React.createElement("option", { value: "dejar" }, "Dejar maquinaria"),
                                     React.createElement("option", { value: "recogida" }, "Recogida de maquinaria")),
+                                extraTipoTaller === "consumibles" && extraCategoria === "almacenes" && (React.createElement("div", { style: { marginTop: 8 } },
+                                    React.createElement("div", { className: "gj-label" }, "Foto del albar\u00E1n"),
+                                    React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoAlbaran(e.target.files); e.target.value = ""; } }),
+                                    materialFoto && React.createElement("img", { src: materialFoto, style: { maxWidth: 120, marginTop: 6, borderRadius: 4, display: "block" } }),
+                                    React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "\u00BFPara qu\u00E9 obra son estos materiales?"),
+                                    React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => setMaterialObraId(e.target.value) },
+                                        React.createElement("option", { value: "" }, "Selecciona la obra..."),
+                                        data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre))),
+                                    React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "Materiales recogidos"),
+                                    React.createElement("select", { className: "gj-select", value: materialProveedor, onChange: e => { setMaterialProveedor(e.target.value); setMaterialNombre(""); } },
+                                        React.createElement("option", { value: "" }, "Proveedor..."),
+                                        Object.keys(data.materialesProveedor || {}).map(p => React.createElement("option", { key: p, value: p }, p))),
+                                    React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
+                                        React.createElement("input", { className: "gj-input", value: materialNuevoProveedor, onChange: e => setMaterialNuevoProveedor(e.target.value), placeholder: "\u00BFProveedor nuevo? Escr\u00EDbelo aqu\u00ED" }),
+                                        React.createElement("button", { className: "gj-btn ghost", onClick: añadirProveedorMaterial }, "A\u00F1adir")),
+                                    materialProveedor && (React.createElement(React.Fragment, null,
+                                        React.createElement("select", { className: "gj-select", style: { marginTop: 8 }, value: materialNombre, onChange: e => setMaterialNombre(e.target.value) },
+                                            React.createElement("option", { value: "" }, "Material..."),
+                                            ((data.materialesProveedor || {})[materialProveedor] || []).map(m => React.createElement("option", { key: m, value: m }, m))),
+                                        React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
+                                            React.createElement("input", { className: "gj-input", value: materialNuevoNombre, onChange: e => setMaterialNuevoNombre(e.target.value), placeholder: "\u00BFMaterial nuevo? Escr\u00EDbelo aqu\u00ED" }),
+                                            React.createElement("button", { className: "gj-btn ghost", onClick: añadirMaterialCatalogo }, "A\u00F1adir")),
+                                        React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
+                                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 90 }, value: materialCantidad, onChange: e => setMaterialCantidad(e.target.value), placeholder: "Cantidad" }),
+                                            React.createElement("button", { className: "gj-btn", disabled: !materialNombre || !materialCantidad, onClick: añadirLineaMaterial }, "A\u00F1adir a la lista")))),
+                                    materialesLista.length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, materialesLista.map(m => (React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, padding: "3px 0" } },
+                                        React.createElement("span", null,
+                                            m.cantidad,
+                                            " \u00D7 ",
+                                            m.material,
+                                            " (",
+                                            m.proveedor,
+                                            ")"),
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => quitarLineaMaterial(m.id) }, "Quitar")))))))),
                                 extraTipoTaller === "dejar" && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("div", { className: "gj-label" }, "\u00BFQu\u00E9 m\u00E1quina se deja?"),
                                     React.createElement("select", { className: "gj-select", value: extraMaquinaId, onChange: e => setExtraMaquinaId(e.target.value) },
@@ -16552,7 +16669,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                             m.enTaller.lugar,
                                             ")"))))))))),
                             React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar"),
-                            adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
+                            extraCategoria !== "carga" && adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
                                 React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
                                 React.createElement("button", { className: "gj-btn ghost", onClick: () => añadirOpcionListaFichaje(extraCategoria) }, "A\u00F1adir"))))),
                         React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => { setExtraAbierto(null); setExtraCategoria(null); setExtraLugar(""); setExtraTipoTaller(""); setExtraMaquinaId(""); } }, "Cerrar"))),
@@ -16962,6 +17079,7 @@ function HorasView({ data, persist, getWorker, adminMode }) {
     const [tipoMarca, setTipoMarca] = useState("vacaciones");
     const todoElEquipo = workerId === "__todos__";
     const horasPorDia = {};
+    const horasDesplazamientoPorDia = {};
     data.orders.forEach(o => {
         if (!todoElEquipo && !o.workerIds.includes(workerId))
             return;
@@ -17010,6 +17128,22 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                 horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + duracionActividadHoras(a, o);
             }
         });
+        if (todoElEquipo) {
+            o.workerIds.forEach(wid => {
+                const d = desplazamientoHorasOrden(o, wid);
+                if (d > 0) {
+                    horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + d;
+                    horasDesplazamientoPorDia[o.fecha] = (horasDesplazamientoPorDia[o.fecha] || 0) + d;
+                }
+            });
+        }
+        else {
+            const d = desplazamientoHorasOrden(o, workerId);
+            if (d > 0) {
+                horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + d;
+                horasDesplazamientoPorDia[o.fecha] = (horasDesplazamientoPorDia[o.fecha] || 0) + d;
+            }
+        }
         if (algunaCompletada) {
             const factorExtra = todoElEquipo ? (o.workerIds.length || 1) : 1;
             horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + (minutosExtraOrden(o) / 60) * factorExtra;
@@ -17020,6 +17154,7 @@ function HorasView({ data, persist, getWorker, adminMode }) {
     const horasObjetivoAnio = todoElEquipo ? null : horasObjetivoAnual(trabajadorSel, year, data.settings.horasAnualesBase);
     const diasTrabajadosAnio = Object.keys(horasPorDia).filter(d => d.startsWith(String(year))).length;
     const horasAnio = Object.entries(horasPorDia).filter(([d]) => d.startsWith(String(year))).reduce((a, [, h]) => a + h, 0);
+    const desplazamientoAnio = Object.entries(horasDesplazamientoPorDia).filter(([d]) => d.startsWith(String(year))).reduce((a, [, h]) => a + h, 0);
     let vacacionesAnio, bajaAnio, permisoAnio;
     if (todoElEquipo) {
         vacacionesAnio = 0;
@@ -17115,6 +17250,10 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                 React.createElement("div", { className: "l" },
                     "D\u00EDas trabajados en ",
                     year)),
+            React.createElement("div", { className: "gj-stat" },
+                React.createElement("div", { className: "n" }, fmtHM(desplazamientoAnio)),
+                React.createElement("div", { className: "l" }, "De ellas, en desplazamientos"),
+                React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", marginTop: 2 } }, "(entre mantenimiento y mantenimiento; ya incluidas en el total)")),
             React.createElement("div", { className: "gj-stat" },
                 React.createElement("div", { className: "n" },
                     vacacionesAnio,
@@ -20058,6 +20197,39 @@ function TrabajosView({ data, persist, adminRole }) {
     const [confirmarEliminarId, setConfirmarEliminarId] = useState(null);
     const [pinEliminar, setPinEliminar] = useState("");
     const [pinEliminarError, setPinEliminarError] = useState("");
+    const [materialesAbiertos, setMaterialesAbiertos] = useState(null);
+    const [fotoGrande, setFotoGrande] = useState(null);
+    const materialesDeObra = (obraId) => {
+        const lineas = [];
+        (data.orders || []).forEach(o => {
+            (o.actividadesExtra || []).forEach(a => {
+                if (a.obraId === obraId && (a.materialesImputados || []).length > 0) {
+                    a.materialesImputados.forEach(m => {
+                        lineas.push({ orderId: o.id, actividadId: a.id, fecha: o.fecha, trabajador: a.trabajador, lugar: a.lugar, fotoAlbaran: a.fotoAlbaran, ...m });
+                    });
+                }
+            });
+        });
+        return lineas.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    };
+    const editarMaterial = (orderId, actividadId, lineaId, campo, valor) => {
+        const next = structuredClone(data);
+        const o = next.orders.find(x => x.id === orderId);
+        const a = (o.actividadesExtra || []).find(x => x.id === actividadId);
+        const m = (a.materialesImputados || []).find(x => x.id === lineaId);
+        if (m)
+            m[campo] = campo === "bloqueado" ? valor : valor;
+        persist(next);
+    };
+    const eliminarLineaMaterial = (orderId, actividadId, lineaId) => {
+        if (!confirm("¿Quitar este material de la obra?"))
+            return;
+        const next = structuredClone(data);
+        const o = next.orders.find(x => x.id === orderId);
+        const a = (o.actividadesExtra || []).find(x => x.id === actividadId);
+        a.materialesImputados = (a.materialesImputados || []).filter(x => x.id !== lineaId);
+        persist(next);
+    };
     const actualizarCampo = (id, campo, valor) => {
         const next = structuredClone(data);
         const c = next.clients.find(x => x.id === id);
@@ -20109,13 +20281,19 @@ function TrabajosView({ data, persist, adminRole }) {
                         React.createElement("th", null, "Estado"),
                         adminRole === "admin1" && React.createElement("th", null))),
                 React.createElement("tbody", null, obrasFiltradas.map((o, i) => {
+                    const lineasMateriales = materialesDeObra(o.id);
                     const filaPrincipal = React.createElement("tr", null,
                         React.createElement("td", null, adminRole === "admin1" && (React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } },
                             React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === 0, onClick: () => mover(o.id, -1) },
                                 React.createElement(ArrowUp, { size: 12 })),
                             React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === obrasFiltradas.length - 1, onClick: () => mover(o.id, 1) },
                                 React.createElement(ArrowDown, { size: 12 }))))),
-                        React.createElement("td", { style: { fontWeight: 600 } }, o.nombre),
+                        React.createElement("td", { style: { fontWeight: 600 } },
+                            o.nombre,
+                            lineasMateriales.length > 0 && (React.createElement("div", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10.5, marginTop: 2 }, onClick: () => setMaterialesAbiertos(materialesAbiertos === o.id ? null : o.id) },
+                                "\uD83D\uDCE6 Materiales (",
+                                lineasMateriales.length,
+                                ")")))),
                         React.createElement("td", null,
                             React.createElement("input", { className: "gj-input", type: "number", style: { width: 56 }, value: o.personasEstimadas || 0, onChange: e => actualizarCampo(o.id, "personasEstimadas", e.target.value) })),
                         React.createElement("td", null,
@@ -20125,6 +20303,23 @@ function TrabajosView({ data, persist, adminRole }) {
                         React.createElement("td", null,
                             React.createElement("span", { className: "gj-badge " + (o.estadoObra === "finalizada" ? "completado" : "en_progreso") }, o.estadoObra === "finalizada" ? "Finalizada" : "En curso")),
                         adminRole === "admin1" ? React.createElement("td", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => { setConfirmarEliminarId(o.id); setPinEliminar(""); setPinEliminarError(""); } }, "Eliminar")) : null);
+                    const filaMateriales = materialesAbiertos === o.id ? React.createElement("tr", null, React.createElement("td", { colSpan: 7 },
+                        React.createElement("div", { className: "gj-card", style: { margin: "4px 0" } },
+                            React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5, marginBottom: 6 } }, "Materiales imputados a esta obra"),
+                            lineasMateriales.length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Todav\u00EDa no hay materiales imputados.") : lineasMateriales.map(m => (React.createElement("div", { key: m.id, style: { display: "flex", alignItems: "center", gap: 6, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", flexWrap: "wrap" } },
+                                React.createElement("span", { style: { fontSize: 11.5, color: "var(--ink-soft)", minWidth: 70 } }, fechaEs(m.fecha)),
+                                React.createElement("input", { className: "gj-input", type: "number", style: { width: 60, padding: "2px 4px" }, value: m.cantidad, disabled: m.bloqueado, onChange: e => editarMaterial(m.orderId, m.actividadId, m.id, "cantidad", e.target.value) }),
+                                React.createElement("span", { style: { fontSize: 12.5, flex: 1 } },
+                                    m.material,
+                                    " (",
+                                    m.proveedor,
+                                    ") \u2014 ",
+                                    m.trabajador,
+                                    " en ",
+                                    m.lugar),
+                                m.fotoAlbaran && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => setFotoGrande(m.fotoAlbaran) }, "Ver albar\u00E1n"),
+                                React.createElement("button", { className: "gj-btn" + (m.bloqueado ? " primary" : " ghost"), style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => editarMaterial(m.orderId, m.actividadId, m.id, "bloqueado", !m.bloqueado) }, m.bloqueado ? "Bloqueado" : "Editable"),
+                                !m.bloqueado && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => eliminarLineaMaterial(m.orderId, m.actividadId, m.id) }, "Quitar"))))))) : null;
                     const filaConfirmacion = confirmarEliminarId === o.id ? React.createElement("tr", null, React.createElement("td", { colSpan: 7 },
                         React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)", margin: "4px 0" } },
                             React.createElement("div", { style: { fontSize: 12, color: "var(--warn)", fontWeight: 600 } }, "\u26A0\uFE0F Esto quita el trabajo de la lista (la ficha del cliente se conserva). Introduce tu PIN de administrador 1 para confirmar:"),
@@ -20133,9 +20328,11 @@ function TrabajosView({ data, persist, adminRole }) {
                             React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
                                 React.createElement("button", { className: "gj-btn danger", onClick: () => { eliminarTrabajo(o.id); setConfirmarEliminarId(null); } }, "Confirmar eliminaci\u00F3n"),
                                 React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarEliminarId(null) }, "Cancelar"))))) : null;
-                    return React.createElement(React.Fragment, { key: o.id }, filaPrincipal, filaConfirmacion);
-                })),
-        obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto.")))));
+                    return React.createElement(React.Fragment, { key: o.id }, filaPrincipal, filaMateriales, filaConfirmacion);
+                }))),
+        obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto."),
+        fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })))));
 }
 function FestivoForm({ data, persist, adminRole }) {
     const [fecha, setFecha] = useState(todayStr());
