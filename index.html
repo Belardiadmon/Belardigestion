@@ -16617,7 +16617,7 @@ function ClimaView({ data, persist }) {
             try {
                 const lats = UBICACIONES_PREVISION.map(u => u.lat).join(",");
                 const lngs = UBICACIONES_PREVISION.map(u => u.lng).join(",");
-                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lngs}&hourly=temperature_2m,precipitation,precipitation_probability&forecast_days=4&timezone=auto`;
+                const url = `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lngs}&hourly=temperature_2m,precipitation,precipitation_probability&forecast_days=6&timezone=auto`;
                 const res = await fetch(url);
                 if (!res.ok)
                     throw new Error("Respuesta no v\u00E1lida del servicio meteorol\u00F3gico");
@@ -16643,7 +16643,7 @@ function ClimaView({ data, persist }) {
                         porDia[fecha].precs.push(precs[i] || 0);
                         porDia[fecha].probs.push(probs[i] || 0);
                     });
-                    const proximos = Object.keys(porDia).sort().filter(f => f > hoy).slice(0, 3);
+                    const proximos = Object.keys(porDia).sort().filter(f => f > hoy).slice(0, 5);
                     out[nombre] = proximos.map(f => {
                         const d = porDia[f];
                         const tmax = Math.max(...d.temps);
@@ -16721,7 +16721,7 @@ function ClimaView({ data, persist }) {
     const nombresPrevision = UBICACIONES_PREVISION.map(u => u.nombre);
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Clima"),
-        React.createElement("div", { className: "gj-h3" }, "Previsi\u00F3n pr\u00F3ximos 3 d\u00EDas (8:00\u201316:00)"),
+        React.createElement("div", { className: "gj-h3" }, "Previsi\u00F3n pr\u00F3ximos 5 d\u00EDas (8:00\u201316:00)"),
         cargandoPrevision && React.createElement("div", { className: "gj-card", style: { fontSize: 12.5 } }, "Descargando previsi\u00F3n..."),
         errorPrevision && React.createElement("div", { className: "gj-card", style: { fontSize: 12.5, color: "var(--warn)" } }, errorPrevision),
         prevision && (React.createElement("div", { className: "gj-table-wrap", style: { marginBottom: 16 } },
@@ -16729,7 +16729,7 @@ function ClimaView({ data, persist }) {
                 React.createElement("thead", null,
                     React.createElement("tr", null,
                         React.createElement("th", null, "Ubicaci\u00F3n"),
-                        [0, 1, 2].map(i => {
+                        [0, 1, 2, 3, 4].map(i => {
                             var _a, _b;
                             const fPrimero = (_b = (_a = prevision[nombresPrevision[0]]) === null || _a === void 0 ? void 0 : _a[i]) === null || _b === void 0 ? void 0 : _b.fecha;
                             const letra = fPrimero ? DIAS_SEMANA[(new Date(fPrimero + "T12:00:00").getDay() + 6) % 7] : "";
@@ -16737,7 +16737,7 @@ function ClimaView({ data, persist }) {
                         }))),
                 React.createElement("tbody", null, nombresPrevision.map(nombre => (React.createElement("tr", { key: nombre },
                     React.createElement("td", { style: { fontWeight: 600 } }, nombre),
-                    [0, 1, 2].map(i => {
+                    [0, 1, 2, 3, 4].map(i => {
                         var _a;
                         const d = (_a = prevision[nombre]) === null || _a === void 0 ? void 0 : _a[i];
                         return (React.createElement("td", { key: i }, d ? (React.createElement("div", { style: { textAlign: "center" } },
@@ -20565,6 +20565,24 @@ function RentabilidadView({ data, persist }) {
         setNaveLat(null);
         setNaveLng(null);
     };
+    const [naveLatManual, setNaveLatManual] = useState("");
+    const [naveLngManual, setNaveLngManual] = useState("");
+    const guardarNaveManual = () => {
+        const lat = Number(naveLatManual.replace(",", "."));
+        const lng = Number(naveLngManual.replace(",", "."));
+        if (!naveLatManual || !naveLngManual || Number.isNaN(lat) || Number.isNaN(lng)) {
+            alert("Introduce la latitud y la longitud en n\u00FAmeros (p.ej. 42.78757 y -1.62517).");
+            return;
+        }
+        const next = structuredClone(data);
+        next.settings.naveLat = lat;
+        next.settings.naveLng = lng;
+        persist(next);
+        setNaveLat(lat);
+        setNaveLng(lng);
+        setNaveLatManual("");
+        setNaveLngManual("");
+    };
     const [telefonoEmpresa, setTelefonoEmpresa] = useState(data.settings.telefonoEmpresa || "");
     const [webEmpresa, setWebEmpresa] = useState(data.settings.webEmpresa || "");
     const [identificadorAcreedorSepa, setIdentificadorAcreedorSepa] = useState(data.settings.identificadorAcreedorSepa || "");
@@ -20703,6 +20721,11 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("a", { href: mapsLinkCoord({ lat: naveLat, lng: naveLng }), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD Ver ubicaci\u00F3n guardada"),
                     React.createElement("button", { className: "gj-btn ghost", onClick: capturarNave, disabled: capturandoNave }, capturandoNave ? "Capturando..." : "Actualizar (estando all\u00ED)"),
                     React.createElement("button", { className: "gj-btn ghost", onClick: borrarNave }, "Borrar"))) : (React.createElement("button", { className: "gj-btn", onClick: capturarNave, disabled: capturandoNave }, capturandoNave ? "Obteniendo ubicaci\u00F3n..." : "Capturar ubicaci\u00F3n actual como nave")),
+                React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6, flexWrap: "wrap" } },
+                    React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 110 }, value: naveLatManual, onChange: e => setNaveLatManual(e.target.value), placeholder: "Latitud (ej. 42.78757)" }),
+                    React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 110 }, value: naveLngManual, onChange: e => setNaveLngManual(e.target.value), placeholder: "Longitud (ej. -1.62517)" }),
+                    React.createElement("button", { className: "gj-btn", onClick: guardarNaveManual }, "Guardar coordenadas")),
+                React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 2 } }, "La longitud Oeste se escribe en negativo (por ejemplo, 1,62517\u00B0 O es -1.62517)."),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Estando f\u00EDsicamente en la nave, pulsa el bot\u00F3n para guardarla. A partir de entonces, si la salida de jornada de un trabajador no coincide con este punto, se avisar\u00E1 al administrador en Rutas.")),
             React.createElement("hr", { className: "gj-divider" }),
             React.createElement("div", { className: "gj-field" },
