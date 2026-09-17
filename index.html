@@ -13030,12 +13030,46 @@ function guardarAmpliacionObraGlobal(data, persist, datosCalc, obraOriginalId) {
     persist(next);
     return nuevoId;
 }
-function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
+function buscarClienteCoincidente(clients, p) {
+    // Coincide por DNI, tel\u00E9fono, direcci\u00F3n o nombre. Ojo: ninguno de los cuatro es un identificador
+    // fiable al 100% en este negocio (administradores de fincas que comparten tel\u00E9fono entre varios
+    // clientes, clientes sin m\u00F3vil propio a los que se les pone el tel\u00E9fono de la empresa, direcciones
+    // parecidas pero de fincas distintas, nombres iguales de personas distintas...) \u2014 por eso, quien
+    // llama a esta funci\u00F3n SIEMPRE debe preguntar al administrador antes de dar por hecho que es el
+    // mismo cliente.
     const telLimpio = (p.telefono || "").replace(/\D/g, "");
     const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const dirLimpia = (p.direccion || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const nombreLimpio = (p.nombre || "").trim().toLowerCase().replace(/\s+/g, " ");
+    let cliente = dniLimpio ? clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
+    if (!cliente && telLimpio) {
+        cliente = clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio);
+    }
+    if (!cliente && dirLimpia) {
+        cliente = clients.find(c => c.direccion && c.direccion.trim().toLowerCase().replace(/\s+/g, " ") === dirLimpia);
+    }
+    if (!cliente && nombreLimpio) {
+        cliente = clients.find(c => c.nombre && c.nombre.trim().toLowerCase().replace(/\s+/g, " ") === nombreLimpio);
+    }
+    return cliente || null;
+}
+function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
+    // Coincide por DNI, tel\u00E9fono, direcci\u00F3n o nombre (ver buscarClienteCoincidente). El aviso al
+    // aprobar, en las pantallas que llaman a esta funci\u00F3n, es lo que permite al administrador decidir
+    // si de verdad es el mismo cliente antes de que se fusione.
+    const telLimpio = (p.telefono || "").replace(/\D/g, "");
+    const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
+    const dirLimpia = (p.direccion || "").trim().toLowerCase().replace(/\s+/g, " ");
+    const nombreLimpio = (p.nombre || "").trim().toLowerCase().replace(/\s+/g, " ");
     let cliente = dniLimpio ? next.clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
     if (!cliente && telLimpio) {
         cliente = next.clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio);
+    }
+    if (!cliente && dirLimpia) {
+        cliente = next.clients.find(c => c.direccion && c.direccion.trim().toLowerCase().replace(/\s+/g, " ") === dirLimpia);
+    }
+    if (!cliente && nombreLimpio) {
+        cliente = next.clients.find(c => c.nombre && c.nombre.trim().toLowerCase().replace(/\s+/g, " ") === nombreLimpio);
     }
     if (!cliente) {
         cliente = {
@@ -13047,6 +13081,11 @@ function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
     }
     else if (p.dni && !cliente.dni) {
         cliente.dni = p.dni;
+    }
+    if (cliente.nombre !== p.nombre || cliente.direccion !== p.direccion) {
+        cliente.nombreAnterior = cliente.nombre !== p.nombre ? cliente.nombre : cliente.nombreAnterior;
+        cliente.nombre = p.nombre;
+        cliente.direccion = p.direccion;
     }
     if (tipoNuevo === "mantenimiento") {
         cliente.esMantenimiento = true;
@@ -18279,6 +18318,11 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
     const marcarAprobado = () => {
         const next = structuredClone(data);
         const pres = next.presupuestos.find(x => x.id === p.id);
+        const coincidente = buscarClienteCoincidente(next.clients, p);
+        if (coincidente && coincidente.nombre !== p.nombre) {
+            if (!confirm(`Ya hay un cliente guardado con el mismo tel\u00E9fono, DNI, direcci\u00F3n o nombre, registrado como "${coincidente.nombre}". Si aprueba, se actualizar\u00E1 su nombre a "${p.nombre}". \u00BFSon la misma persona/finca? Pulsa Aceptar para continuar, o Cancelar para revisar los datos antes de aprobar.`))
+                return;
+        }
         pres.aprobado = true;
         pres.fechaAprobacion = todayStr();
         pres.convertido = true;
@@ -19715,6 +19759,11 @@ function PresupuestosView({ data, persist }) {
     const aprobar = (id) => {
         const next = structuredClone(data);
         const p = next.presupuestos.find(x => x.id === id);
+        const coincidente = buscarClienteCoincidente(next.clients, p);
+        if (coincidente && coincidente.nombre !== p.nombre) {
+            if (!confirm(`Ya hay un cliente guardado con el mismo tel\u00E9fono, DNI, direcci\u00F3n o nombre, registrado como "${coincidente.nombre}". Si aprueba, se actualizar\u00E1 su nombre a "${p.nombre}". \u00BFSon la misma persona/finca? Pulsa Aceptar para continuar, o Cancelar para revisar los datos antes de aprobar.`))
+                return;
+        }
         p.aprobado = true;
         p.convertido = true;
         upsertClienteDesdePresupuesto(next, p, p.tipo === "mantenimiento" ? "mantenimiento" : "obra");
