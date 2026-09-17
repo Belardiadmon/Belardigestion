@@ -14998,7 +14998,7 @@ function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
                 React.createElement("button", { className: "gj-btn block", onClick: () => setEditando(false) }, "Cancelar"),
                 React.createElement("button", { className: "gj-btn primary block", onClick: guardar }, "Guardar"))))));
 }
-function ClientesView({ data, persist, setView, setFocusClienteId }) {
+function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteId }) {
     const [showImportes, setShowImportes] = useState(false);
     const [editing, setEditing] = useState(null);
     const [busqueda, setBusqueda] = useState("");
@@ -15006,6 +15006,14 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
     const [importando, setImportando] = useState(false);
     const [textoImport, setTextoImport] = useState("");
     const [resultadoImport, setResultadoImport] = useState(null);
+    useEffect(() => {
+        if (!focusClienteId)
+            return;
+        const c = data.clients.find(x => x.id === focusClienteId);
+        if (c)
+            setEditing(c);
+        setFocusClienteId(null);
+    }, [focusClienteId]);
     const blank = { id: "", nombre: "", direccion: "", zona: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
     const save = (form) => {
         const next = structuredClone(data);
@@ -18277,14 +18285,52 @@ function AnexosContrato({ p, data, persist, onVolver, onContinuar, tabsDocumento
                 React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 8 } }, "Nota aclaratoria: todas las actuaciones pueden sufrir variaci\u00F3n tanto en fecha de realizaci\u00F3n como en n\u00FAmero de intervenciones, seg\u00FAn las condiciones climatol\u00F3gicas del a\u00F1o.")))),
         React.createElement("button", { className: "gj-btn primary block", onClick: continuar }, incluirAnexos ? "Guardar anexos y continuar al contrato" : "Continuar al contrato sin anexos")));
 }
-function PresupuestoMantenimientoDoc({ p, data, persist, onVolver }) {
+function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setFocusClienteId }) {
     const [etapa, setEtapa] = useState(p.firmaCliente ? "listo" : p.aprobado ? "datos" : "documento");
     const [fechaInicio, setFechaInicio] = useState(p.fechaInicioMantenimiento || "");
     const [apellidos, setApellidos] = useState(p.apellidos || "");
     const [dni, setDni] = useState(p.dni || "");
     const [cuenta, setCuenta] = useState(p.cuentaBancaria || "");
     const printRef = useRef(null);
+    const irAFichaCliente = () => {
+        const cliente = (p.clienteId && data.clients.find(c => c.id === p.clienteId)) || buscarClienteCoincidente(data.clients, p);
+        if (!cliente) {
+            alert("No se ha encontrado todav\u00EDa una ficha de cliente vinculada a este presupuesto.");
+            return;
+        }
+        setFocusClienteId(cliente.id);
+        setView("clientes");
+    };
+    const deshacerAprobacion = () => {
+        if (!confirm("Esto vuelve a dejar el presupuesto como pendiente de aprobar. NO deshace los cambios que ya se hicieron en la ficha del cliente (nombre, datos...) \u2014 eso hay que corregirlo a mano en Clientes si hace falta. \u00BFContinuar?"))
+            return;
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.aprobado = false;
+        pres.convertido = false;
+        pres.clienteId = null;
+        persist(next);
+        onVolver();
+    };
+    const eliminarPresupuesto = () => {
+        if (!confirm("\u00BFEliminar este presupuesto? Esta acci\u00F3n no se puede deshacer. La ficha del cliente (si se lleg\u00F3 a crear o modificar) NO se borra ni se corrige \u2014 rev\u00EDsala aparte en Clientes si hace falta."))
+            return;
+        const next = structuredClone(data);
+        next.presupuestos = next.presupuestos.filter(x => x.id !== p.id);
+        persist(next);
+        onVolver();
+    };
     const tabsDocumentos = p.aprobado && (React.createElement("div", { className: "gj-no-print" },
+        React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 6 }, onClick: irAFichaCliente },
+            React.createElement(UserCheck, { size: 12 }),
+            " Ver/editar ficha real del cliente"),
+        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+            React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: deshacerAprobacion },
+                React.createElement(RotateCcw, { size: 12 }),
+                " Deshacer aprobaci\u00F3n"),
+            React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: eliminarPresupuesto },
+                React.createElement(XCircle, { size: 12 }),
+                " Eliminar presupuesto")),
         React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
             React.createElement("button", { className: "gj-btn" + (etapa === "documento" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("documento") }, "Presupuesto"),
             React.createElement("button", { className: "gj-btn" + (etapa === "sepa" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("sepa") }, "SEPA"),
@@ -18864,7 +18910,7 @@ function reconstruirPartidasObra(partidas) {
     });
     return { cantidades, precios, riego, materiales };
 }
-function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpliacion, onAbrirDoc }) {
+function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpliacion, onAbrirDoc, setView, setFocusClienteId }) {
     const [etapa, setEtapa] = useState(p.fechaFirmaContratoObra ? "listo" : p.aprobado ? "datos" : "documento");
     const [apellidos, setApellidos] = useState(p.apellidos || "");
     const [dni, setDni] = useState(p.dni || "");
@@ -18942,7 +18988,46 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
         setEtapa("listo");
     };
     const obraIniciada = p.fechaInicioObra && p.fechaInicioObra <= todayStr();
+    const irAFichaCliente = () => {
+        const cliente = (p.clienteId && data.clients.find(c => c.id === p.clienteId)) || buscarClienteCoincidente(data.clients, p);
+        if (!cliente) {
+            alert("No se ha encontrado todav\u00EDa una ficha de cliente vinculada a este presupuesto.");
+            return;
+        }
+        setFocusClienteId(cliente.id);
+        setView("clientes");
+    };
+    const deshacerAprobacion = () => {
+        if (!confirm("Esto vuelve a dejar el presupuesto como pendiente de aprobar. NO deshace los cambios que ya se hicieron en la ficha del cliente (nombre, datos...) \u2014 eso hay que corregirlo a mano en Clientes si hace falta. \u00BFContinuar?"))
+            return;
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.aprobado = false;
+        pres.convertido = false;
+        pres.clienteId = null;
+        persist(next);
+        onVolver();
+    };
+    const eliminarPresupuesto = () => {
+        const tieneAmpliaciones = (data.presupuestos || []).some(x => x.ampliacionDeId === p.id);
+        if (!confirm(`\u00BFEliminar este presupuesto? Esta acci\u00F3n no se puede deshacer. La ficha del cliente (si se lleg\u00F3 a crear o modificar) NO se borra ni se corrige \u2014 rev\u00EDsala aparte en Clientes si hace falta.${tieneAmpliaciones ? " Ojo: tiene ampliaciones vinculadas que quedar\u00EDan sueltas." : ""}`))
+            return;
+        const next = structuredClone(data);
+        next.presupuestos = next.presupuestos.filter(x => x.id !== p.id);
+        persist(next);
+        onVolver();
+    };
     const tabsDocumentos = p.aprobado && (React.createElement("div", { className: "gj-no-print" },
+        React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 6 }, onClick: irAFichaCliente },
+            React.createElement(UserCheck, { size: 12 }),
+            " Ver/editar ficha real del cliente"),
+        React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
+            React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: deshacerAprobacion },
+                React.createElement(RotateCcw, { size: 12 }),
+                " Deshacer aprobaci\u00F3n"),
+            React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: eliminarPresupuesto },
+                React.createElement(XCircle, { size: 12 }),
+                " Eliminar presupuesto")),
         React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6 } },
             React.createElement("button", { className: "gj-btn" + (etapa === "documento" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("documento") }, "Presupuesto"),
             React.createElement("button", { className: "gj-btn" + (etapa === "sepa" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setEtapa("sepa") }, "SEPA"),
@@ -19736,7 +19821,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             " ",
             presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra")));
 }
-function PresupuestosView({ data, persist }) {
+function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
     const [printId, setPrintId] = useState(null);
     const [editandoObraId, setEditandoObraId] = useState(null);
     const [ampliandoObraId, setAmpliandoObraId] = useState(null);
@@ -19803,10 +19888,10 @@ function PresupuestosView({ data, persist }) {
     if (printId) {
         const p = todosPresupuestos.find(x => x.id === printId);
         if (p && p.tipo === "mantenimiento") {
-            return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null) });
+            return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), setView: setView, setFocusClienteId: setFocusClienteId });
         }
         if (p) {
-            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); }, onNuevaAmpliacion: () => { setPrintId(null); setAmpliandoObraId(p.id); }, onAbrirDoc: (id) => setPrintId(id) }));
+            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); }, onNuevaAmpliacion: () => { setPrintId(null); setAmpliandoObraId(p.id); }, onAbrirDoc: (id) => setPrintId(id), setView: setView, setFocusClienteId: setFocusClienteId }));
         }
     }
     return (React.createElement("div", null,
@@ -19846,7 +19931,7 @@ function PresupuestosView({ data, persist }) {
                 React.createElement("div", { style: { fontWeight: 600 } }, p.nombre),
                 React.createElement("span", { className: "gj-badge completado" }, "Aprobado"))))))));
 }
-function HistorialPresupuestosView({ data, persist }) {
+function HistorialPresupuestosView({ data, persist, setView, setFocusClienteId }) {
     const [printId, setPrintId] = useState(null);
     const [editandoObraId, setEditandoObraId] = useState(null);
     const [ampliandoObraId, setAmpliandoObraId] = useState(null);
@@ -19876,10 +19961,10 @@ function HistorialPresupuestosView({ data, persist }) {
     if (printId) {
         const p = todosPresupuestos.find(x => x.id === printId);
         if (p && p.tipo === "mantenimiento") {
-            return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null) });
+            return React.createElement(PresupuestoMantenimientoDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), setView: setView, setFocusClienteId: setFocusClienteId });
         }
         if (p) {
-            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); }, onNuevaAmpliacion: () => { setPrintId(null); setAmpliandoObraId(p.id); }, onAbrirDoc: (id) => setPrintId(id) }));
+            return (React.createElement(PresupuestoObraDoc, { p: p, data: data, persist: persist, onVolver: () => setPrintId(null), onEditar: () => { setPrintId(null); setEditandoObraId(p.id); }, onNuevaAmpliacion: () => { setPrintId(null); setAmpliandoObraId(p.id); }, onAbrirDoc: (id) => setPrintId(id), setView: setView, setFocusClienteId: setFocusClienteId }));
         }
     }
     return (React.createElement("div", null,
