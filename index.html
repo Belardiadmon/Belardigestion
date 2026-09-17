@@ -14964,7 +14964,7 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
     const [importando, setImportando] = useState(false);
     const [textoImport, setTextoImport] = useState("");
     const [resultadoImport, setResultadoImport] = useState(null);
-    const blank = { id: "", nombre: "", direccion: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
+    const blank = { id: "", nombre: "", direccion: "", zona: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
     const save = (form) => {
         const next = structuredClone(data);
         const clean = {
@@ -14994,13 +14994,14 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
     };
     const filtroTexto = busqueda.trim().toLowerCase();
     const coincide = (c) => !filtroTexto || c.nombre.toLowerCase().includes(filtroTexto);
-    const mantenimiento = data.clients.filter(c => c.esMantenimiento && coincide(c));
+    const mantenimiento = data.clients.filter(c => c.esMantenimiento && coincide(c)).sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre));
     const obras = data.clients.filter(c => c.esObra && coincide(c));
     const renderCliente = (c) => (React.createElement("div", { className: "gj-card", key: c.id, onClick: () => c.esMantenimiento && setClienteJardin(c), style: { cursor: c.esMantenimiento ? "pointer" : "default" } },
         React.createElement("div", { className: "gj-row" },
             React.createElement("div", null,
                 React.createElement("div", { style: { fontWeight: 600 } }, c.nombre),
                 React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", display: "flex", alignItems: "center", gap: 4 } },
+                    c.zona ? `[${c.zona}] ` : "",
                     c.direccion,
                     React.createElement("a", { href: mapsLink(c.direccion), target: "_blank", rel: "noreferrer", title: "Ver en el mapa", onClick: e => e.stopPropagation() },
                         React.createElement(MapPin, { size: 13, color: "var(--accent)" }))),
@@ -15094,7 +15095,13 @@ function ClientesView({ data, persist, setView, setFocusClienteId }) {
         editing && React.createElement(ClienteForm, { initial: editing, data: data, onCancel: () => setEditing(null), onSave: save }),
         React.createElement("h3", { className: "gj-h3" }, "Clientes de mantenimiento"),
         mantenimiento.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, filtroTexto ? "Ningún cliente de mantenimiento coincide con la búsqueda." : "Todavía no hay clientes de mantenimiento."),
-        mantenimiento.map(renderCliente),
+        mantenimiento.map((c, i) => {
+            const zonaAnterior = i > 0 ? (mantenimiento[i - 1].zona || "") : null;
+            const cambioDeZona = i === 0 || (c.zona || "") !== zonaAnterior;
+            return React.createElement(React.Fragment, { key: c.id },
+                cambioDeZona && React.createElement("div", { style: { fontSize: 11, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", marginTop: 10, marginBottom: 2 } }, c.zona || "Sin zona asignada"),
+                renderCliente(c));
+        }),
         React.createElement("h3", { className: "gj-h3", style: { marginTop: 8 } }, "Clientes de obras"),
         obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, filtroTexto ? "Ninguna obra coincide con la búsqueda." : "Todavía no hay clientes de obras."),
         obras.map(renderCliente)));
@@ -15144,6 +15151,10 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
         React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
             React.createElement("input", { className: "gj-input", value: form.direccion, onChange: e => set("direccion", e.target.value), onBlur: comprobarDuplicado, placeholder: "Calle Mayor 3, Madrid" })),
+        React.createElement("div", { className: "gj-field" },
+            React.createElement("label", { className: "gj-label" }, "Zona geogr\u00E1fica (para organizar rutas por cercan\u00EDa)"),
+            React.createElement("input", { className: "gj-input", list: "gj-zonas-sugeridas", value: form.zona || "", onChange: e => set("zona", e.target.value), placeholder: "Ej: Pozuelo, Majadahonda, Las Rozas..." }),
+            React.createElement("datalist", { id: "gj-zonas-sugeridas" }, [...new Set((data.clients || []).map(c => c.zona).filter(Boolean))].sort().map(z => React.createElement("option", { key: z, value: z })))),
         React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Ubicaci\u00F3n GPS (para planificar rutas por cercan\u00EDa)"),
             React.createElement("div", { className: "gj-row", style: { gap: 6 } },
@@ -15756,14 +15767,17 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                     React.createElement("option", { value: "" }, "Sin asignar"),
                     (data.vehiculos || []).map(v => React.createElement("option", { key: v, value: v }, v)))),
             React.createElement("div", { className: "gj-field" },
-                React.createElement("label", { className: "gj-label" }, "Clientes de la ruta, en orden"),
-                React.createElement("div", { className: "gj-checklist" }, data.clients.map(c => {
+                React.createElement("label", { className: "gj-label" }, "Clientes de la ruta (agrupados por zona; el orden de la ruta es el orden en que los vayas pulsando)"),
+                React.createElement("div", { className: "gj-checklist" }, data.clients.slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).map((c, i, arr) => {
                     const nPend = (data.pendientes || []).filter(p => p.clienteId === c.id && !p.resuelto).length;
-                    return (React.createElement("span", { key: c.id, className: "gj-chip" + (selClients.includes(c.id) ? " selected" : ""), onClick: () => toggleClient(c.id) },
-                        selClients.includes(c.id) ? (selClients.indexOf(c.id) + 1) + ". " : "",
-                        c.nombre,
-                        c.esObra ? " (obra)" : "",
-                        nPend > 0 ? ` \u26A0\uFE0F${nPend}` : ""));
+                    const cambioDeZona = i === 0 || (c.zona || "") !== (arr[i - 1].zona || "");
+                    return React.createElement(React.Fragment, { key: c.id },
+                        cambioDeZona && React.createElement("div", { style: { width: "100%", fontSize: 11, fontWeight: 700, color: "var(--ink-soft)", textTransform: "uppercase", marginTop: 6 } }, c.zona || "Sin zona asignada"),
+                        React.createElement("span", { className: "gj-chip" + (selClients.includes(c.id) ? " selected" : ""), onClick: () => toggleClient(c.id) },
+                            selClients.includes(c.id) ? (selClients.indexOf(c.id) + 1) + ". " : "",
+                            c.nombre,
+                            c.esObra ? " (obra)" : "",
+                            nPend > 0 ? ` \u26A0\uFE0F${nPend}` : ""));
                 }))),
             selClients.length > 0 && (React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Observaciones / trabajo extra por cliente (opcional)"),
@@ -19573,6 +19587,7 @@ function HistorialPresupuestosView({ data, persist }) {
     const [printId, setPrintId] = useState(null);
     const [editandoObraId, setEditandoObraId] = useState(null);
     const [ampliandoObraId, setAmpliandoObraId] = useState(null);
+    const [busqueda, setBusqueda] = useState("");
     const todosPresupuestos = data.presupuestos || [];
     if (editandoObraId) {
         const pEditar = todosPresupuestos.find(x => x.id === editandoObraId);
@@ -19607,8 +19622,20 @@ function HistorialPresupuestosView({ data, persist }) {
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Historial de presupuestos"),
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Todos los presupuestos realizados (mantenimiento y obras), est\u00E9n aprobados o no."),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 10 }, value: busqueda, onChange: e => setBusqueda(e.target.value), placeholder: "Buscar por cliente o n\u00FAmero de presupuesto..." }),
         todosPresupuestos.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no se ha hecho ning\u00FAn presupuesto."),
-        todosPresupuestos.slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).map(p => (React.createElement("div", { className: "gj-card gj-row", key: p.id },
+        todosPresupuestos.length > 0 && todosPresupuestos.filter(p => {
+            const t = busqueda.trim().toLowerCase();
+            if (!t)
+                return true;
+            return (p.nombre || "").toLowerCase().includes(t) || (p.numeroFormateado || "").toLowerCase().includes(t) || (p.direccion || "").toLowerCase().includes(t);
+        }).length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Ning\u00FAn presupuesto coincide con la b\u00FAsqueda."),
+        todosPresupuestos.filter(p => {
+            const t = busqueda.trim().toLowerCase();
+            if (!t)
+                return true;
+            return (p.nombre || "").toLowerCase().includes(t) || (p.numeroFormateado || "").toLowerCase().includes(t) || (p.direccion || "").toLowerCase().includes(t);
+        }).slice().sort((a, b) => (b.numero || 0) - (a.numero || 0)).map(p => (React.createElement("div", { className: "gj-card gj-row", key: p.id },
             React.createElement("div", null,
                 React.createElement("div", { style: { fontWeight: 600 } }, p.nombre),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } },
@@ -19626,6 +19653,11 @@ function HistorialPresupuestosView({ data, persist }) {
 }
 function TrabajosView({ data, persist, adminRole }) {
     const obras = data.clients.filter(c => c.esObra).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const [busqueda, setBusqueda] = useState("");
+    const obrasFiltradas = obras.filter(o => !busqueda.trim() || o.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
+    const [confirmarEliminarId, setConfirmarEliminarId] = useState(null);
+    const [pinEliminar, setPinEliminar] = useState("");
+    const [pinEliminarError, setPinEliminarError] = useState("");
     const actualizarCampo = (id, campo, valor) => {
         const next = structuredClone(data);
         const c = next.clients.find(x => x.id === id);
@@ -19645,9 +19677,26 @@ function TrabajosView({ data, persist, adminRole }) {
         b.orden = tmp;
         persist(next);
     };
+    const eliminarTrabajo = (id) => {
+        if (pinEliminar.trim() !== (data.settings.adminPin1 || "1111")) {
+            setPinEliminarError("PIN incorrecto.");
+            return;
+        }
+        const next = structuredClone(data);
+        const c = next.clients.find(x => x.id === id);
+        c.esObra = false;
+        c.estadoObra = "en_curso";
+        c.personasEstimadas = "";
+        c.diasEstimados = "";
+        c.fechaInicioPlan = "";
+        c.orden = 0;
+        persist(next);
+    };
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Listado de trabajos"),
         adminRole === "admin1" && (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Puedes cambiar el orden de la lista con las flechas.")),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 10 }, value: busqueda, onChange: e => setBusqueda(e.target.value), placeholder: "Buscar trabajo por nombre..." }),
+        obras.length > 0 && obrasFiltradas.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Ning\u00FAn trabajo coincide con la b\u00FAsqueda."),
         React.createElement("div", { className: "gj-table-wrap" },
             React.createElement("table", { className: "gj-table" },
                 React.createElement("thead", null,
@@ -19657,23 +19706,36 @@ function TrabajosView({ data, persist, adminRole }) {
                         React.createElement("th", null, "Personas"),
                         React.createElement("th", null, "D\u00EDas est."),
                         React.createElement("th", null, "Inicio previsto"),
-                        React.createElement("th", null, "Estado"))),
-                React.createElement("tbody", null, obras.map((o, i) => (React.createElement("tr", { key: o.id },
-                    React.createElement("td", null, adminRole === "admin1" && (React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } },
-                        React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === 0, onClick: () => mover(o.id, -1) },
-                            React.createElement(ArrowUp, { size: 12 })),
-                        React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === obras.length - 1, onClick: () => mover(o.id, 1) },
-                            React.createElement(ArrowDown, { size: 12 }))))),
-                    React.createElement("td", { style: { fontWeight: 600 } }, o.nombre),
-                    React.createElement("td", null,
-                        React.createElement("input", { className: "gj-input", type: "number", style: { width: 56 }, value: o.personasEstimadas || 0, onChange: e => actualizarCampo(o.id, "personasEstimadas", e.target.value) })),
-                    React.createElement("td", null,
-                        React.createElement("input", { className: "gj-input", type: "number", style: { width: 56 }, value: o.diasEstimados || 0, onChange: e => actualizarCampo(o.id, "diasEstimados", e.target.value) })),
-                    React.createElement("td", null,
-                        React.createElement("input", { className: "gj-input", type: "date", style: { width: 140 }, value: o.fechaInicioPlan || "", onChange: e => actualizarCampo(o.id, "fechaInicioPlan", e.target.value) })),
-                    React.createElement("td", null,
-                        React.createElement("span", { className: "gj-badge " + (o.estadoObra === "finalizada" ? "completado" : "en_progreso") }, o.estadoObra === "finalizada" ? "Finalizada" : "En curso")))))))),
-        obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto.")));
+                        React.createElement("th", null, "Estado"),
+                        adminRole === "admin1" && React.createElement("th", null))),
+                React.createElement("tbody", null, obrasFiltradas.map((o, i) => {
+                    const filaPrincipal = React.createElement("tr", null,
+                        React.createElement("td", null, adminRole === "admin1" && (React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 2 } },
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === 0, onClick: () => mover(o.id, -1) },
+                                React.createElement(ArrowUp, { size: 12 })),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: 2 }, disabled: i === obrasFiltradas.length - 1, onClick: () => mover(o.id, 1) },
+                                React.createElement(ArrowDown, { size: 12 }))))),
+                        React.createElement("td", { style: { fontWeight: 600 } }, o.nombre),
+                        React.createElement("td", null,
+                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 56 }, value: o.personasEstimadas || 0, onChange: e => actualizarCampo(o.id, "personasEstimadas", e.target.value) })),
+                        React.createElement("td", null,
+                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 56 }, value: o.diasEstimados || 0, onChange: e => actualizarCampo(o.id, "diasEstimados", e.target.value) })),
+                        React.createElement("td", null,
+                            React.createElement("input", { className: "gj-input", type: "date", style: { width: 140 }, value: o.fechaInicioPlan || "", onChange: e => actualizarCampo(o.id, "fechaInicioPlan", e.target.value) })),
+                        React.createElement("td", null,
+                            React.createElement("span", { className: "gj-badge " + (o.estadoObra === "finalizada" ? "completado" : "en_progreso") }, o.estadoObra === "finalizada" ? "Finalizada" : "En curso")),
+                        adminRole === "admin1" ? React.createElement("td", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => { setConfirmarEliminarId(o.id); setPinEliminar(""); setPinEliminarError(""); } }, "Eliminar")) : null);
+                    const filaConfirmacion = confirmarEliminarId === o.id ? React.createElement("tr", null, React.createElement("td", { colSpan: 7 },
+                        React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)", margin: "4px 0" } },
+                            React.createElement("div", { style: { fontSize: 12, color: "var(--warn)", fontWeight: 600 } }, "\u26A0\uFE0F Esto quita el trabajo de la lista (la ficha del cliente se conserva). Introduce tu PIN de administrador 1 para confirmar:"),
+                            React.createElement("input", { className: "gj-input", type: "password", inputMode: "numeric", style: { marginTop: 6, maxWidth: 160 }, value: pinEliminar, onChange: e => setPinEliminar(e.target.value), placeholder: "PIN administrador 1" }),
+                            pinEliminarError && React.createElement("div", { style: { color: "var(--warn)", fontSize: 12, marginTop: 4 } }, pinEliminarError),
+                            React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
+                                React.createElement("button", { className: "gj-btn danger", onClick: () => { eliminarTrabajo(o.id); setConfirmarEliminarId(null); } }, "Confirmar eliminaci\u00F3n"),
+                                React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarEliminarId(null) }, "Cancelar"))))) : null;
+                    return React.createElement(React.Fragment, { key: o.id }, filaPrincipal, filaConfirmacion);
+                })),
+        obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto.")))));
 }
 function FestivoForm({ data, persist, adminRole }) {
     const [fecha, setFecha] = useState(todayStr());
@@ -20077,8 +20139,9 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
                             const esFestivo = (data.festivos || {})[dStr];
                             return React.createElement("th", { key: d, style: { textAlign: "center", background: esFestivo ? "var(--pend-bg)" : undefined }, title: esFestivo ? (esFestivo.nombre || esFestivo.tipo) : "" }, d);
                         }))),
-                React.createElement("tbody", null, data.clients.map(c => (React.createElement("tr", { key: c.id },
+                React.createElement("tbody", null, data.clients.slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).map(c => (React.createElement("tr", { key: c.id },
                     React.createElement("td", { style: { fontWeight: 600, position: "sticky", left: 0, background: "var(--surface)" } },
+                        c.zona ? `[${c.zona}] ` : "",
                         c.nombre,
                         c.esObra ? " (obra)" : ""),
                     days.map(d => {
