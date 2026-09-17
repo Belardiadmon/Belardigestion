@@ -13031,20 +13031,16 @@ function guardarAmpliacionObraGlobal(data, persist, datosCalc, obraOriginalId) {
     return nuevoId;
 }
 function buscarClienteCoincidente(clients, p) {
-    // Coincide por DNI, tel\u00E9fono, direcci\u00F3n o nombre. Ojo: ninguno de los cuatro es un identificador
-    // fiable al 100% en este negocio (administradores de fincas que comparten tel\u00E9fono entre varios
-    // clientes, clientes sin m\u00F3vil propio a los que se les pone el tel\u00E9fono de la empresa, direcciones
-    // parecidas pero de fincas distintas, nombres iguales de personas distintas...) \u2014 por eso, quien
-    // llama a esta funci\u00F3n SIEMPRE debe preguntar al administrador antes de dar por hecho que es el
-    // mismo cliente.
-    const telLimpio = (p.telefono || "").replace(/\D/g, "");
+    // Coincide por DNI, direcci\u00F3n o nombre (el tel\u00E9fono se quit\u00F3 como criterio: en este negocio hay
+    // administradores de fincas que comparten tel\u00E9fono entre varios clientes, y clientes sin m\u00F3vil
+    // propio a los que se les pone el tel\u00E9fono de la empresa, y daba demasiados falsos positivos).
+    // Ojo: ninguno de los tres es un identificador fiable al 100% (direcciones parecidas pero de fincas
+    // distintas, nombres iguales de personas distintas...) \u2014 por eso, quien llama a esta funci\u00F3n
+    // SIEMPRE debe preguntar al administrador antes de dar por hecho que es el mismo cliente.
     const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
     const dirLimpia = (p.direccion || "").trim().toLowerCase().replace(/\s+/g, " ");
     const nombreLimpio = (p.nombre || "").trim().toLowerCase().replace(/\s+/g, " ");
     let cliente = dniLimpio ? clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
-    if (!cliente && telLimpio) {
-        cliente = clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio);
-    }
     if (!cliente && dirLimpia) {
         cliente = clients.find(c => c.direccion && c.direccion.trim().toLowerCase().replace(/\s+/g, " ") === dirLimpia);
     }
@@ -13053,22 +13049,20 @@ function buscarClienteCoincidente(clients, p) {
     }
     return cliente || null;
 }
-function upsertClienteDesdePresupuesto(next, p, tipoNuevo) {
-    // Coincide por DNI, tel\u00E9fono, direcci\u00F3n o nombre (ver buscarClienteCoincidente). El aviso al
-    // aprobar, en las pantallas que llaman a esta funci\u00F3n, es lo que permite al administrador decidir
-    // si de verdad es el mismo cliente antes de que se fusione.
-    const telLimpio = (p.telefono || "").replace(/\D/g, "");
+function upsertClienteDesdePresupuesto(next, p, tipoNuevo, forzarNuevo) {
+    // Coincide por DNI, direcci\u00F3n o nombre (ver buscarClienteCoincidente; el tel\u00E9fono se quit\u00F3 como
+    // criterio). El aviso al aprobar, en las pantallas que llaman a esta funci\u00F3n, es lo que permite al
+    // administrador decidir si de verdad es el mismo cliente antes de que se fusione. Si forzarNuevo es
+    // true (el administrador ha dicho expresamente que son personas/fincas distintas), no se busca
+    // coincidencia y se crea siempre un cliente nuevo.
     const dniLimpio = (p.dni || "").replace(/[^a-z0-9]/gi, "").toLowerCase();
     const dirLimpia = (p.direccion || "").trim().toLowerCase().replace(/\s+/g, " ");
     const nombreLimpio = (p.nombre || "").trim().toLowerCase().replace(/\s+/g, " ");
-    let cliente = dniLimpio ? next.clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
-    if (!cliente && telLimpio) {
-        cliente = next.clients.find(c => c.telefono && c.telefono.replace(/\D/g, "") === telLimpio);
-    }
-    if (!cliente && dirLimpia) {
+    let cliente = (!forzarNuevo && dniLimpio) ? next.clients.find(c => c.dni && c.dni.replace(/[^a-z0-9]/gi, "").toLowerCase() === dniLimpio) : null;
+    if (!forzarNuevo && !cliente && dirLimpia) {
         cliente = next.clients.find(c => c.direccion && c.direccion.trim().toLowerCase().replace(/\s+/g, " ") === dirLimpia);
     }
-    if (!cliente && nombreLimpio) {
+    if (!forzarNuevo && !cliente && nombreLimpio) {
         cliente = next.clients.find(c => c.nombre && c.nombre.trim().toLowerCase().replace(/\s+/g, " ") === nombreLimpio);
     }
     if (!cliente) {
@@ -17703,6 +17697,12 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
                 numArbolesExistentes: Number(numArbolesExistentes) || 0,
             },
         });
+        setNombre("");
+        setDireccion("");
+        setTelefono("");
+        setEmail("");
+        setDniCliente("");
+        setAvisoDuplicado(null);
     };
     const comprobarDuplicado = () => {
         const encontrado = buscarClienteParecido(data.clients, { nombre, direccion, dni: dniCliente });
@@ -18361,18 +18361,22 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
         alert('Tu navegador no permite compartir el archivo directamente. Se va a abrir el cuadro de "Imprimir" — desde ahí elige "Guardar en PDF" o el icono de compartir de esa misma pantalla.');
         window.print();
     };
+    const [confirmarFusion, setConfirmarFusion] = useState(null); // coincidente, o null
     const marcarAprobado = () => {
+        const coincidente = buscarClienteCoincidente(data.clients, p);
+        if (coincidente) {
+            setConfirmarFusion(coincidente);
+            return;
+        }
+        ejecutarAprobacion(false);
+    };
+    const ejecutarAprobacion = (forzarNuevo) => {
         const next = structuredClone(data);
         const pres = next.presupuestos.find(x => x.id === p.id);
-        const coincidente = buscarClienteCoincidente(next.clients, p);
-        if (coincidente && coincidente.nombre !== p.nombre) {
-            if (!confirm(`Ya hay un cliente guardado con el mismo tel\u00E9fono, DNI, direcci\u00F3n o nombre, registrado como "${coincidente.nombre}". Si aprueba, se actualizar\u00E1 su nombre a "${p.nombre}". \u00BFSon la misma persona/finca? Pulsa Aceptar para continuar, o Cancelar para revisar los datos antes de aprobar.`))
-                return;
-        }
         pres.aprobado = true;
         pres.fechaAprobacion = todayStr();
         pres.convertido = true;
-        const cliente = upsertClienteDesdePresupuesto(next, p, "mantenimiento");
+        const cliente = upsertClienteDesdePresupuesto(next, p, "mantenimiento", forzarNuevo);
         if (p.caracteristicasJardin && !cliente.datosJardin) {
             cliente.datosJardin = {
                 m2Cesped: p.caracteristicasJardin.m2Cesped || 0, metodoCesped: "mano",
@@ -18390,6 +18394,7 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
         }
         pres.clienteId = cliente.id;
         persist(next);
+        setConfirmarFusion(null);
         setEtapa("datos");
     };
     const guardarDatosCliente = () => {
@@ -18459,6 +18464,21 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
         setEtapa("contrato");
     };
     const mensajeTexto = `Muy Srs. nuestros:\n\nAtendiendo su amable solicitud, detallamos a continuación nuestro presupuesto de mantenimiento anual de jardinería para su parcela en ${p.direccion}:\n\n${(p.labores || []).map(l => "• " + l).join("\n")}\n\nCuota mensual (IVA no incluido): ${eur(p.importe)}\n\nNos encontramos a su disposición para ampliarle cuantos datos estime oportuno conocer al respecto.\nSin otro particular, y en espera de sus noticias, aprovechamos la oportunidad para saludarle atentamente.\nJardinería Belardi`;
+    if (confirmarFusion) {
+        return (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+            React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Posible cliente duplicado"),
+            React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } },
+                "Ya hay un cliente guardado como \"",
+                confirmarFusion.nombre,
+                "\" (",
+                confirmarFusion.direccion || "sin direcci\u00F3n",
+                ") con el mismo DNI, direcci\u00F3n o nombre que este presupuesto de \"",
+                p.nombre,
+                "\". \u00BFSon la misma persona/finca?"),
+            React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(false) }, "S\u00ED, es el mismo \u2014 usar su ficha"),
+            React.createElement("button", { className: "gj-btn accent block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(true) }, "No, son distintos \u2014 crear cliente nuevo"),
+            React.createElement("button", { className: "gj-btn ghost block", onClick: () => setConfirmarFusion(null) }, "Cancelar y revisar antes")));
+    }
     if (etapa === "documento") {
         const numeroPresupuesto = p.numeroFormateado || `${p.fecha.slice(0, 4)}/${p.id.slice(-3).toUpperCase()}`;
         return (React.createElement("div", null,
@@ -19841,18 +19861,23 @@ function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
         });
         persist(next);
     };
+    const [confirmarFusion, setConfirmarFusion] = useState(null); // { id, coincidente }
     const aprobar = (id) => {
+        const coincidente = buscarClienteCoincidente(data.clients, data.presupuestos.find(x => x.id === id));
+        if (coincidente) {
+            setConfirmarFusion({ id, coincidente });
+            return;
+        }
+        ejecutarAprobacion(id, false);
+    };
+    const ejecutarAprobacion = (id, forzarNuevo) => {
         const next = structuredClone(data);
         const p = next.presupuestos.find(x => x.id === id);
-        const coincidente = buscarClienteCoincidente(next.clients, p);
-        if (coincidente && coincidente.nombre !== p.nombre) {
-            if (!confirm(`Ya hay un cliente guardado con el mismo tel\u00E9fono, DNI, direcci\u00F3n o nombre, registrado como "${coincidente.nombre}". Si aprueba, se actualizar\u00E1 su nombre a "${p.nombre}". \u00BFSon la misma persona/finca? Pulsa Aceptar para continuar, o Cancelar para revisar los datos antes de aprobar.`))
-                return;
-        }
         p.aprobado = true;
         p.convertido = true;
-        upsertClienteDesdePresupuesto(next, p, p.tipo === "mantenimiento" ? "mantenimiento" : "obra");
+        upsertClienteDesdePresupuesto(next, p, p.tipo === "mantenimiento" ? "mantenimiento" : "obra", forzarNuevo);
         persist(next);
+        setConfirmarFusion(null);
     };
     const eliminar = (id) => {
         if (!confirm("¿Eliminar este presupuesto?"))
@@ -19864,6 +19889,22 @@ function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
     const todosPresupuestos = data.presupuestos || [];
     const pendientes = todosPresupuestos.filter(p => !p.convertido && (p.tipo || "obra") === tipoPresupuesto);
     const aprobados = todosPresupuestos.filter(p => p.convertido && (p.tipo || "obra") === tipoPresupuesto);
+    if (confirmarFusion) {
+        const pConf = todosPresupuestos.find(x => x.id === confirmarFusion.id);
+        return (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+            React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Posible cliente duplicado"),
+            React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } },
+                "Ya hay un cliente guardado como \"",
+                confirmarFusion.coincidente.nombre,
+                "\" (",
+                confirmarFusion.coincidente.direccion || "sin direcci\u00F3n",
+                ") con el mismo DNI, direcci\u00F3n o nombre que este presupuesto de \"",
+                pConf === null || pConf === void 0 ? void 0 : pConf.nombre,
+                "\". \u00BFSon la misma persona/finca?"),
+            React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(confirmarFusion.id, false) }, "S\u00ED, es el mismo \u2014 usar su ficha"),
+            React.createElement("button", { className: "gj-btn accent block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(confirmarFusion.id, true) }, "No, son distintos \u2014 crear cliente nuevo"),
+            React.createElement("button", { className: "gj-btn ghost block", onClick: () => setConfirmarFusion(null) }, "Cancelar y revisar antes")));
+    }
     if (editandoObraId) {
         const pEditar = todosPresupuestos.find(x => x.id === editandoObraId);
         return (React.createElement("div", null,
