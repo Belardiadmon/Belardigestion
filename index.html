@@ -13313,6 +13313,18 @@ function duracionActividadHoras(a, o) {
         return 0;
     return duracionEntreHoras(a.horaInicio, a.horaFin, o);
 }
+function recorteEntradaTemprana(o, workerId, horaMinima) {
+    // Si el trabajador fich\u00f3 su entrada antes de la hora m\u00ednima configurada, ese rato no cuenta como
+    // horas trabajadas \u2014 salvo que el administrador le haya activado la excepci\u00f3n ese d\u00eda en Rutas.
+    if (!horaMinima)
+        return 0;
+    const j = o.porTrabajadorJornada && o.porTrabajadorJornada[workerId];
+    if (!j || !j.entradaHora || j.excepcionHorario)
+        return 0;
+    if (j.entradaHora >= horaMinima)
+        return 0;
+    return duracionEntreHoras(j.entradaHora, horaMinima, o);
+}
 function desplazamientoHorasOrden(o, workerId) {
     // Suma el hueco real entre el fin de una actividad (mantenimiento, taller, almac\u00E9n, repostaje...) y
     // el inicio de la siguiente, fichadas por el mismo trabajador ese d\u00EDa, como tiempo de desplazamiento.
@@ -13726,6 +13738,16 @@ function seedData() {
             trat_fungicida_aliette: { label: "Tratamiento con fungicida Aliette", unidad: "m²", precio: 0 },
             trat_topos: { label: "Tratamiento contra topos", unidad: "ud", precio: 0 },
             trat_ratas_ratones: { label: "Tratamiento contra ratas y ratones", unidad: "ud", precio: 0 },
+            contenedor_voluminosos_5m3: { label: "Contenedor voluminosos 5 m³", unidad: "ud", precio: 0 },
+            contenedor_voluminosos_8m3: { label: "Contenedor voluminosos 8 m³", unidad: "ud", precio: 0 },
+            contenedor_voluminosos_12m3: { label: "Contenedor voluminosos 12 m³", unidad: "ud", precio: 0 },
+            contenedor_voluminosos_15m3: { label: "Contenedor voluminosos 15 m³", unidad: "ud", precio: 0 },
+            contenedor_voluminosos_20m3: { label: "Contenedor voluminosos 20 m³", unidad: "ud", precio: 0 },
+            contenedor_tierras_5m3: { label: "Contenedor tierras 5 m³", unidad: "ud", precio: 0 },
+            contenedor_tierras_8m3: { label: "Contenedor tierras 8 m³", unidad: "ud", precio: 0 },
+            contenedor_tierras_12m3: { label: "Contenedor tierras 12 m³", unidad: "ud", precio: 0 },
+            contenedor_tierras_15m3: { label: "Contenedor tierras 15 m³", unidad: "ud", precio: 0 },
+            contenedor_tierras_20m3: { label: "Contenedor tierras 20 m³", unidad: "ud", precio: 0 },
             drenajes: { label: "Drenajes", unidad: "ml", precio: 0 },
             resiembra_calvas: { label: "Resiembra (calvas)", unidad: "m²", precio: 0 },
             poda_seto: { label: "Poda de setos", unidad: "m²", precio: 0 },
@@ -14272,6 +14294,7 @@ const GROUPS = [
             { id: "copia", label: "Copia", icon: Download },
         ] },
     { id: "tecnico", label: "Técnico", icon: RouteIcon, views: [
+            { id: "pendientes-presupuesto", label: "Solicitudes y visitas", icon: Clock },
             { id: "presupuestos", label: "Presupuestos", icon: FileText },
             { id: "historial-presupuestos", label: "Historial", icon: ListChecks },
             { id: "trabajos", label: "Trabajos aprobados", icon: ListChecks },
@@ -14525,6 +14548,8 @@ function App() {
         .gj-daycell.long{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:700; }
         .gj-daycell.over{ background:var(--highlight); color:var(--highlight-ink); border-color:var(--highlight); font-weight:700; }
         .gj-daycell.weekend{ background:var(--line-soft); color:var(--ink-soft); border-color:var(--line); }
+        .gj-daycell.festivo-oficial{ background:#FCA5A5; color:#3f1f1f; border-color:#FCA5A5; font-weight:700; }
+        .gj-daycell.festivo-empresa{ background:#FDBA74; color:#3f1f1f; border-color:#FDBA74; font-weight:700; }
         .gj-daycell.visita{ background:var(--good); color:#fff; border-color:var(--good); font-weight:700; }
         .gj-daycell.festivo-anexo{ background:var(--warn); color:#fff; border-color:var(--warn); font-weight:700; opacity:.85; }
         .gj-map{ height:420px; width:100%; border-radius:6px; overflow:hidden; border:1px solid var(--line); background:#e5e5e5; }
@@ -14599,6 +14624,8 @@ function App() {
                     React.createElement(HorasView, { ...props })),
                 view === "calendario" && React.createElement(CalendarioView, { ...props }),
                 view === "mapa" && React.createElement(MapaView, { ...props }),
+                view === "pendientes-presupuesto" && React.createElement(AdminGate, { ...props },
+                    React.createElement(SolicitudesVisitasView, { ...props })),
                 view === "presupuestos" && React.createElement(AdminGate, { ...props },
                     React.createElement(PresupuestosView, { ...props })),
                 view === "historial-presupuestos" && React.createElement(AdminGate, { ...props },
@@ -15804,6 +15831,13 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         next.orders = next.orders.filter(o => o.id !== id);
         persist(next);
     };
+    const actualizarExcepcionHorario = (orderId, workerId, campo, valor) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), [campo]: valor };
+        persist(next);
+    };
     const cambiarVehiculo = (orderId, vehiculo) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -15910,7 +15944,15 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             (j === null || j === void 0 ? void 0 : j.salidaCoord) ? (React.createElement("a", { href: mapsLinkCoord(j.salidaCoord), target: "_blank", rel: "noreferrer" },
                                 "\uD83D\uDCCD salida ",
                                 j.salidaHora)) : (j === null || j === void 0 ? void 0 : j.salidaHora) ? `salida ${j.salidaHora}` : "sin salida",
-                            (j === null || j === void 0 ? void 0 : j.avisoUbicacionSalida) && (React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F la salida no coincide con la nave"))));
+                            (j === null || j === void 0 ? void 0 : j.avisoUbicacionSalida) && (React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F la salida no coincide con la nave")),
+                            React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, marginTop: 3, fontWeight: 400 } },
+                                React.createElement("input", { type: "checkbox", checked: (j === null || j === void 0 ? void 0 : j.excepcionHorario) || false, onChange: e => actualizarExcepcionHorario(o.id, wid, "excepcionHorario", e.target.checked) }),
+                                "Excepci\u00F3n de horario (no aplicar la hora m\u00EDnima de entrada hoy)"),
+                            (j === null || j === void 0 ? void 0 : j.excepcionHorario) && (React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 3, alignItems: "center" } },
+                                React.createElement("span", null, "Corregir: "),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "2px 4px" }, value: (j === null || j === void 0 ? void 0 : j.entradaHora) || "", onChange: e => actualizarExcepcionHorario(o.id, wid, "entradaHora", e.target.value) }),
+                                React.createElement("span", null, "\u2013"),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "2px 4px" }, value: (j === null || j === void 0 ? void 0 : j.salidaHora) || "", onChange: e => actualizarExcepcionHorario(o.id, wid, "salidaHora", e.target.value) })))));
                     }),
                     (o.almuerzoInicio || o.almuerzoFin) && (React.createElement("div", { style: { fontSize: 11.5, marginTop: 4, display: "flex", gap: 10 } },
                         o.almuerzoInicioCoord ? (React.createElement("a", { href: mapsLinkCoord(o.almuerzoInicioCoord), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD Almuerzo inicio ", o.almuerzoInicio)) : (o.almuerzoInicio ? `Almuerzo inicio ${o.almuerzoInicio}` : null),
@@ -16002,11 +16044,14 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const [extraNuevoLugar, setExtraNuevoLugar] = useState("");
     const [extraTipoTaller, setExtraTipoTaller] = useState(""); // "" | "consumibles" | "dejar" | "recogida"
     const [extraMaquinaId, setExtraMaquinaId] = useState("");
+    const [materialOrigen, setMaterialOrigen] = useState("nuevo"); // "nuevo" | "stock"
     const [materialProveedor, setMaterialProveedor] = useState("");
     const [materialNuevoProveedor, setMaterialNuevoProveedor] = useState("");
     const [materialNombre, setMaterialNombre] = useState("");
     const [materialNuevoNombre, setMaterialNuevoNombre] = useState("");
     const [materialCantidad, setMaterialCantidad] = useState("");
+    const [materialCantidadUsada, setMaterialCantidadUsada] = useState("");
+    const [materialStockId, setMaterialStockId] = useState("");
     const [materialesLista, setMaterialesLista] = useState([]);
     const [materialObraId, setMaterialObraId] = useState("");
     const [materialFoto, setMaterialFoto] = useState(null);
@@ -16069,14 +16114,49 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const order = next.orders.find(o => o.id === orderId);
         order.actividadesExtra = order.actividadesExtra || [];
         const nombreTrabajador = worker ? worker.nombre : "";
+        const horaAhora = nowTime();
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
+            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: horaAhora };
+        }
+        if (!order.entradaMananaHora) {
+            order.entradaMananaHora = horaAhora;
+        }
         order.actividadesExtra.push({
-            id: uid("ext"), categoria, lugar, horaInicio: nowTime(), horaFin: null, trabajador: nombreTrabajador, workerId,
+            id: uid("ext"), categoria, lugar, horaInicio: horaAhora, horaFin: null, trabajador: nombreTrabajador, workerId,
             tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
             maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
             obraId: esRecogidaMaterial ? (materialObraId || null) : null,
             fotoAlbaran: esRecogidaMaterial ? materialFoto : null,
             materialesImputados: esRecogidaMaterial ? materialesLista.map(m => ({ ...m, bloqueado: false })) : [],
         });
+        if (esRecogidaMaterial) {
+            next.almacenGeneral = next.almacenGeneral || [];
+            materialesLista.forEach(m => {
+                if (m.origen === "stock" && m.stockId) {
+                    // Se ha usado material que ya estaba en la bolsa general: se descuenta.
+                    const item = next.almacenGeneral.find(s => s.id === m.stockId);
+                    if (item) {
+                        item.cantidad = Math.max(0, item.cantidad - m.cantidad);
+                        if (item.cantidad === 0) {
+                            next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+                        }
+                    }
+                }
+                else if (m.cantidadRecogida && m.cantidadRecogida > m.cantidad) {
+                    // Ha sobrado material de lo recogido en el albarán: el sobrante va a la bolsa general
+                    // para poder imputarlo a otra obra más adelante.
+                    const sobrante = m.cantidadRecogida - m.cantidad;
+                    const existente = next.almacenGeneral.find(s => s.proveedor === m.proveedor && s.material === m.material);
+                    if (existente) {
+                        existente.cantidad += sobrante;
+                    }
+                    else {
+                        next.almacenGeneral.push({ id: uid("stk"), proveedor: m.proveedor, material: m.material, cantidad: sobrante });
+                    }
+                }
+            });
+        }
         if (esTallerAlmacen && extraTipoTaller === "dejar" && extraMaquinaId) {
             const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
             if (maq)
@@ -16096,6 +16176,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         setMaterialesLista([]);
         setMaterialObraId("");
         setMaterialFoto(null);
+        setMaterialOrigen("nuevo");
+        setMaterialStockId("");
+        setMaterialCantidadUsada("");
     };
     const finalizarActividadExtra = (orderId, actividadId) => {
         const next = structuredClone(data);
@@ -16150,11 +16233,26 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         setMaterialNuevoNombre("");
     };
     const añadirLineaMaterial = () => {
+        if (materialOrigen === "stock") {
+            const stockItem = (data.almacenGeneral || []).find(s => s.id === materialStockId);
+            if (!stockItem || !materialCantidadUsada)
+                return;
+            const usada = Number(materialCantidadUsada);
+            if (usada <= 0 || usada > stockItem.cantidad)
+                return;
+            setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: stockItem.proveedor, material: stockItem.material, cantidad: usada, origen: "stock", stockId: stockItem.id }]);
+            setMaterialStockId("");
+            setMaterialCantidadUsada("");
+            return;
+        }
         if (!materialProveedor || !materialNombre || !materialCantidad)
             return;
-        setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: materialCantidad }]);
+        const recogida = Number(materialCantidad);
+        const usada = materialCantidadUsada ? Number(materialCantidadUsada) : recogida;
+        setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: usada, origen: "nuevo", cantidadRecogida: recogida }]);
         setMaterialNombre("");
         setMaterialCantidad("");
+        setMaterialCantidadUsada("");
     };
     const quitarLineaMaterial = (id) => setMaterialesLista(materialesLista.filter(m => m.id !== id));
     const subirFotoAlbaran = async (files) => {
@@ -16579,8 +16677,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                         const etiquetaTipo = a.tipoTaller === "dejar" ? " · Dejar maquinaria" : a.tipoTaller === "recogida" ? " · Recogida de maquinaria" : a.tipoTaller === "consumibles" ? " · Consumibles" : "";
                         const iconoCat = a.categoria === "repostaje" ? "\u26FD" : a.categoria === "talleres" ? "\uD83D\uDD27" : a.categoria === "carga" ? "\uD83D\uDE9B" : "\uD83D\uDCE6";
                         const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : "Almac\u00E9n";
-                        return (React.createElement("div", { key: a.id, style: { fontSize: 12, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", justifyContent: "space-between", alignItems: "center" } },
-                            React.createElement("span", null,
+                        return (React.createElement("div", { key: a.id, style: { fontSize: 12, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 6 } },
+                            React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0 } },
                                 iconoCat,
                                 " ",
                                 etiquetaCat,
@@ -16592,7 +16690,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 a.horaInicio,
                                 a.horaFin ? ` – ${a.horaFin}` : "",
                                 ")"),
-                            !a.horaFin && (React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => finalizarActividadExtra(o.id, a.id) }, "Finalizar"))));
+                            !a.horaFin && (React.createElement("button", { className: "gj-btn primary", style: { padding: "4px 10px", fontSize: 11.5, flexShrink: 0 }, onClick: () => finalizarActividadExtra(o.id, a.id) }, "Finalizar"))));
                     }))),
                     extraAbierto !== o.id ? (React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 8 }, onClick: () => setExtraAbierto(o.id) }, "+ Carga / Repostaje / Taller / Almac\u00E9n")) : (React.createElement("div", { className: "gj-card", style: { marginTop: 8 } },
                         React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6, flexWrap: "wrap" } },
@@ -16618,23 +16716,38 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                     React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => setMaterialObraId(e.target.value) },
                                         React.createElement("option", { value: "" }, "Selecciona la obra..."),
                                         data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre))),
-                                    React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "Materiales recogidos"),
-                                    React.createElement("select", { className: "gj-select", value: materialProveedor, onChange: e => { setMaterialProveedor(e.target.value); setMaterialNombre(""); } },
-                                        React.createElement("option", { value: "" }, "Proveedor..."),
-                                        Object.keys(data.materialesProveedor || {}).map(p => React.createElement("option", { key: p, value: p }, p))),
-                                    React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
-                                        React.createElement("input", { className: "gj-input", value: materialNuevoProveedor, onChange: e => setMaterialNuevoProveedor(e.target.value), placeholder: "\u00BFProveedor nuevo? Escr\u00EDbelo aqu\u00ED" }),
-                                        React.createElement("button", { className: "gj-btn ghost", onClick: añadirProveedorMaterial }, "A\u00F1adir")),
-                                    materialProveedor && (React.createElement(React.Fragment, null,
-                                        React.createElement("select", { className: "gj-select", style: { marginTop: 8 }, value: materialNombre, onChange: e => setMaterialNombre(e.target.value) },
-                                            React.createElement("option", { value: "" }, "Material..."),
-                                            ((data.materialesProveedor || {})[materialProveedor] || []).map(m => React.createElement("option", { key: m, value: m }, m))),
+                                    React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "Materiales"),
+                                    React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 8 } },
+                                        React.createElement("button", { className: "gj-btn" + (materialOrigen === "nuevo" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setMaterialOrigen("nuevo"); setMaterialStockId(""); setMaterialCantidadUsada(""); } }, "Material nuevo"),
+                                        React.createElement("button", { className: "gj-btn" + (materialOrigen === "stock" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setMaterialOrigen("stock"); setMaterialProveedor(""); setMaterialNombre(""); setMaterialCantidad(""); setMaterialCantidadUsada(""); } }, "Del almac\u00E9n general (nave)")),
+                                    materialOrigen === "nuevo" && (React.createElement(React.Fragment, null,
+                                        React.createElement("select", { className: "gj-select", value: materialProveedor, onChange: e => { setMaterialProveedor(e.target.value); setMaterialNombre(""); } },
+                                            React.createElement("option", { value: "" }, "Proveedor..."),
+                                            Object.keys(data.materialesProveedor || {}).map(p => React.createElement("option", { key: p, value: p }, p))),
                                         React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
-                                            React.createElement("input", { className: "gj-input", value: materialNuevoNombre, onChange: e => setMaterialNuevoNombre(e.target.value), placeholder: "\u00BFMaterial nuevo? Escr\u00EDbelo aqu\u00ED" }),
-                                            React.createElement("button", { className: "gj-btn ghost", onClick: añadirMaterialCatalogo }, "A\u00F1adir")),
-                                        React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
-                                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 90 }, value: materialCantidad, onChange: e => setMaterialCantidad(e.target.value), placeholder: "Cantidad" }),
-                                            React.createElement("button", { className: "gj-btn", disabled: !materialNombre || !materialCantidad, onClick: añadirLineaMaterial }, "A\u00F1adir a la lista")))),
+                                            React.createElement("input", { className: "gj-input", value: materialNuevoProveedor, onChange: e => setMaterialNuevoProveedor(e.target.value), placeholder: "\u00BFProveedor nuevo? Escr\u00EDbelo aqu\u00ED" }),
+                                            React.createElement("button", { className: "gj-btn ghost", onClick: añadirProveedorMaterial }, "A\u00F1adir")),
+                                        materialProveedor && (React.createElement(React.Fragment, null,
+                                            React.createElement("select", { className: "gj-select", style: { marginTop: 8 }, value: materialNombre, onChange: e => setMaterialNombre(e.target.value) },
+                                                React.createElement("option", { value: "" }, "Material..."),
+                                                ((data.materialesProveedor || {})[materialProveedor] || []).map(m => React.createElement("option", { key: m, value: m }, m))),
+                                            React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 6 } },
+                                                React.createElement("input", { className: "gj-input", value: materialNuevoNombre, onChange: e => setMaterialNuevoNombre(e.target.value), placeholder: "\u00BFMaterial nuevo? Escr\u00EDbelo aqu\u00ED" }),
+                                                React.createElement("button", { className: "gj-btn ghost", onClick: añadirMaterialCatalogo }, "A\u00F1adir")),
+                                            React.createElement("div", { className: "gj-label", style: { marginTop: 8 } }, "Cantidad recogida en el albar\u00E1n"),
+                                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 90 }, value: materialCantidad, onChange: e => setMaterialCantidad(e.target.value), placeholder: "Recogida" }),
+                                            React.createElement("div", { className: "gj-label", style: { marginTop: 8 } }, "Cantidad usada en ESTA obra (si sobra, el resto va a la bolsa general)"),
+                                            React.createElement("input", { className: "gj-input", type: "number", style: { width: 90 }, value: materialCantidadUsada, onChange: e => setMaterialCantidadUsada(e.target.value), placeholder: "Usada (si es toda, d\u00E9jalo vac\u00EDo)" }),
+                                            React.createElement("button", { className: "gj-btn", style: { marginTop: 6 }, disabled: !materialNombre || !materialCantidad, onClick: añadirLineaMaterial }, "A\u00F1adir a la lista")))),
+                                    materialOrigen === "stock" && (React.createElement(React.Fragment, null,
+                                        (data.almacenGeneral || []).filter(s => s.cantidad > 0).length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay materiales sobrantes en la bolsa general ahora mismo.") : (React.createElement(React.Fragment, null,
+                                            React.createElement("select", { className: "gj-select", value: materialStockId, onChange: e => setMaterialStockId(e.target.value) },
+                                                React.createElement("option", { value: "" }, "Selecciona el material..."),
+                                                (data.almacenGeneral || []).filter(s => s.cantidad > 0).map(s => React.createElement("option", { key: s.id, value: s.id },
+                                                    `${s.material} (${s.proveedor}) \u2014 ${s.cantidad} disponibles`))),
+                                            materialStockId && (React.createElement(React.Fragment, null,
+                                                React.createElement("input", { className: "gj-input", type: "number", style: { width: 90, marginTop: 6 }, value: materialCantidadUsada, onChange: e => setMaterialCantidadUsada(e.target.value), placeholder: "Cantidad a usar" }),
+                                                React.createElement("button", { className: "gj-btn", style: { marginTop: 6 }, disabled: !materialCantidadUsada, onClick: añadirLineaMaterial }, "A\u00F1adir a la lista")))))))),
                                     materialesLista.length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, materialesLista.map(m => (React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, padding: "3px 0" } },
                                         React.createElement("span", null,
                                             m.cantidad,
@@ -16642,6 +16755,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                             m.material,
                                             " (",
                                             m.proveedor,
+                                            m.origen === "stock" ? ", del almac\u00E9n" : "",
                                             ")"),
                                         React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => quitarLineaMaterial(m.id) }, "Quitar")))))))),
                                 extraTipoTaller === "dejar" && (React.createElement("div", { style: { marginTop: 6 } },
@@ -17135,6 +17249,10 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                     horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + d;
                     horasDesplazamientoPorDia[o.fecha] = (horasDesplazamientoPorDia[o.fecha] || 0) + d;
                 }
+                const recorte = recorteEntradaTemprana(o, wid, data.settings.horaMinimaEntrada);
+                if (recorte > 0) {
+                    horasPorDia[o.fecha] = Math.max(0, (horasPorDia[o.fecha] || 0) - recorte);
+                }
             });
         }
         else {
@@ -17142,6 +17260,10 @@ function HorasView({ data, persist, getWorker, adminMode }) {
             if (d > 0) {
                 horasPorDia[o.fecha] = (horasPorDia[o.fecha] || 0) + d;
                 horasDesplazamientoPorDia[o.fecha] = (horasDesplazamientoPorDia[o.fecha] || 0) + d;
+            }
+            const recorte = recorteEntradaTemprana(o, workerId, data.settings.horaMinimaEntrada);
+            if (recorte > 0) {
+                horasPorDia[o.fecha] = Math.max(0, (horasPorDia[o.fecha] || 0) - recorte);
             }
         }
         if (algunaCompletada) {
@@ -17182,10 +17304,15 @@ function HorasView({ data, persist, getWorker, adminMode }) {
             return;
         const next = structuredClone(data);
         next.vacaciones[workerId] = next.vacaciones[workerId] || {};
-        if (next.vacaciones[workerId][dateStr] === tipoMarca)
+        if (next.vacaciones[workerId][dateStr]) {
+            // El d\u00EDa ya ten\u00EDa una marca (sea cual sea): un toque siempre la quita y vuelve a
+            // jornada normal, independientemente de qu\u00E9 tipo tengas seleccionado arriba.
             delete next.vacaciones[workerId][dateStr];
-        else
+        }
+        else {
+            // El d\u00EDa estaba en blanco: se marca con el tipo seleccionado arriba (vacaciones/baja/permiso).
             next.vacaciones[workerId][dateStr] = tipoMarca;
+        }
         persist(next);
     };
     const daysInMonth = new Date(year, month + 1, 0).getDate();
@@ -17203,13 +17330,15 @@ function HorasView({ data, persist, getWorker, adminMode }) {
     }
     else
         setMonth(m => m + 1); };
-    const claseDelDia = (y, m, d, horas, tipoAusencia) => {
+    const claseDelDia = (y, m, d, horas, tipoAusencia, festivo) => {
         if (tipoAusencia === "vacaciones")
             return "vacation";
         if (tipoAusencia === "baja")
             return "baja";
         if (tipoAusencia === "permiso")
             return "permiso";
+        if (festivo)
+            return festivo.tipo === "oficial" ? "festivo-oficial" : "festivo-empresa";
         const dow = new Date(y, m, d).getDay();
         if (!horas)
             return (dow === 0 || dow === 6) ? "weekend" : "";
@@ -17269,11 +17398,12 @@ function HorasView({ data, persist, getWorker, adminMode }) {
         todoElEquipo && (React.createElement("div", { className: "gj-card gj-empty" }, "Selecciona un trabajador concreto para ver o marcar su calendario de vacaciones, bajas y permisos. En \"Todo el equipo\" solo se muestran las estad\u00EDsticas totales de arriba.")),
         !todoElEquipo && (React.createElement(React.Fragment, null,
             adminMode && (React.createElement("div", { className: "gj-field" },
-                React.createElement("label", { className: "gj-label" }, "Tipo de marca a aplicar al tocar un d\u00EDa"),
+                React.createElement("label", { className: "gj-label" }, "Tipo de marca a aplicar al tocar un d\u00EDa en blanco"),
                 React.createElement("select", { className: "gj-select", value: tipoMarca, onChange: e => setTipoMarca(e.target.value) },
                     React.createElement("option", { value: "vacaciones" }, "Vacaciones"),
                     React.createElement("option", { value: "baja" }, "Baja o enfermedad"),
-                    React.createElement("option", { value: "permiso" }, "Permiso retribuido")))),
+                    React.createElement("option", { value: "permiso" }, "Permiso retribuido")),
+                React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } }, "Si tocas un d\u00EDa que YA est\u00E1 marcado (de cualquier tipo), se borra y vuelve a jornada normal, sin importar qu\u00E9 tengas seleccionado aqu\u00ED arriba. Para cambiar un d\u00EDa de un tipo a otro: t\u00F3calo una vez para borrarlo y otra vez para marcarlo con el tipo nuevo."))),
             React.createElement("div", { className: "gj-row", style: { marginBottom: 6 } },
                 React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6 } },
                     React.createElement("button", { className: "gj-btn ghost", onClick: prevMonth },
@@ -17308,7 +17438,13 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                         " s\u00E1bado trabajado"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--line-soft)", border: "1px solid var(--line)", display: "inline-block" } }),
-                        " fin de semana (no trabajado)"))),
+                        " fin de semana (no trabajado)"),
+                    React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#FCA5A5", display: "inline-block" } }),
+                        " festivo oficial"),
+                    React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#FDBA74", display: "inline-block" } }),
+                        " festivo de empresa / vacaciones comunes"))),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, adminMode ? "Toca un día para marcarlo o quitarlo con el tipo seleccionado arriba." : "Solo un administrador puede marcar vacaciones, bajas o permisos."),
             React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, maxWidth: 320 } },
                 DIAS_SEMANA.map(d => React.createElement("div", { key: d, style: { textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--ink-soft)" } }, d)),
@@ -17317,9 +17453,11 @@ function HorasView({ data, persist, getWorker, adminMode }) {
                     const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                     const horas = horasPorDia[dateStr];
                     const tipoAusencia = vacacionesTrabajador[dateStr] || null;
-                    const cls = claseDelDia(year, month, d, horas, tipoAusencia);
+                    const festivo = (data.festivos || {})[dateStr] || null;
+                    const cls = claseDelDia(year, month, d, horas, tipoAusencia, festivo);
                     const etiquetas = { vacaciones: "Vacaciones", baja: "Baja o enfermedad", permiso: "Permiso retribuido" };
-                    return (React.createElement("div", { key: d, className: "gj-daycell" + (cls ? " " + cls : "") + (dateStr === todayKey ? " today" : ""), style: { width: "100%", height: 30, borderRadius: 4, cursor: adminMode ? "pointer" : "default" }, onClick: () => toggleVacacion(dateStr), title: tipoAusencia ? etiquetas[tipoAusencia] : horas ? fmtHM(horas) + " trabajadas" : "" }, d));
+                    const tituloFestivo = festivo ? `${festivo.tipo === "oficial" ? "Festivo oficial" : "Festivo de empresa"}${festivo.nombre ? ": " + festivo.nombre : ""}` : "";
+                    return (React.createElement("div", { key: d, className: "gj-daycell" + (cls ? " " + cls : "") + (dateStr === todayKey ? " today" : ""), style: { width: "100%", height: 30, borderRadius: 4, cursor: adminMode ? "pointer" : "default" }, onClick: () => toggleVacacion(dateStr), title: tipoAusencia ? etiquetas[tipoAusencia] : tituloFestivo ? tituloFestivo : horas ? fmtHM(horas) + " trabajadas" : "" }, d));
                 }))))));
 }
 function ExportarView({ data, getClient, getWorker }) {
@@ -17690,11 +17828,22 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
         setVisitasAnuales(v => {
             const nuevo = { ...v };
             const esMiercoles = new Date(dateStr + "T00:00:00").getDay() === 3;
-            const tipoNuevo = esMiercoles ? "flexible" : "fijo";
-            if (nuevo[dateStr] === tipoNuevo)
-                delete nuevo[dateStr];
-            else
-                nuevo[dateStr] = tipoNuevo;
+            if (esMiercoles) {
+                // Mi\u00E9rcoles: ciclo de 3 toques \u2014 nada \u2192 flexible (\u00E1mbar) \u2192 fijo (rojo) \u2192 nada.
+                // As\u00ED se puede marcar un mi\u00E9rcoles como d\u00EDa fijo tocando dos veces.
+                if (!nuevo[dateStr])
+                    nuevo[dateStr] = "flexible";
+                else if (nuevo[dateStr] === "flexible")
+                    nuevo[dateStr] = "fijo";
+                else
+                    delete nuevo[dateStr];
+            }
+            else {
+                if (nuevo[dateStr] === "fijo")
+                    delete nuevo[dateStr];
+                else
+                    nuevo[dateStr] = "fijo";
+            }
             return nuevo;
         });
     };
@@ -17876,15 +18025,17 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
             React.createElement("div", { className: "gj-card" },
                 React.createElement("div", { className: "gj-h3" }, "Calendario anual de visitas"),
                 React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 8 } },
-                    "Toca un d\u00EDa para marcarlo. Si tocas un ",
-                    React.createElement("b", null, "mi\u00E9rcoles"),
-                    ", se marca en ",
-                    React.createElement("span", { style: { color: "#B45309", fontWeight: 700 } }, "amarillo"),
-                    " y representa \"una visita esa semana\", sin d\u00EDa fijo. Si tocas ",
-                    React.createElement("b", null, "cualquier otro d\u00EDa"),
-                    ", se marca en ",
+                    "Toca un d\u00EDa para marcarlo. En ",
+                    React.createElement("b", null, "cualquier d\u00EDa que no sea mi\u00E9rcoles"),
+                    ", un toque lo marca en ",
                     React.createElement("span", { style: { color: "#B91C1C", fontWeight: 700 } }, "rojo"),
-                    " como d\u00EDa fijo de visita."),
+                    " como d\u00EDa fijo de visita. En ",
+                    React.createElement("b", null, "mi\u00E9rcoles"),
+                    ", el primer toque lo marca en ",
+                    React.createElement("span", { style: { color: "#B45309", fontWeight: 700 } }, "amarillo"),
+                    " (\"una visita esa semana\", sin d\u00EDa fijo); si quieres que el mi\u00E9rcoles sea el d\u00EDa fijo, toca una segunda vez para que pase a ",
+                    React.createElement("span", { style: { color: "#B91C1C", fontWeight: 700 } }, "rojo"),
+                    "; un tercer toque lo quita."),
                 React.createElement("div", { className: "gj-row", style: { justifyContent: "center", gap: 14, marginBottom: 10 } },
                     React.createElement("button", { className: "gj-btn ghost", onClick: prevAño },
                         React.createElement(ChevronLeft, { size: 16 })),
@@ -19054,6 +19205,13 @@ const SECCIONES_OBRA = [
         claves: ["drenajes"],
     },
     {
+        titulo: "Contenedores",
+        claves: [
+            "contenedor_voluminosos_5m3", "contenedor_voluminosos_8m3", "contenedor_voluminosos_12m3", "contenedor_voluminosos_15m3", "contenedor_voluminosos_20m3",
+            "contenedor_tierras_5m3", "contenedor_tierras_8m3", "contenedor_tierras_12m3", "contenedor_tierras_15m3", "contenedor_tierras_20m3",
+        ],
+    },
+    {
         titulo: "Césped artificial",
         claves: [
             "ca_excavacion_tierras", "ca_aporte_gravas", "ca_malla_geotextil",
@@ -19062,7 +19220,7 @@ const SECCIONES_OBRA = [
     },
 ];
 function reconstruirPartidasObra(partidas) {
-    const cantidades = {}, precios = {}, riego = [], materiales = [];
+    const cantidades = {}, precios = {}, riego = [], materiales = [], fotos = {};
     (partidas || []).forEach(l => {
         if (l.key === "poda_seto" || (l.label && l.label.startsWith("Césped artificial — ")) || (l.label && l.label.startsWith("Desplazamiento ("))) {
             return; // estas se reconstruyen aparte, a partir de sus datos originales guardados
@@ -19070,6 +19228,8 @@ function reconstruirPartidasObra(partidas) {
         if (l.key) {
             cantidades[l.key] = l.cantidad;
             precios[l.key] = l.precio;
+            if (l.fotos && l.fotos.length > 0)
+                fotos[l.key] = l.fotos;
         }
         else if (l.catalogId) {
             riego.push({ id: uid("rl"), catalogId: l.catalogId, label: l.label, unidad: l.unidad, cantidad: l.cantidad, precio: l.precio });
@@ -19078,7 +19238,7 @@ function reconstruirPartidasObra(partidas) {
             materiales.push({ id: uid("mv"), desc: l.label, cantidad: l.cantidad, precio: l.precio });
         }
     });
-    return { cantidades, precios, riego, materiales };
+    return { cantidades, precios, riego, materiales, fotos };
 }
 function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpliacion, onAbrirDoc, setView, setFocusClienteId }) {
     const [etapa, setEtapa] = useState(p.fechaFirmaContratoObra ? "listo" : p.aprobado ? "datos" : "documento");
@@ -19087,6 +19247,27 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
     const [cuenta, setCuenta] = useState(p.cuentaBancaria || "");
     const [fechaInicio, setFechaInicio] = useState(p.fechaInicioObra || "");
     const printRef = useRef(null);
+    const [confirmarFusion, setConfirmarFusion] = useState(null); // coincidente, o null
+    const marcarAprobado = () => {
+        const coincidente = buscarClienteCoincidente(data.clients, p);
+        if (coincidente) {
+            setConfirmarFusion(coincidente);
+            return;
+        }
+        ejecutarAprobacion(false);
+    };
+    const ejecutarAprobacion = (forzarNuevo) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        pres.aprobado = true;
+        pres.fechaAprobacion = todayStr();
+        pres.convertido = true;
+        const cliente = upsertClienteDesdePresupuesto(next, p, "obra", forzarNuevo);
+        pres.clienteId = cliente.id;
+        persist(next);
+        setConfirmarFusion(null);
+        setEtapa("datos");
+    };
     const guardarFirmaEmpresaObra = (firmaDataUrl) => {
         const next = structuredClone(data);
         const pres = next.presupuestos.find(x => x.id === p.id);
@@ -19218,6 +19399,21 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
         p.historialEdiciones.slice().reverse().map((h, i) => (React.createElement("div", { key: i, style: { fontSize: 11, color: "var(--ink-soft)", marginBottom: 4 } },
             new Date(h.fechaHora).toLocaleString("es-ES"),
             h.importe !== undefined ? ` — importe anterior: ${eur(h.importe)}` : ` — datos anteriores: ${h.apellidos || "—"}, DNI ${h.dni || "—"}`)))));
+    if (confirmarFusion) {
+        return (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+            React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Posible cliente duplicado"),
+            React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } },
+                "Ya hay un cliente guardado como \"",
+                confirmarFusion.nombre,
+                "\" (",
+                confirmarFusion.direccion || "sin direcci\u00F3n",
+                ") con el mismo DNI, direcci\u00F3n o nombre que este presupuesto de \"",
+                p.nombre,
+                "\". \u00BFSon la misma persona/finca?"),
+            React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(false) }, "S\u00ED, es el mismo \u2014 usar su ficha"),
+            React.createElement("button", { className: "gj-btn accent block", style: { marginBottom: 6 }, onClick: () => ejecutarAprobacion(true) }, "No, son distintos \u2014 crear cliente nuevo"),
+            React.createElement("button", { className: "gj-btn ghost block", onClick: () => setConfirmarFusion(null) }, "Cancelar y revisar antes")));
+    }
     if (etapa === "documento") {
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onVolver }, "\u2190 Volver"),
@@ -19296,9 +19492,13 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
                 React.createElement(Printer, { size: 14 }),
                 " Imprimir / PDF"),
             React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 }, className: "gj-no-print" }, "Pulsa aqu\u00ED y, en el cuadro de impresi\u00F3n que se abre, elige \"Guardar en PDF\". Ese PDF ya se puede adjuntar tal cual en WhatsApp o correo \u2014 \u00E1brelo desde tus archivos/descargas y comparte desde ah\u00ED."),
-            !p.aprobado && React.createElement("button", { className: "gj-btn ghost block gj-no-print", style: { marginTop: 6 }, onClick: onEditar },
-                React.createElement(Pencil, { size: 13 }),
-                " Editar presupuesto"),
+            !p.aprobado && (React.createElement(React.Fragment, null,
+                React.createElement("div", { className: "gj-card gj-no-print", style: { marginTop: 10, background: "var(--pend-bg)" } },
+                    React.createElement("div", { style: { fontSize: 13, fontWeight: 600, marginBottom: 8 } }, "\u00BFEl cliente acepta el presupuesto?"),
+                    React.createElement("button", { className: "gj-btn primary block", onClick: marcarAprobado }, "S\u00ED, aprobado")),
+                React.createElement("button", { className: "gj-btn ghost block gj-no-print", style: { marginTop: 6 }, onClick: onEditar },
+                    React.createElement(Pencil, { size: 13 }),
+                    " Editar presupuesto"))),
             historialBox));
     }
     if (etapa === "datos") {
@@ -19550,6 +19750,30 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     });
     const [editandoPrecios, setEditandoPrecios] = useState(false);
     const [especiales, setEspeciales] = useState([]); // {id, desc, cantidad, precio}
+    const [fotosPartidas, setFotosPartidas] = useState(() => (reconstruido === null || reconstruido === void 0 ? void 0 : reconstruido.fotos) || {});
+    const subirFotoPartida = async (key, files) => {
+        const archivos = Array.from(files || []);
+        if (archivos.length === 0)
+            return;
+        const dataUrl = await leerFotoBase64(archivos[0]);
+        setFotosPartidas(f => ({ ...f, [key]: [...(f[key] || []), dataUrl] }));
+    };
+    const quitarFotoPartida = (key, idx) => setFotosPartidas(f => ({ ...f, [key]: (f[key] || []).filter((_, i) => i !== idx) }));
+    const [nuevaPartidaNombre, setNuevaPartidaNombre] = useState("");
+    const [nuevaPartidaUnidad, setNuevaPartidaUnidad] = useState("ud");
+    const partidasPersonalizadas = data.partidasPersonalizadasObra || [];
+    const añadirPartidaCatalogo = () => {
+        if (!nuevaPartidaNombre.trim())
+            return;
+        const clave = "custom_" + uid("p");
+        const next = structuredClone(data);
+        next.preciosObra = next.preciosObra || {};
+        next.preciosObra[clave] = { label: nuevaPartidaNombre.trim(), unidad: nuevaPartidaUnidad || "ud", precio: 0 };
+        next.partidasPersonalizadasObra = [...(next.partidasPersonalizadasObra || []), clave];
+        persist(next);
+        setPrecioLinea(clave, 0);
+        setNuevaPartidaNombre("");
+    };
     const catalogoRiego = data.catalogoRiego || [];
     const [busquedaRiego, setBusquedaRiego] = useState("");
     const [riegoLineas, setRiegoLineas] = useState(() => (reconstruido === null || reconstruido === void 0 ? void 0 : reconstruido.riego) || []); // {id(uid), catalogId, label, unidad, cantidad, precio}
@@ -19652,15 +19876,23 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             const cant = Number(cantidades[k]) || 0;
             const precio = Number(preciosLinea[k]) || 0;
             if (cant > 0) {
-                lineasCalculadas.push({ key: k, label: ((_a = preciosBase[k]) === null || _a === void 0 ? void 0 : _a.label) || k, unidad: ((_b = preciosBase[k]) === null || _b === void 0 ? void 0 : _b.unidad) || "ud", cantidad: cant, precio, subtotal: cant * precio });
+                lineasCalculadas.push({ key: k, label: ((_a = preciosBase[k]) === null || _a === void 0 ? void 0 : _a.label) || k, unidad: ((_b = preciosBase[k]) === null || _b === void 0 ? void 0 : _b.unidad) || "ud", cantidad: cant, precio, subtotal: cant * precio, fotos: fotosPartidas[k] || [] });
             }
         });
+    });
+    partidasPersonalizadas.forEach(k => {
+        var _a, _b;
+        const cant = Number(cantidades[k]) || 0;
+        const precio = Number(preciosLinea[k]) || 0;
+        if (cant > 0) {
+            lineasCalculadas.push({ key: k, label: ((_a = preciosBase[k]) === null || _a === void 0 ? void 0 : _a.label) || k, unidad: ((_b = preciosBase[k]) === null || _b === void 0 ? void 0 : _b.unidad) || "ud", cantidad: cant, precio, subtotal: cant * precio, fotos: fotosPartidas[k] || [] });
+        }
     });
     DESBROZADOS_OBRA.forEach(d => {
         const cant = Number(cantidades[d.key]) || 0;
         if (cant > 0) {
             const precioLineaDesbrozado = Number(preciosLinea[d.key]) || 0;
-            lineasCalculadas.push({ key: d.key, label: d.label, unidad: "m²", cantidad: cant, precio: precioLineaDesbrozado, subtotal: cant * precioLineaDesbrozado });
+            lineasCalculadas.push({ key: d.key, label: d.label, unidad: "m²", cantidad: cant, precio: precioLineaDesbrozado, subtotal: cant * precioLineaDesbrozado, fotos: fotosPartidas[d.key] || [] });
         }
     });
     especiales.forEach(e => {
@@ -19830,20 +20062,28 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             React.createElement("div", { className: "gj-h3" }, sec.titulo),
             sec.claves.map(k => {
                 const info = preciosBase[k] || { label: k, unidad: "ud" };
-                return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" },
-                            info.label,
-                            " (",
-                            info.unidad,
-                            ")"),
-                        React.createElement("input", { className: "gj-input", type: "number", value: cantidades[k] || "", onChange: e => setCantidad(k, e.target.value), placeholder: "0" })),
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" },
-                            "Precio/",
-                            info.unidad,
-                            " (\u20AC)"),
-                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[k] || "", onChange: e => setPrecioLinea(k, e.target.value), placeholder: "0" }))));
+                const tieneCantidad = Number(cantidades[k]) > 0;
+                return (React.createElement(React.Fragment, { key: k },
+                    React.createElement("div", { className: "gj-grid2", style: { alignItems: "end", marginBottom: tieneCantidad ? 2 : 6 } },
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" },
+                                info.label,
+                                " (",
+                                info.unidad,
+                                ")"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: cantidades[k] || "", onChange: e => setCantidad(k, e.target.value), placeholder: "0" })),
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" },
+                                "Precio/",
+                                info.unidad,
+                                " (\u20AC)"),
+                            React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[k] || "", onChange: e => setPrecioLinea(k, e.target.value), placeholder: "0" }))),
+                    tieneCantidad && (React.createElement("div", { style: { marginBottom: 8 } },
+                        React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoPartida(k, e.target.files); e.target.value = ""; } }),
+                            (fotosPartidas[k] || []).map((foto, idx) => React.createElement("div", { key: idx, style: { position: "relative" } },
+                                React.createElement("img", { src: foto, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 4 } }),
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, position: "absolute", top: -6, right: -6, background: "var(--surface)" }, onClick: () => quitarFotoPartida(k, idx) }, "\u2715"))))))));
             }),
             sec.titulo === "Preparaciones / Adecuaciones" && (React.createElement("div", null,
                 React.createElement("div", { className: "gj-grid2" },
@@ -19869,15 +20109,22 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                             "/hora \u00F7 ",
                             rendimientoDesbrozadoMaquina,
                             " m\u00B2/hora)"))),
-                DESBROZADOS_OBRA.map(d => (React.createElement("div", { key: d.key, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" },
-                            d.label,
-                            " (m\u00B2)"),
-                        React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })),
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" }, "Precio/m\u00B2 (\u20AC)"),
-                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[d.key] || "", onChange: e => setPrecioLinea(d.key, e.target.value), placeholder: "0" }))))))),
+                DESBROZADOS_OBRA.map(d => (React.createElement(React.Fragment, { key: d.key },
+                    React.createElement("div", { className: "gj-grid2", style: { alignItems: "end", marginBottom: Number(cantidades[d.key]) > 0 ? 2 : 6 } },
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" },
+                                d.label,
+                                " (m\u00B2)"),
+                            React.createElement("input", { className: "gj-input", type: "number", value: cantidades[d.key] || "", onChange: e => setCantidad(d.key, e.target.value), placeholder: "0" })),
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" }, "Precio/m\u00B2 (\u20AC)"),
+                            React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[d.key] || "", onChange: e => setPrecioLinea(d.key, e.target.value), placeholder: "0" }))),
+                    Number(cantidades[d.key]) > 0 && (React.createElement("div", { style: { marginBottom: 8 } },
+                        React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoPartida(d.key, e.target.files); e.target.value = ""; } }),
+                            (fotosPartidas[d.key] || []).map((foto, idx) => React.createElement("div", { key: idx, style: { position: "relative" } },
+                                React.createElement("img", { src: foto, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 4 } }),
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, position: "absolute", top: -6, right: -6, background: "var(--surface)" }, onClick: () => quitarFotoPartida(d.key, idx) }, "\u2715")))))))),
             sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
                 React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Poda de setos"),
                 React.createElement("div", { className: "gj-field" },
@@ -19906,7 +20153,12 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                             React.createElement("input", { className: "gj-input", type: "number", value: s.anchura || "", onChange: e => updateSetoRowObra(s.id, "anchura", e.target.value), placeholder: "0" }))),
                     React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
                         m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
-                        " m\u00B2")))),
+                        " m\u00B2"),
+                    React.createElement("div", { style: { marginTop: 6 } },
+                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", capture: "environment", onChange: async (e) => { const f = e.target.files[0]; if (f) { const dataUrl = await leerFotoBase64(f); updateSetoRowObra(s.id, "foto", dataUrl); } e.target.value = ""; } }),
+                        s.foto && (React.createElement("div", { style: { marginTop: 4 } },
+                            React.createElement("img", { src: s.foto, style: { maxWidth: 100, borderRadius: 4, display: "block" } }),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 10.5, marginTop: 2 }, onClick: () => updateSetoRowObra(s.id, "foto", null) }, "Quitar foto"))))))),
                 React.createElement("button", { className: "gj-btn ghost block", onClick: addSetoRowObra },
                     React.createElement(Plus, { size: 13 }),
                     " A\u00F1adir tramo de seto"),
@@ -19916,8 +20168,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                         m2SetoObraTotal.toFixed(1),
                         " m\u00B2"),
                     React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: precioPodaSeto || "", onChange: e => setPrecioPodaSeto(e.target.value), placeholder: "0" }))))),
-            sec.titulo === "Podas y talas" && (React.createElement("div", { style: { marginTop: 8 } },
-                React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Podas especiales (partida libre)"),
+            React.createElement("div", { style: { marginTop: 8 } },
+                React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Partidas especiales (libres)"),
                 especiales.map(e => (React.createElement("div", { key: e.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
                     React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: e.desc, onChange: ev => actualizarEspecial(e.id, "desc", ev.target.value), placeholder: "Descripci\u00F3n" }),
                     React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: e.cantidad, onChange: ev => actualizarEspecial(e.id, "cantidad", ev.target.value), placeholder: "Cant." }),
@@ -19926,8 +20178,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
                     React.createElement(Plus, { size: 14 }),
-                    " A\u00F1adir partida especial"))),
-            sec.titulo === "Césped artificial" && (React.createElement("div", { style: { marginTop: 8 } },
+                    " A\u00F1adir partida especial")),
+            sec.titulo === "C\u00e9sped artificial" && (React.createElement("div", { style: { marginTop: 8 } },
                 React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "C\u00E9sped artificial (variedades)"),
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "A\u00F1adir nueva variedad al listado"),
@@ -19955,6 +20207,35 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                 React.createElement("button", { className: "gj-btn ghost block", onClick: añadirMaterialVario },
                     React.createElement(Plus, { size: 14 }),
                     " A\u00F1adir material vario")))))),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Otras partidas"),
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Partidas que hab\u00E9is ido a\u00F1adiendo vosotros al cat\u00E1logo. A diferencia de las \"partidas especiales\" de cada secci\u00F3n (que son solo para este presupuesto), lo que a\u00F1adas aqu\u00ED se queda guardado para poder usarlo tambi\u00E9n en presupuestos de obra futuros."),
+            partidasPersonalizadas.map(k => {
+                const info = preciosBase[k] || { label: k, unidad: "ud" };
+                return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" },
+                            info.label,
+                            " (",
+                            info.unidad,
+                            ")"),
+                        React.createElement("input", { className: "gj-input", type: "number", value: cantidades[k] || "", onChange: e => setCantidad(k, e.target.value), placeholder: "0" })),
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                        React.createElement("label", { className: "gj-label" },
+                            "Precio/",
+                            info.unidad,
+                            " (\u20AC)"),
+                        React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[k] || "", onChange: e => setPrecioLinea(k, e.target.value), placeholder: "0" }))));
+            }),
+            React.createElement("hr", { className: "gj-divider" }),
+            React.createElement("div", { className: "gj-label" }, "A\u00F1adir una partida nueva y permanente al cat\u00E1logo"),
+            React.createElement("div", { className: "gj-row", style: { gap: 6 } },
+                React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: nuevaPartidaNombre, onChange: e => setNuevaPartidaNombre(e.target.value), placeholder: "Nombre de la partida" }),
+                React.createElement("select", { className: "gj-select", style: { flex: 1 }, value: nuevaPartidaUnidad, onChange: e => setNuevaPartidaUnidad(e.target.value) },
+                    ["ud", "m²", "m³", "ml", "h", "día", "kg"].map(u => React.createElement("option", { key: u, value: u }, u)))),
+            React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, disabled: !nuevaPartidaNombre.trim(), onClick: añadirPartidaCatalogo },
+                React.createElement(Plus, { size: 14 }),
+                " A\u00F1adir partida al cat\u00E1logo")),
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Instalaci\u00F3n de riego"),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } },
@@ -19989,7 +20270,176 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         React.createElement("button", { className: "gj-btn accent block", onClick: guardar, disabled: !nombre.trim() || lineasCalculadas.length === 0 },
             React.createElement(Plus, { size: 14 }),
             " ",
-            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra")));
+            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra"))))));
+}
+function SolicitudesVisitasView({ data, persist }) {
+    const [nombreSol, setNombreSol] = useState("");
+    const [telefonoSol, setTelefonoSol] = useState("");
+    const [direccionSol, setDireccionSol] = useState("");
+    const [tipoSol, setTipoSol] = useState("mantenimiento");
+    const [notasSol, setNotasSol] = useState("");
+    const [mostrarHechasSol, setMostrarHechasSol] = useState(false);
+    const añadirSolicitud = () => {
+        if (!nombreSol.trim())
+            return;
+        const next = structuredClone(data);
+        next.solicitudesPresupuesto = next.solicitudesPresupuesto || [];
+        next.solicitudesPresupuesto.push({
+            id: uid("sol"), nombre: nombreSol.trim(), telefono: telefonoSol.trim(), direccion: direccionSol.trim(),
+            tipo: tipoSol, notas: notasSol.trim(), fecha: todayStr(), hecho: false,
+        });
+        persist(next);
+        setNombreSol("");
+        setTelefonoSol("");
+        setDireccionSol("");
+        setNotasSol("");
+    };
+    const marcarSolicitud = (id, hecho) => {
+        const next = structuredClone(data);
+        const s = (next.solicitudesPresupuesto || []).find(x => x.id === id);
+        if (s)
+            s.hecho = hecho;
+        persist(next);
+    };
+    const eliminarSolicitud = (id) => {
+        if (!confirm("¿Eliminar esta solicitud?"))
+            return;
+        const next = structuredClone(data);
+        next.solicitudesPresupuesto = (next.solicitudesPresupuesto || []).filter(x => x.id !== id);
+        persist(next);
+    };
+    const [nombreVis, setNombreVis] = useState("");
+    const [telefonoVis, setTelefonoVis] = useState("");
+    const [direccionVis, setDireccionVis] = useState("");
+    const [fechaVis, setFechaVis] = useState(todayStr());
+    const [horaVis, setHoraVis] = useState("");
+    const [notasVis, setNotasVis] = useState("");
+    const [mostrarHechasVis, setMostrarHechasVis] = useState(false);
+    const añadirVisita = () => {
+        if (!nombreVis.trim() || !fechaVis)
+            return;
+        const next = structuredClone(data);
+        next.visitasPendientes = next.visitasPendientes || [];
+        next.visitasPendientes.push({
+            id: uid("vis"), nombre: nombreVis.trim(), telefono: telefonoVis.trim(), direccion: direccionVis.trim(),
+            fecha: fechaVis, hora: horaVis, notas: notasVis.trim(), hecha: false,
+        });
+        persist(next);
+        setNombreVis("");
+        setTelefonoVis("");
+        setDireccionVis("");
+        setHoraVis("");
+        setNotasVis("");
+    };
+    const marcarVisita = (id, hecha) => {
+        const next = structuredClone(data);
+        const v = (next.visitasPendientes || []).find(x => x.id === id);
+        if (v)
+            v.hecha = hecha;
+        persist(next);
+    };
+    const eliminarVisita = (id) => {
+        if (!confirm("¿Eliminar esta visita?"))
+            return;
+        const next = structuredClone(data);
+        next.visitasPendientes = (next.visitasPendientes || []).filter(x => x.id !== id);
+        persist(next);
+    };
+    const solicitudes = (data.solicitudesPresupuesto || []).filter(s => mostrarHechasSol || !s.hecho).slice().sort((a, b) => a.fecha.localeCompare(b.fecha));
+    const visitas = (data.visitasPendientes || []).filter(v => mostrarHechasVis || !v.hecha).slice().sort((a, b) => (a.fecha + (a.hora || "")).localeCompare(b.fecha + (b.hora || "")));
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Solicitudes de presupuesto"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Para apuntar r\u00E1pido qui\u00E9n ha pedido presupuesto, antes de sentarse a hacerlo en detalle en la pesta\u00F1a Presupuestos."),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Nombre"),
+                    React.createElement("input", { className: "gj-input", value: nombreSol, onChange: e => setNombreSol(e.target.value) })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
+                    React.createElement("input", { className: "gj-input", value: telefonoSol, onChange: e => setTelefonoSol(e.target.value) }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
+                React.createElement("input", { className: "gj-input", value: direccionSol, onChange: e => setDireccionSol(e.target.value) })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Tipo"),
+                React.createElement("select", { className: "gj-select", value: tipoSol, onChange: e => setTipoSol(e.target.value) },
+                    React.createElement("option", { value: "mantenimiento" }, "Mantenimiento"),
+                    React.createElement("option", { value: "obra" }, "Obra"))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Notas"),
+                React.createElement("textarea", { className: "gj-input", rows: 2, value: notasSol, onChange: e => setNotasSol(e.target.value) })),
+            React.createElement("button", { className: "gj-btn block", disabled: !nombreSol.trim(), onClick: añadirSolicitud },
+                React.createElement(Plus, { size: 14 }),
+                " A\u00F1adir solicitud")),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, margin: "10px 0" } },
+            React.createElement("input", { type: "checkbox", checked: mostrarHechasSol, onChange: e => setMostrarHechasSol(e.target.checked) }),
+            "Mostrar tambi\u00E9n las ya presupuestadas"),
+        solicitudes.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay solicitudes pendientes."),
+        solicitudes.map(s => (React.createElement("div", { key: s.id, className: "gj-card", style: { opacity: s.hecho ? 0.6 : 1 } },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "start" } },
+                React.createElement("div", null,
+                    React.createElement("div", { style: { fontWeight: 600 } },
+                        s.nombre,
+                        " ",
+                        React.createElement("span", { className: "gj-badge " + (s.tipo === "obra" ? "en_progreso" : "pendiente") }, s.tipo)),
+                    s.direccion && React.createElement("div", { style: { fontSize: 12 } }, s.direccion),
+                    s.telefono && React.createElement("div", { style: { fontSize: 12 } }, s.telefono),
+                    s.notas && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 4 } }, s.notas),
+                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } },
+                        "Pedido el ",
+                        fechaEs(s.fecha))),
+                React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                    React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => marcarSolicitud(s.id, !s.hecho) }, s.hecho ? "Reabrir" : "Ya presupuestado"),
+                    React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => eliminarSolicitud(s.id) }, "Eliminar")))))),
+        React.createElement("hr", { className: "gj-divider" }),
+        React.createElement("h2", { className: "gj-h2" }, "Citas y visitas pendientes"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Visitas a fincas o clientes para valorar antes de hacer el presupuesto."),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Nombre"),
+                    React.createElement("input", { className: "gj-input", value: nombreVis, onChange: e => setNombreVis(e.target.value) })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono"),
+                    React.createElement("input", { className: "gj-input", value: telefonoVis, onChange: e => setTelefonoVis(e.target.value) }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
+                React.createElement("input", { className: "gj-input", value: direccionVis, onChange: e => setDireccionVis(e.target.value) })),
+            React.createElement("div", { className: "gj-grid2" },
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Fecha"),
+                    React.createElement("input", { className: "gj-input", type: "date", value: fechaVis, onChange: e => setFechaVis(e.target.value) })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Hora (opcional)"),
+                    React.createElement("input", { className: "gj-input", type: "time", value: horaVis, onChange: e => setHoraVis(e.target.value) }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Notas"),
+                React.createElement("textarea", { className: "gj-input", rows: 2, value: notasVis, onChange: e => setNotasVis(e.target.value) })),
+            React.createElement("button", { className: "gj-btn block", disabled: !nombreVis.trim() || !fechaVis, onClick: añadirVisita },
+                React.createElement(Plus, { size: 14 }),
+                " A\u00F1adir visita")),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, margin: "10px 0" } },
+            React.createElement("input", { type: "checkbox", checked: mostrarHechasVis, onChange: e => setMostrarHechasVis(e.target.checked) }),
+            "Mostrar tambi\u00E9n las ya realizadas"),
+        visitas.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay visitas pendientes."),
+        visitas.map(v => {
+            const esPasada = v.fecha < todayStr() && !v.hecha;
+            return (React.createElement("div", { key: v.id, className: "gj-card", style: { opacity: v.hecha ? 0.6 : 1, borderColor: esPasada ? "var(--warn)" : undefined } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "start" } },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 600 } },
+                            fechaEs(v.fecha),
+                            v.hora ? ` \u00B7 ${v.hora}` : "",
+                            esPasada ? " \u26A0\uFE0F atrasada" : ""),
+                        React.createElement("div", null, v.nombre),
+                        v.direccion && React.createElement("div", { style: { fontSize: 12 } }, v.direccion),
+                        v.telefono && React.createElement("div", { style: { fontSize: 12 } }, v.telefono),
+                        v.notas && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 4 } }, v.notas)),
+                    React.createElement("div", { style: { display: "flex", flexDirection: "column", gap: 4 } },
+                        React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => marcarVisita(v.id, !v.hecha) }, v.hecha ? "Reabrir" : "Ya realizada"),
+                        React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => eliminarVisita(v.id) }, "Eliminar")))));
+        })));
 }
 function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
     const [printId, setPrintId] = useState(null);
@@ -20191,14 +20641,45 @@ function HistorialPresupuestosView({ data, persist, setView, setFocusClienteId }
                     React.createElement(Eye, { size: 15 }))))))));
 }
 function TrabajosView({ data, persist, adminRole }) {
-    const obras = data.clients.filter(c => c.esObra).slice().sort((a, b) => (a.orden || 0) - (b.orden || 0));
+    const obras = data.clients.filter(c => c.esObra).slice().sort((a, b) => {
+        const finA = a.estadoObra === "finalizada" ? 1 : 0;
+        const finB = b.estadoObra === "finalizada" ? 1 : 0;
+        if (finA !== finB)
+            return finA - finB;
+        return (a.orden || 0) - (b.orden || 0);
+    });
     const [busqueda, setBusqueda] = useState("");
-    const obrasFiltradas = obras.filter(o => !busqueda.trim() || o.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
+    const [mostrarFinalizadas, setMostrarFinalizadas] = useState(false);
+    const obrasFiltradas = obras
+        .filter(o => mostrarFinalizadas || o.estadoObra !== "finalizada")
+        .filter(o => !busqueda.trim() || o.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
     const [confirmarEliminarId, setConfirmarEliminarId] = useState(null);
     const [pinEliminar, setPinEliminar] = useState("");
     const [pinEliminarError, setPinEliminarError] = useState("");
     const [materialesAbiertos, setMaterialesAbiertos] = useState(null);
     const [fotoGrande, setFotoGrande] = useState(null);
+    const [mostrarAlmacen, setMostrarAlmacen] = useState(false);
+    const eliminarDelAlmacenGeneral = (id) => {
+        if (!confirm("¿Quitar este material de la bolsa general? (por ejemplo, si se ha usado fuera de la app o era un error)"))
+            return;
+        const next = structuredClone(data);
+        next.almacenGeneral = (next.almacenGeneral || []).filter(s => s.id !== id);
+        persist(next);
+    };
+    const cambiarEstadoObra = (id, estado) => {
+        const next = structuredClone(data);
+        const c = next.clients.find(x => x.id === id);
+        c.estadoObra = estado;
+        if (estado === "en_curso")
+            c.facturado = false;
+        persist(next);
+    };
+    const marcarFacturado = (id, valor) => {
+        const next = structuredClone(data);
+        const c = next.clients.find(x => x.id === id);
+        c.facturado = valor;
+        persist(next);
+    };
     const materialesDeObra = (obraId) => {
         const lineas = [];
         (data.orders || []).forEach(o => {
@@ -20267,7 +20748,25 @@ function TrabajosView({ data, persist, adminRole }) {
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Listado de trabajos"),
         adminRole === "admin1" && (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Puedes cambiar el orden de la lista con las flechas.")),
-        React.createElement("input", { className: "gj-input", style: { marginBottom: 10 }, value: busqueda, onChange: e => setBusqueda(e.target.value), placeholder: "Buscar trabajo por nombre..." }),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 6 }, value: busqueda, onChange: e => setBusqueda(e.target.value), placeholder: "Buscar trabajo por nombre..." }),
+        React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 6, fontSize: 12.5, marginBottom: 10 } },
+            React.createElement("input", { type: "checkbox", checked: mostrarFinalizadas, onChange: e => setMostrarFinalizadas(e.target.checked) }),
+            "Mostrar tambi\u00E9n las obras ya finalizadas"),
+        React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 10 }, onClick: () => setMostrarAlmacen(m => !m) },
+            "\uD83D\uDCE6 Bolsa de materiales generales (",
+            (data.almacenGeneral || []).filter(s => s.cantidad > 0).length,
+            ")"),
+        mostrarAlmacen && (React.createElement("div", { className: "gj-card", style: { marginBottom: 10 } },
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "Material que ha sobrado de alg\u00FAn albar\u00E1n y a\u00FAn no se ha imputado a ninguna obra. Los trabajadores pueden tomarlo desde Fichar al recoger materiales."),
+            (data.almacenGeneral || []).filter(s => s.cantidad > 0).length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay material sobrante ahora mismo.") : (data.almacenGeneral || []).filter(s => s.cantidad > 0).map(s => (React.createElement("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, padding: "4px 0", borderBottom: "1px solid var(--line-soft)" } },
+                React.createElement("span", null,
+                    s.cantidad,
+                    " \u00D7 ",
+                    s.material,
+                    " (",
+                    s.proveedor,
+                    ")"),
+                adminRole === "admin1" && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => eliminarDelAlmacenGeneral(s.id) }, "Quitar"))))),
         obras.length > 0 && obrasFiltradas.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Ning\u00FAn trabajo coincide con la b\u00FAsqueda."),
         React.createElement("div", { className: "gj-table-wrap" },
             React.createElement("table", { className: "gj-table" },
@@ -20301,7 +20800,11 @@ function TrabajosView({ data, persist, adminRole }) {
                         React.createElement("td", null,
                             React.createElement("input", { className: "gj-input", type: "date", style: { width: 140 }, value: o.fechaInicioPlan || "", onChange: e => actualizarCampo(o.id, "fechaInicioPlan", e.target.value) })),
                         React.createElement("td", null,
-                            React.createElement("span", { className: "gj-badge " + (o.estadoObra === "finalizada" ? "completado" : "en_progreso") }, o.estadoObra === "finalizada" ? "Finalizada" : "En curso")),
+                            React.createElement("span", { className: "gj-badge " + (o.estadoObra !== "finalizada" ? "en_progreso" : o.facturado ? "no_hecho" : "completado") }, o.estadoObra !== "finalizada" ? "En curso" : o.facturado ? "Finalizada y facturada" : "Finalizada, sin facturar"),
+                            o.estadoObra === "finalizada" ? React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5, marginLeft: 6 }, onClick: () => cambiarEstadoObra(o.id, "en_curso") }, "Reabrir") : React.createElement("button", { className: "gj-btn primary", style: { padding: "2px 6px", fontSize: 10.5, marginLeft: 6 }, onClick: () => cambiarEstadoObra(o.id, "finalizada") }, "Marcar finalizada"),
+                            o.estadoObra === "finalizada" && React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, fontSize: 11, marginTop: 4 } },
+                                React.createElement("input", { type: "checkbox", checked: !!o.facturado, onChange: e => marcarFacturado(o.id, e.target.checked) }),
+                                "Facturado")),
                         adminRole === "admin1" ? React.createElement("td", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => { setConfirmarEliminarId(o.id); setPinEliminar(""); setPinEliminarError(""); } }, "Eliminar")) : null);
                     const filaMateriales = materialesAbiertos === o.id ? React.createElement("tr", null, React.createElement("td", { colSpan: 7 },
                         React.createElement("div", { className: "gj-card", style: { margin: "4px 0" } },
@@ -20332,7 +20835,7 @@ function TrabajosView({ data, persist, adminRole }) {
                 }))),
         obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto."),
         fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
-            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })))));
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } }))))));
 }
 function FestivoForm({ data, persist, adminRole }) {
     const [fecha, setFecha] = useState(todayStr());
@@ -20923,6 +21426,12 @@ function RentabilidadView({ data, persist }) {
     const [almuerzoMin, setAlmuerzoMin] = useState(data.settings.almuerzoEstandarMin || 15);
     const [horasAnualesBase, setHorasAnualesBase] = useState(data.settings.horasAnualesBase || 1700);
     const [naveLat, setNaveLat] = useState(data.settings.naveLat || null);
+    const [horaMinimaEntrada, setHoraMinimaEntrada] = useState(data.settings.horaMinimaEntrada || "07:45");
+    const guardarHoraMinima = () => {
+        const next = structuredClone(data);
+        next.settings.horaMinimaEntrada = horaMinimaEntrada;
+        persist(next);
+    };
     const [naveLng, setNaveLng] = useState(data.settings.naveLng || null);
     const [capturandoNave, setCapturandoNave] = useState(false);
     const capturarNave = async () => {
@@ -21098,6 +21607,12 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("input", { className: "gj-input", type: "number", value: horasAnualesBase, onChange: e => setHorasAnualesBase(e.target.value) }),
                     React.createElement("button", { className: "gj-btn", onClick: guardarHorasAnuales }, "Guardar")),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Horas que debe trabajar en el a\u00F1o un trabajador con contrato de los 12 meses. Para los fijos discontinuos o eventuales (con fecha de inicio y fin en Equipo), se calcula autom\u00E1ticamente la parte proporcional en la pesta\u00F1a Horas.")),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Hora m\u00EDnima de entrada"),
+                React.createElement("div", { style: { display: "flex", gap: 6 } },
+                    React.createElement("input", { className: "gj-input", type: "time", value: horaMinimaEntrada, onChange: e => setHoraMinimaEntrada(e.target.value) }),
+                    React.createElement("button", { className: "gj-btn", onClick: guardarHoraMinima }, "Guardar")),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Si un trabajador ficha su primera entrada del d\u00EDa antes de esta hora, el tiempo de antes no cuenta como horas trabajadas \u2014 salvo que le actives una excepci\u00F3n ese d\u00eda en Rutas.")),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Ubicaci\u00F3n de la nave/almac\u00E9n"),
                 (naveLat && naveLng) ? (React.createElement("div", { style: { fontSize: 12.5, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
