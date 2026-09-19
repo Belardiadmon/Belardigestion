@@ -14698,6 +14698,19 @@ function allStopsToday(data) {
     });
     return list;
 }
+function allStopsPendientesAviso(data) {
+    // A diferencia de allStopsToday, esto mira TODOS los d\u00EDas (no solo hoy), para que un mantenimiento
+    // completado que no se lleg\u00F3 a avisar al cliente no desaparezca nunca del Panel, aunque haya pasado
+    // el d\u00EDa \u2014 solo se quita cuando se avisa de verdad (notificado) o alguien lo marca "No enviar".
+    const list = [];
+    data.orders.forEach(o => {
+        o.stops.forEach((s, idx) => {
+            if (s.estado === "completado" && !s.notificado && !s.noEnviarAviso)
+                list.push({ order: o, stop: s, idx });
+        });
+    });
+    return list.sort((a, b) => a.order.fecha.localeCompare(b.order.fecha));
+}
 function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }) {
     const [printStop, setPrintStop] = useState(null); // { orderId, clienteId }
     const [confirmarReset, setConfirmarReset] = useState(false);
@@ -14707,7 +14720,7 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
     const pendientes = stops.filter(s => s.stop.estado === "pendiente").length;
     const enProgreso = stops.filter(s => s.stop.estado === "en_progreso").length;
     const completados = stops.filter(s => s.stop.estado === "completado");
-    const pendientesAviso = completados.filter(s => !s.stop.notificado);
+    const pendientesAviso = allStopsPendientesAviso(data);
     const avisados = completados.filter(s => s.stop.notificado);
     const horasPersonaHoy = completados.reduce((acc, s) => acc + diffHours(s.stop.horaInicio, s.stop.horaFin) * (s.stop.crewSize || s.order.workerIds.length), 0);
     const avisosAlmuerzo = data.orders.filter(o => o.fecha === todayStr() && (o.avisoTiempoAlmuerzo || o.avisoUbicacionAlmuerzo));
@@ -14726,6 +14739,15 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
         stop.notificadoCanal = canal;
         stop.notificadoFecha = todayStr();
         stop.notificadoHora = nowTime();
+        persist(next);
+    };
+    const noEnviarAviso = (orderId, clienteId) => {
+        if (!confirm("Esto quita este mantenimiento de la lista de pendientes de avisar, sin mandarle ningún mensaje al cliente. ¿Continuar?"))
+            return;
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.noEnviarAviso = true;
         persist(next);
     };
     const resetAll = () => {
@@ -14831,19 +14853,21 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                         o.avisoTiempoAlmuerzo && React.createElement("span", { className: "gj-badge no_hecho" }, "Tiempo superado en m\u00E1s de 20 min"),
                         o.avisoUbicacionAlmuerzo && React.createElement("span", { className: "gj-badge no_hecho" }, "Ubicaci\u00F3n no coincide con ning\u00FAn cliente de la ruta"))));
             }))),
-        React.createElement("h3", { className: "gj-h3" }, "Mantenimientos completados hoy, pendientes de avisar"),
+        React.createElement("h3", { className: "gj-h3" }, "Mantenimientos completados pendientes de avisar"),
         pendientesAviso.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay mantenimientos pendientes de avisar."),
         pendientesAviso.map(({ order, stop }) => {
             const cliente = getClient(stop.clienteId);
             const crew = order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
             const dur = duracionStopHoras(stop, order);
+            const esDeHoy = order.fecha === todayStr();
             const laboresTxt = (stop.labores && stop.labores.length > 0) ? ` Trabajos realizados: ${stop.labores.join(", ")}.` : "";
-            const msg = `Jardinería Belardi le informa que el mantenimiento de su parcela ha sido ejecutado hoy por ${crew}.${laboresTxt}`;
+            const msg = `Jardinería Belardi le informa que el mantenimiento de su parcela ha sido ejecutado el ${fechaEs(order.fecha)} por ${crew}.${laboresTxt}`;
             return (React.createElement("div", { className: "gj-card", key: cliente.id + stop.horaInicio },
                 React.createElement("div", { className: "gj-row" },
                     React.createElement("div", null,
                         React.createElement("div", { style: { fontWeight: 600 } }, cliente.nombre),
-                        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } },
+                        React.createElement("div", { style: { fontSize: 12, color: esDeHoy ? "var(--ink-soft)" : "var(--warn)", fontWeight: esDeHoy ? 400 : 600 } },
+                            esDeHoy ? "" : `${fechaEs(order.fecha)} \u00B7 `,
                             stop.horaInicio,
                             "\u2013",
                             stop.horaFin,
@@ -14863,7 +14887,10 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                         " Correo")),
                 React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6 }, onClick: () => setPrintStop({ orderId: order.id, clienteId: cliente.id }) },
                     React.createElement(Printer, { size: 13 }),
-                    " Imprimir parte")));
+                    " Imprimir parte"),
+                React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6, fontSize: 12 }, onClick: () => noEnviarAviso(order.id, cliente.id) },
+                    React.createElement(XCircle, { size: 13 }),
+                    " No enviar aviso (quitar de esta lista sin avisar)")));
         }),
         adminRole === "admin1" && (React.createElement(React.Fragment, null,
             React.createElement("hr", { className: "gj-divider" }),
@@ -17776,6 +17803,17 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
     const [email, setEmail] = useState("");
     const [dniCliente, setDniCliente] = useState("");
     const [avisoDuplicado, setAvisoDuplicado] = useState(null);
+    const clientesOrdenadosM = data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const rellenarDesdeClienteM = (clienteId) => {
+        const c = data.clients.find(x => x.id === clienteId);
+        if (!c)
+            return;
+        setNombre(c.nombre || "");
+        setDireccion(c.direccion || "");
+        setTelefono(c.telefono || "");
+        setEmail(c.email || "");
+        setDniCliente(c.dni || "");
+    };
     const [tiempoDesplazamientoMin, setTiempoDesplazamientoMin] = useState(0);
     const [idaYVuelta, setIdaYVuelta] = useState(false);
     const [metodoCesped, setMetodoCesped] = useState("mano");
@@ -18097,6 +18135,11 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Datos del cliente"),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "\u00BFEs un cliente que ya ten\u00E9is? (opcional, para rellenar solo)"),
+                React.createElement("select", { className: "gj-select", value: "", onChange: e => rellenarDesdeClienteM(e.target.value) },
+                    React.createElement("option", { value: "" }, "-- Cliente nuevo / escribir a mano --"),
+                    clientesOrdenadosM.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
                 React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), onBlur: comprobarDuplicado })),
@@ -19720,6 +19763,17 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     const [email, setEmail] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.email) || (datosClienteIniciales === null || datosClienteIniciales === void 0 ? void 0 : datosClienteIniciales.email) || "");
     const [dniCliente, setDniCliente] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.dni) || (datosClienteIniciales === null || datosClienteIniciales === void 0 ? void 0 : datosClienteIniciales.dni) || "");
     const [avisoDuplicado, setAvisoDuplicado] = useState(null);
+    const clientesOrdenadosO = data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const rellenarDesdeClienteO = (clienteId) => {
+        const c = data.clients.find(x => x.id === clienteId);
+        if (!c)
+            return;
+        setNombre(c.nombre || "");
+        setDireccion(c.direccion || "");
+        setTelefono(c.telefono || "");
+        setEmail(c.email || "");
+        setDniCliente(c.dni || "");
+    };
     const comprobarDuplicado = () => {
         if (presupuestoEditar || datosClienteIniciales)
             return; // ya es un cliente conocido, no hace falta avisar
@@ -19774,6 +19828,25 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         persist(next);
         setPrecioLinea(clave, 0);
         setNuevaPartidaNombre("");
+    };
+    const [editandoPartidaId, setEditandoPartidaId] = useState(null);
+    const [editPartidaNombre, setEditPartidaNombre] = useState("");
+    const [editPartidaUnidad, setEditPartidaUnidad] = useState("ud");
+    const guardarEdicionPartida = (clave) => {
+        if (!editPartidaNombre.trim())
+            return;
+        const next = structuredClone(data);
+        next.preciosObra = next.preciosObra || {};
+        next.preciosObra[clave] = { ...(next.preciosObra[clave] || {}), label: editPartidaNombre.trim(), unidad: editPartidaUnidad || "ud" };
+        persist(next);
+        setEditandoPartidaId(null);
+    };
+    const eliminarPartidaCatalogo = (clave) => {
+        if (!confirm("¿Quitar esta partida del catálogo? No afecta a presupuestos ya guardados, solo a los futuros."))
+            return;
+        const next = structuredClone(data);
+        next.partidasPersonalizadasObra = (next.partidasPersonalizadasObra || []).filter(k => k !== clave);
+        persist(next);
     };
     const catalogoRiego = data.catalogoRiego || [];
     const [busquedaRiego, setBusquedaRiego] = useState("");
@@ -20008,6 +20081,11 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-card" },
             React.createElement("div", { className: "gj-h3" }, "Datos del cliente"),
+            !presupuestoEditar && !datosClienteIniciales && React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "\u00BFEs un cliente que ya ten\u00E9is? (opcional, para rellenar solo)"),
+                React.createElement("select", { className: "gj-select", value: "", onChange: e => rellenarDesdeClienteO(e.target.value) },
+                    React.createElement("option", { value: "" }, "-- Cliente nuevo / escribir a mano --"),
+                    clientesOrdenadosO.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
                 React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), onBlur: comprobarDuplicado, placeholder: "Nombre del cliente" })),
@@ -20213,15 +20291,26 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Partidas que hab\u00E9is ido a\u00F1adiendo vosotros al cat\u00E1logo. A diferencia de las \"partidas especiales\" de cada secci\u00F3n (que son solo para este presupuesto), lo que a\u00F1adas aqu\u00ED se queda guardado para poder usarlo tambi\u00E9n en presupuestos de obra futuros."),
             partidasPersonalizadas.map(k => {
                 const info = preciosBase[k] || { label: k, unidad: "ud" };
-                return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 6 } },
+                if (editandoPartidaId === k) {
+                    return (React.createElement("div", { key: k, className: "gj-row", style: { gap: 6, marginBottom: 6, flexWrap: "wrap" } },
+                        React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: editPartidaNombre, onChange: e => setEditPartidaNombre(e.target.value) }),
+                        React.createElement("select", { className: "gj-select", style: { flex: 1 }, value: editPartidaUnidad, onChange: e => setEditPartidaUnidad(e.target.value) },
+                            ["ud", "m²", "m³", "ml", "h", "día", "kg"].map(u => React.createElement("option", { key: u, value: u }, u))),
+                        React.createElement("button", { className: "gj-btn", onClick: () => guardarEdicionPartida(k) }, "Guardar"),
+                        React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditandoPartidaId(null) }, "Cancelar")));
+                }
+                return (React.createElement("div", { key: k, className: "gj-grid2", style: { alignItems: "end", marginBottom: 2 } },
                     React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
                         React.createElement("label", { className: "gj-label" },
                             info.label,
                             " (",
                             info.unidad,
-                            ")"),
+                            ")",
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, marginLeft: 6 }, onClick: () => { setEditandoPartidaId(k); setEditPartidaNombre(info.label); setEditPartidaUnidad(info.unidad); } },
+                                React.createElement(Pencil, { size: 10 })),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, marginLeft: 2 }, onClick: () => eliminarPartidaCatalogo(k) }, "\u2715")),
                         React.createElement("input", { className: "gj-input", type: "number", value: cantidades[k] || "", onChange: e => setCantidad(k, e.target.value), placeholder: "0" })),
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                    React.createElement("div", { className: "gj-field", style: { marginBottom: 8 } },
                         React.createElement("label", { className: "gj-label" },
                             "Precio/",
                             info.unidad,
@@ -20280,6 +20369,15 @@ function SolicitudesVisitasView({ data, persist }) {
     const [tipoSol, setTipoSol] = useState("mantenimiento");
     const [notasSol, setNotasSol] = useState("");
     const [mostrarHechasSol, setMostrarHechasSol] = useState(false);
+    const clientesOrdenados = data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const rellenarDesdeClienteSol = (clienteId) => {
+        const c = data.clients.find(x => x.id === clienteId);
+        if (!c)
+            return;
+        setNombreSol(c.nombre || "");
+        setTelefonoSol(c.telefono || "");
+        setDireccionSol(c.direccion || "");
+    };
     const añadirSolicitud = () => {
         if (!nombreSol.trim())
             return;
@@ -20316,6 +20414,14 @@ function SolicitudesVisitasView({ data, persist }) {
     const [horaVis, setHoraVis] = useState("");
     const [notasVis, setNotasVis] = useState("");
     const [mostrarHechasVis, setMostrarHechasVis] = useState(false);
+    const rellenarDesdeClienteVis = (clienteId) => {
+        const c = data.clients.find(x => x.id === clienteId);
+        if (!c)
+            return;
+        setNombreVis(c.nombre || "");
+        setTelefonoVis(c.telefono || "");
+        setDireccionVis(c.direccion || "");
+    };
     const añadirVisita = () => {
         if (!nombreVis.trim() || !fechaVis)
             return;
@@ -20352,6 +20458,11 @@ function SolicitudesVisitasView({ data, persist }) {
         React.createElement("h2", { className: "gj-h2" }, "Solicitudes de presupuesto"),
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Para apuntar r\u00E1pido qui\u00E9n ha pedido presupuesto, antes de sentarse a hacerlo en detalle en la pesta\u00F1a Presupuestos."),
         React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "\u00BFEs un cliente que ya ten\u00E9is? (opcional, para rellenar solo)"),
+                React.createElement("select", { className: "gj-select", value: "", onChange: e => rellenarDesdeClienteSol(e.target.value) },
+                    React.createElement("option", { value: "" }, "-- Cliente nuevo / escribir a mano --"),
+                    clientesOrdenados.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
             React.createElement("div", { className: "gj-grid2" },
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Nombre"),
@@ -20397,6 +20508,11 @@ function SolicitudesVisitasView({ data, persist }) {
         React.createElement("h2", { className: "gj-h2" }, "Citas y visitas pendientes"),
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Visitas a fincas o clientes para valorar antes de hacer el presupuesto."),
         React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "\u00BFEs un cliente que ya ten\u00E9is? (opcional, para rellenar solo)"),
+                React.createElement("select", { className: "gj-select", value: "", onChange: e => rellenarDesdeClienteVis(e.target.value) },
+                    React.createElement("option", { value: "" }, "-- Cliente nuevo / escribir a mano --"),
+                    clientesOrdenados.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
             React.createElement("div", { className: "gj-grid2" },
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Nombre"),
@@ -20746,6 +20862,18 @@ function TrabajosView({ data, persist, adminRole }) {
         c.orden = 0;
         persist(next);
     };
+    const materialesGeneralesDisponibles = (data.almacenGeneral || []).filter(s => s.cantidad > 0);
+    let bolsaBlock = null;
+    if (mostrarAlmacen) {
+        const filasBolsa = materialesGeneralesDisponibles.length === 0
+            ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay material sobrante ahora mismo.")
+            : materialesGeneralesDisponibles.map(s => React.createElement("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, padding: "4px 0", borderBottom: "1px solid var(--line-soft)" } },
+                React.createElement("span", null, `${s.cantidad} \u00D7 ${s.material} (${s.proveedor})`),
+                adminRole === "admin1" ? React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => eliminarDelAlmacenGeneral(s.id) }, "Quitar") : null));
+        bolsaBlock = React.createElement("div", { className: "gj-card", style: { marginBottom: 10 } },
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "Material que ha sobrado de alg\u00FAn albar\u00E1n y a\u00FAn no se ha imputado a ninguna obra. Los trabajadores pueden tomarlo desde Fichar al recoger materiales."),
+            filasBolsa);
+    }
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Listado de trabajos"),
         adminRole === "admin1" && (React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Puedes cambiar el orden de la lista con las flechas.")),
@@ -20755,19 +20883,9 @@ function TrabajosView({ data, persist, adminRole }) {
             "Mostrar tambi\u00E9n las obras ya finalizadas"),
         React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 10 }, onClick: () => setMostrarAlmacen(m => !m) },
             "\uD83D\uDCE6 Bolsa de materiales generales (",
-            (data.almacenGeneral || []).filter(s => s.cantidad > 0).length,
+            materialesGeneralesDisponibles.length,
             ")"),
-        mostrarAlmacen && (React.createElement("div", { className: "gj-card", style: { marginBottom: 10 } },
-            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "Material que ha sobrado de alg\u00FAn albar\u00E1n y a\u00FAn no se ha imputado a ninguna obra. Los trabajadores pueden tomarlo desde Fichar al recoger materiales."),
-            (data.almacenGeneral || []).filter(s => s.cantidad > 0).length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay material sobrante ahora mismo.") : (data.almacenGeneral || []).filter(s => s.cantidad > 0).map(s => (React.createElement("div", { key: s.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, padding: "4px 0", borderBottom: "1px solid var(--line-soft)" } },
-                React.createElement("span", null,
-                    s.cantidad,
-                    " \u00D7 ",
-                    s.material,
-                    " (",
-                    s.proveedor,
-                    ")"),
-                adminRole === "admin1" && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => eliminarDelAlmacenGeneral(s.id) }, "Quitar"))))),
+        bolsaBlock,
         obras.length > 0 && obrasFiltradas.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Ning\u00FAn trabajo coincide con la b\u00FAsqueda."),
         React.createElement("div", { className: "gj-table-wrap" },
             React.createElement("table", { className: "gj-table" },
@@ -20836,7 +20954,7 @@ function TrabajosView({ data, persist, adminRole }) {
                 }))),
         obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay obras. Se a\u00F1aden desde Clientes o al aprobar un presupuesto."),
         fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
-            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } }))))));
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })))));
 }
 function FestivoForm({ data, persist, adminRole }) {
     const [fecha, setFecha] = useState(todayStr());
@@ -21190,6 +21308,17 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
         next.calendarManual[key] = !isDone(key);
         persist(next);
     };
+    const [detalleDia, setDetalleDia] = useState(null); // { clienteId, dateStr }
+    const buscarVisitaReal = (clienteId, dateStr) => {
+        for (const o of data.orders) {
+            if (o.fecha !== dateStr)
+                continue;
+            const s = o.stops.find(x => x.clienteId === clienteId && x.estado === "completado");
+            if (s)
+                return { order: o, stop: s };
+        }
+        return null;
+    };
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
     const todayKey = todayStr();
@@ -21205,6 +21334,39 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
     }
     else
         setMonth(m => m + 1); };
+    let detalleModal = null;
+    if (detalleDia) {
+        const clienteDet = getClient(detalleDia.clienteId);
+        const visita = buscarVisitaReal(detalleDia.clienteId, detalleDia.dateStr);
+        const keyDet = detalleDia.clienteId + "|" + detalleDia.dateStr;
+        const marcado = isDone(keyDet);
+        const contenidoDetalle = visita
+            ? React.createElement("div", null,
+                React.createElement("div", { style: { fontSize: 12.5, marginBottom: 4 } },
+                    "\u23F0 ",
+                    visita.stop.horaInicio,
+                    " \u2013 ",
+                    visita.stop.horaFin || "(sin fin)"),
+                visita.stop.labores && visita.stop.labores.length > 0 && React.createElement("div", { style: { fontSize: 12.5, marginBottom: 4 } },
+                    React.createElement("b", null, "Labores: "),
+                    visita.stop.labores.join(", ")),
+                visita.stop.materiales && React.createElement("div", { style: { fontSize: 12.5, marginBottom: 4 } },
+                    React.createElement("b", null, "Materiales: "),
+                    visita.stop.materiales),
+                visita.stop.observaciones && React.createElement("div", { style: { fontSize: 12.5, marginBottom: 4 } },
+                    React.createElement("b", null, "Observaciones: "),
+                    visita.stop.observaciones),
+                React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } },
+                    visita.stop.notificado ? `\u2713 Avisado al cliente${visita.stop.notificadoHora ? " a las " + visita.stop.notificadoHora : ""}` : "A\u00FAn no se ha avisado al cliente de esta visita."))
+            : React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "No hay ning\u00FAn mantenimiento fichado ese d\u00EDa para este cliente \u2014 la marca de este calendario es manual, sin detalle guardado.");
+        detalleModal = React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setDetalleDia(null) },
+            React.createElement("div", { className: "gj-card", style: { maxWidth: 340, width: "100%" }, onClick: e => e.stopPropagation() },
+                React.createElement("div", { style: { fontWeight: 600, marginBottom: 2 } }, clienteDet ? clienteDet.nombre : ""),
+                React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, fechaEs(detalleDia.dateStr)),
+                contenidoDetalle,
+                adminMode && React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 10 }, onClick: () => { toggleMark(detalleDia.clienteId, detalleDia.dateStr); setDetalleDia(null); } }, marcado ? "Quitar marca de visita" : "Marcar como visita hecha"),
+                React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => setDetalleDia(null) }, "Cerrar")));
+    }
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-row", style: { marginBottom: 10 } },
             React.createElement("h2", { className: "gj-h2", style: { margin: 0 } }, "Calendario"),
@@ -21234,11 +21396,11 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
             React.createElement("table", { className: "gj-table" },
                 React.createElement("thead", null,
                     React.createElement("tr", null,
-                        React.createElement("th", { style: { position: "sticky", left: 0, background: "var(--bg)" } }, "Cliente"),
+                        React.createElement("th", { style: { position: "sticky", left: 0, top: 0, background: "var(--bg)", zIndex: 3 } }, "Cliente"),
                         days.map(d => {
                             const dStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                             const esFestivo = (data.festivos || {})[dStr];
-                            return React.createElement("th", { key: d, style: { textAlign: "center", background: esFestivo ? "var(--pend-bg)" : undefined }, title: esFestivo ? (esFestivo.nombre || esFestivo.tipo) : "" }, d);
+                            return React.createElement("th", { key: d, style: { textAlign: "center", position: "sticky", top: 0, zIndex: 2, background: esFestivo ? "var(--pend-bg)" : "var(--bg)" }, title: esFestivo ? (esFestivo.nombre || esFestivo.tipo) : "" }, d);
                         }))),
                 React.createElement("tbody", null, data.clients.slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).map(c => (React.createElement("tr", { key: c.id },
                     React.createElement("td", { style: { fontWeight: 600, position: "sticky", left: 0, background: "var(--surface)" } },
@@ -21251,9 +21413,10 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
                         const done = isDone(key);
                         const esUltima = done && ultimaVisitaPorCliente[c.id] === dateStr;
                         return (React.createElement("td", { key: d, style: { textAlign: "center" } },
-                            React.createElement("div", { className: "gj-daycell" + (esUltima ? " latest" : done ? " done" : "") + (dateStr === todayKey ? " today" : ""), style: { cursor: adminMode ? "pointer" : "default" }, onClick: () => toggleMark(c.id, dateStr) }, done ? React.createElement(CheckCircle2, { size: 13 }) : "")));
+                            React.createElement("div", { className: "gj-daycell" + (esUltima ? " latest" : done ? " done" : "") + (dateStr === todayKey ? " today" : ""), style: { cursor: "pointer" }, onClick: () => setDetalleDia({ clienteId: c.id, dateStr }) }, done ? React.createElement(CheckCircle2, { size: 13 }) : "")));
                     }))))))),
-        data.clients.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "A\u00F1ade clientes para verlos aqu\u00ED.")));
+        data.clients.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "A\u00F1ade clientes para verlos aqu\u00ED."),
+        detalleModal));
 }
 function ComparativaTrabajadoresView({ data, getWorker }) {
     const [clienteId, setClienteId] = useState("");
