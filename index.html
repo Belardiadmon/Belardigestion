@@ -14857,6 +14857,8 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
         pendientesAviso.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay mantenimientos pendientes de avisar."),
         pendientesAviso.map(({ order, stop }) => {
             const cliente = getClient(stop.clienteId);
+            if (!cliente)
+                return null; // el cliente se borr\u00F3 desde entonces; no hay a qui\u00E9n avisar
             const crew = order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
             const dur = duracionStopHoras(stop, order);
             const esDeHoy = order.fecha === todayStr();
