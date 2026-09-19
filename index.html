@@ -15886,7 +15886,7 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
             React.createElement("div", { className: "gj-h3" }, "Crear ruta"),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Fecha"),
-                React.createElement("input", { className: "gj-input", type: "date", value: fecha, onChange: e => setFecha(e.target.value) })),
+                React.createElement("input", { className: "gj-input", type: "date", min: todayStr(), value: fecha, onChange: e => setFecha(e.target.value) })),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Cuadrilla"),
                 React.createElement("div", { className: "gj-checklist" },
