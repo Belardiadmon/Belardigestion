@@ -13090,6 +13090,8 @@ function upsertClienteDesdePresupuesto(next, p, tipoNuevo, forzarNuevo) {
         cliente.esObra = true;
         cliente.presupuesto = p.importe;
         cliente.estadoObra = "en_curso";
+        if (p.referenciaObra)
+            cliente.referenciaObra = p.referenciaObra;
         if (!cliente.orden) {
             const maxOrden = Math.max(0, ...next.clients.filter(c => c.esObra).map(c => c.orden || 0));
             cliente.orden = maxOrden + 1;
@@ -16048,7 +16050,7 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                         React.createElement("span", { className: "gj-chip" + (selClients.includes(c.id) ? " selected" : ""), onClick: () => toggleClient(c.id) },
                             selClients.includes(c.id) ? (selClients.indexOf(c.id) + 1) + ". " : "",
                             c.nombre,
-                            c.esObra ? " (obra)" : "",
+                            c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "",
                             nPend > 0 ? ` \u26A0\uFE0F${nPend}` : ""));
                 }))),
             selClients.length > 0 && (React.createElement("div", { className: "gj-field" },
@@ -16146,7 +16148,8 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             React.createElement("span", { style: { fontSize: 13 } },
                                 i + 1,
                                 ". ", cli === null || cli === void 0 ? void 0 :
-                                cli.nombre),
+                                cli.nombre,
+                                (cli === null || cli === void 0 ? void 0 : cli.referenciaObra) ? ` — ${cli.referenciaObra}` : ""),
                             React.createElement("span", { className: "gj-badge " + (s.resultado === "no_hecho" ? "no_hecho" : s.estado) }, s.resultado === "no_hecho" ? "no hecho" : s.estado.replace("_", " "))),
                         adminMode && o.workerIds.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, o.workerIds.map(wid => {
                             const w = getWorker(wid);
@@ -16778,7 +16781,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                             React.createElement("div", { style: { padding: "8px 0", borderBottom: "1px solid var(--line-soft)" } },
                                 React.createElement("div", { className: "gj-row" },
                                     React.createElement("div", null,
-                                        React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5 } }, cli === null || cli === void 0 ? void 0 : cli.nombre),
+                                        React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5 } },
+                                            cli === null || cli === void 0 ? void 0 : cli.nombre,
+                                            (cli === null || cli === void 0 ? void 0 : cli.referenciaObra) ? ` — ${cli.referenciaObra}` : ""),
                                         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", display: "flex", alignItems: "center", gap: 4 } }, cli === null || cli === void 0 ? void 0 :
                                             cli.direccion,
                                             React.createElement("a", { href: mapsLink(cli === null || cli === void 0 ? void 0 : cli.direccion), target: "_blank", rel: "noreferrer", title: "C\u00F3mo llegar" },
@@ -20022,6 +20027,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     const [telefono, setTelefono] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.telefono) || (datosClienteIniciales === null || datosClienteIniciales === void 0 ? void 0 : datosClienteIniciales.telefono) || "");
     const [email, setEmail] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.email) || (datosClienteIniciales === null || datosClienteIniciales === void 0 ? void 0 : datosClienteIniciales.email) || "");
     const [dniCliente, setDniCliente] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.dni) || (datosClienteIniciales === null || datosClienteIniciales === void 0 ? void 0 : datosClienteIniciales.dni) || "");
+    const [referenciaObra, setReferenciaObra] = useState((presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.referenciaObra) || "");
+    const [avisoClienteConObra, setAvisoClienteConObra] = useState(null);
     const [avisoDuplicado, setAvisoDuplicado] = useState(null);
     const clientesOrdenadosO = data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
     const rellenarDesdeClienteO = (clienteId) => {
@@ -20033,6 +20040,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         setTelefono(c.telefono || "");
         setEmail(c.email || "");
         setDniCliente(c.dni || "");
+        setReferenciaObra("");
+        setAvisoClienteConObra(c.esObra ? (c.referenciaObra ? `${c.direccion || "sin dirección"} — "${c.referenciaObra}"` : (c.direccion || "sin dirección")) : null);
     };
     const comprobarDuplicado = () => {
         if (presupuestoEditar || datosClienteIniciales)
@@ -20314,7 +20323,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             }
         }
         onGuardar({
-            nombre, direccion, telefono, email, fecha, dniCliente,
+            nombre, direccion, telefono, email, fecha, dniCliente, referenciaObra,
             partidas: lineasCalculadas,
             total: totalObra,
             setosObra, precioPodaSeto, cespedArtLineas,
@@ -20326,6 +20335,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             setDireccion("");
             setTelefono("");
             setEmail("");
+            setReferenciaObra("");
+            setAvisoClienteConObra(null);
             setCantidades({});
             setEspeciales([]);
             setRiegoLineas([]);
@@ -20346,9 +20357,17 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                 React.createElement("select", { className: "gj-select", value: "", onChange: e => rellenarDesdeClienteO(e.target.value) },
                     React.createElement("option", { value: "" }, "-- Cliente nuevo / escribir a mano --"),
                     clientesOrdenadosO.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre)))),
+            avisoClienteConObra && (React.createElement("div", { className: "gj-card", style: { background: "var(--pend-bg)", marginBottom: 8 } },
+                React.createElement("div", { style: { fontSize: 12.5 } },
+                    "\u26A0\uFE0F Este cliente ya tiene otra obra registrada en: ",
+                    avisoClienteConObra,
+                    ". Si esta es una ubicaci\u00F3n distinta, cambia la direcci\u00F3n de abajo y ponle una referencia para diferenciarla \u2014 al aprobar, cuando se pregunte si es el mismo cliente, elige \"No, son distintos\"."))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
                 React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), onBlur: comprobarDuplicado, placeholder: "Nombre del cliente" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Referencia de esta obra (opcional \u2014 para diferenciarla si el cliente tiene varias)"),
+                React.createElement("input", { className: "gj-input", value: referenciaObra, onChange: e => setReferenciaObra(e.target.value), placeholder: "Ej: Chalet Sierra, Finca Norte, Piso 2\u00BA..." })),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
                 React.createElement("input", { className: "gj-input", value: direccion, onChange: e => setDireccion(e.target.value), onBlur: comprobarDuplicado })),
@@ -21168,6 +21187,9 @@ function TrabajosView({ data, persist, adminRole }) {
                                 React.createElement(ArrowDown, { size: 12 }))))),
                         React.createElement("td", { style: { fontWeight: 600 } },
                             o.nombre,
+                            o.referenciaObra && React.createElement("div", { style: { fontSize: 11, fontWeight: 400, color: "var(--ink-soft)" } },
+                                "\uD83D\uDCCD ",
+                                o.referenciaObra),
                             lineasMateriales.length > 0 && (React.createElement("div", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10.5, marginTop: 2 }, onClick: () => setMaterialesAbiertos(materialesAbiertos === o.id ? null : o.id) },
                                 "\uD83D\uDCE6 Materiales (",
                                 lineasMateriales.length,
