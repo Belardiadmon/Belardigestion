@@ -13342,10 +13342,21 @@ function desplazamientoHorasOrden(o, workerId) {
     // tiempo, por orden real de fichaje \u2014 as\u00ED, el rato entre terminar de comer y llegar al siguiente
     // mantenimiento tambi\u00E9n cuenta como desplazamiento. Se resta el solape con el almuerzo (v\u00EDa
     // duracionEntreHoras) para no contar dos veces ese tiempo. Huecos negativos o raros se ignoran.
-    const deStops = (o.stops || [])
-        .map(s => s.porTrabajador && s.porTrabajador[workerId])
-        .filter(f => f && f.estado === "completado" && f.horaInicio && f.horaFin)
-        .map(f => ({ horaInicio: f.horaInicio, horaFin: f.horaFin }));
+    const deStops = [];
+    (o.stops || []).forEach(s => {
+        const f = s.porTrabajador && s.porTrabajador[workerId];
+        if (!f)
+            return;
+        if (f.tramos && f.tramos.length > 0) {
+            f.tramos.forEach(t => {
+                if (t.horaInicio && t.horaFin)
+                    deStops.push({ horaInicio: t.horaInicio, horaFin: t.horaFin });
+            });
+        }
+        else if (f.estado === "completado" && f.horaInicio && f.horaFin) {
+            deStops.push({ horaInicio: f.horaInicio, horaFin: f.horaFin });
+        }
+    });
     const deExtra = (o.actividadesExtra || [])
         .filter(a => a.horaInicio && a.horaFin && (a.workerId === workerId || (!a.workerId && o.workerIds.length === 1 && o.workerIds.includes(workerId))))
         .map(a => ({ horaInicio: a.horaInicio, horaFin: a.horaFin }));
@@ -13363,9 +13374,16 @@ function desplazamientoHorasOrden(o, workerId) {
 }
 function duracionStopHorasTrabajador(s, workerId, o) {
     // Tiempo que ESE trabajador en concreto fichó en esta parada (puede ser distinto del de sus
-    // compañeros si la cuadrilla se separó). Si no fichó nada aquí, devuelve 0.
+    // compañeros si la cuadrilla se separó). Si tuvo que pausarla para ir a un almacén/repostaje y
+    // luego reanudarla, puede tener varios tramos: se suman todos los que ya estén cerrados. Los
+    // registros antiguos (sin tramos) siguen funcionando con su horaInicio/horaFin de siempre.
     const pt = s.porTrabajador && s.porTrabajador[workerId];
-    if (!pt || !pt.horaInicio || !pt.horaFin)
+    if (!pt)
+        return 0;
+    if (pt.tramos && pt.tramos.length > 0) {
+        return pt.tramos.reduce((total, t) => t.horaInicio && t.horaFin ? total + duracionEntreHoras(t.horaInicio, t.horaFin, o, workerId) : total, 0);
+    }
+    if (!pt.horaInicio || !pt.horaFin)
         return 0;
     return duracionEntreHoras(pt.horaInicio, pt.horaFin, o, workerId);
 }
@@ -14742,9 +14760,6 @@ function allStopsPendientesAviso(data) {
 }
 function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }) {
     const [printStop, setPrintStop] = useState(null); // { orderId, clienteId }
-    const [confirmarReset, setConfirmarReset] = useState(false);
-    const [resetPinValue, setResetPinValue] = useState("");
-    const [resetPinError, setResetPinError] = useState("");
     const stops = allStopsToday(data);
     const pendientes = stops.filter(s => s.stop.estado === "pendiente").length;
     const enProgreso = stops.filter(s => s.stop.estado === "en_progreso").length;
@@ -14784,21 +14799,6 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.noEnviarAviso = true;
         persist(next);
-    };
-    const resetAll = () => {
-        if (adminRole !== "admin1") {
-            return;
-        }
-        if (resetPinValue.trim() !== (data.settings.adminPin1 || "1111")) {
-            setResetPinError("PIN incorrecto.");
-            return;
-        }
-        if (!confirm("Esto borra TODOS los datos actuales (clientes, trabajadores, rutas, historial...) y los sustituye por los datos de ejemplo. Esta acción no se puede deshacer. ¿Seguro que quieres continuar?"))
-            return;
-        persist(seedData());
-        setConfirmarReset(false);
-        setResetPinValue("");
-        setResetPinError("");
     };
     if (printStop) {
         const order = data.orders.find(o => o.id === printStop.orderId);
@@ -14929,18 +14929,7 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                 React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6, fontSize: 12 }, onClick: () => noEnviarAviso(order.id, cliente.id) },
                     React.createElement(XCircle, { size: 13 }),
                     " No enviar aviso (quitar de esta lista sin avisar)")));
-        }),
-        adminRole === "admin1" && (React.createElement(React.Fragment, null,
-            React.createElement("hr", { className: "gj-divider" }),
-            !confirmarReset ? (React.createElement("button", { className: "gj-btn ghost", onClick: () => { setConfirmarReset(true); setResetPinValue(""); setResetPinError(""); } },
-                React.createElement(RotateCcw, { size: 13 }),
-                " Restablecer datos de ejemplo")) : (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
-                React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5, color: "var(--warn)" } }, "\u26A0\uFE0F Esto borra TODOS los datos reales (clientes, trabajadores, rutas, historial...). Introduce de nuevo el PIN de administrador 1 para confirmar:"),
-                React.createElement("input", { className: "gj-input", type: "password", inputMode: "numeric", style: { marginTop: 6 }, value: resetPinValue, onChange: e => setResetPinValue(e.target.value), placeholder: "PIN administrador 1" }),
-                resetPinError && React.createElement("div", { style: { color: "var(--warn)", fontSize: 12, marginTop: 4 } }, resetPinError),
-                React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
-                    React.createElement("button", { className: "gj-btn danger", onClick: resetAll }, "Confirmar borrado"),
-                    React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarReset(false) }, "Cancelar"))))))));
+        })));
 }
 function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
     const p = data.parametrosPresupuesto;
@@ -15133,7 +15122,7 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
             setEditing(c);
         setFocusClienteId(null);
     }, [focusClienteId]);
-    const blank = { id: "", nombre: "", direccion: "", zona: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
+    const blank = { id: "", nombre: "", direccion: "", zona: "", telefono: "", email: "", esMantenimiento: true, esObra: false, cuotaMensual: "", esSubcontratado: false, costeSubcontrataMensual: "", presupuesto: "", estadoObra: "en_curso", personasEstimadas: "", diasEstimados: "", fechaInicioPlan: "", orden: 0, activo: true };
     const save = (form) => {
         const next = structuredClone(data);
         const clean = {
@@ -15383,6 +15372,14 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
                 React.createElement("input", { className: "gj-input", type: "number", value: form.cuotaMensual, onChange: e => set("cuotaMensual", e.target.value), placeholder: "100" })),
             React.createElement("label", { className: "gj-row", style: { cursor: "pointer" } },
                 React.createElement("div", null,
+                    React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, "Lo lleva una subcontrata (aut\u00F3nomo externo)"),
+                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)" } }, "No se fichan horas de vuestro equipo; se conoce el coste que os cobra la subcontrata para calcular el beneficio.")),
+                React.createElement("input", { type: "checkbox", checked: !!form.esSubcontratado, onChange: e => set("esSubcontratado", e.target.checked) })),
+            form.esSubcontratado && (React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Coste mensual de la subcontrata (\u20AC)"),
+                React.createElement("input", { className: "gj-input", type: "number", value: form.costeSubcontrataMensual, onChange: e => set("costeSubcontrataMensual", e.target.value), placeholder: "80" }))),
+            React.createElement("label", { className: "gj-row", style: { cursor: "pointer" } },
+                React.createElement("div", null,
                     React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, "Requiere obligatoriamente m\u00E1s de un trabajador"),
                     React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)" } }, "Para jardines grandes o con tareas que no se pueden hacer en solitario.")),
                 React.createElement("input", { type: "checkbox", checked: !!form.requiereVariosTrabajadores, onChange: e => set("requiereVariosTrabajadores", e.target.checked) })))),
@@ -15401,6 +15398,24 @@ function CopiaSeguridadView({ data, persist, adminRole }) {
     const [pinReinicio, setPinReinicio] = useState("");
     const [pinReinicioError, setPinReinicioError] = useState("");
     const [resultadoReinicio, setResultadoReinicio] = useState(null);
+    const [confirmarReset, setConfirmarReset] = useState(false);
+    const [resetPinValue, setResetPinValue] = useState("");
+    const [resetPinError, setResetPinError] = useState("");
+    const resetAll = () => {
+        if (adminRole !== "admin1") {
+            return;
+        }
+        if (resetPinValue.trim() !== (data.settings.adminPin1 || "1111")) {
+            setResetPinError("PIN incorrecto.");
+            return;
+        }
+        if (!confirm("Esto borra TODOS los datos actuales (clientes, trabajadores, rutas, historial...) y los sustituye por los datos de ejemplo. Esta acción no se puede deshacer. ¿Seguro que quieres continuar?"))
+            return;
+        persist(seedData());
+        setConfirmarReset(false);
+        setResetPinValue("");
+        setResetPinError("");
+    };
     const ejecutarReinicioImplantacion = () => {
         if (pinReinicio.trim() !== (data.settings.adminPin1 || "1111")) {
             setPinReinicioError("PIN incorrecto.");
@@ -15536,7 +15551,19 @@ function CopiaSeguridadView({ data, persist, adminRole }) {
                 React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
                     React.createElement("button", { className: "gj-btn", style: { background: "var(--warn)", color: "#fff" }, onClick: ejecutarReinicioImplantacion }, "Confirmar reinicio"),
                     React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarReinicio(false) }, "Cancelar")))),
-            resultadoReinicio && React.createElement("div", { className: "gj-card", style: { marginTop: 10, background: "var(--good-bg, #eaf7ee)", fontSize: 12.5 } }, resultadoReinicio)))));
+            resultadoReinicio && React.createElement("div", { className: "gj-card", style: { marginTop: 10, background: "var(--good-bg, #eaf7ee)", fontSize: 12.5 } }, resultadoReinicio))),
+        adminRole === "admin1" && (React.createElement("div", { className: "gj-card", style: { marginTop: 16, borderColor: "var(--warn)" } },
+            React.createElement("div", { className: "gj-h3" }, "Restablecer datos de ejemplo"),
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "\u26A0\uFE0F Extremadamente peligroso: borra TODOS los datos reales de la empresa (clientes, obras, presupuestos, rutas, historial completo...) y los sustituye por datos ficticios de ejemplo. No tiene nada que ver con el Reinicio de implantaci\u00F3n de arriba. Con datos reales en marcha, esto no deber\u00EDa usarse nunca salvo caso muy excepcional."),
+            !confirmarReset ? (React.createElement("button", { className: "gj-btn ghost", onClick: () => { setConfirmarReset(true); setResetPinValue(""); setResetPinError(""); } },
+                React.createElement(RotateCcw, { size: 13 }),
+                " Restablecer datos de ejemplo")) : (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5, color: "var(--warn)" } }, "\u26A0\uFE0F Esto borra TODOS los datos reales (clientes, trabajadores, rutas, historial...). Introduce de nuevo el PIN de administrador 1 para confirmar:"),
+                React.createElement("input", { className: "gj-input", type: "password", inputMode: "numeric", style: { marginTop: 6 }, value: resetPinValue, onChange: e => setResetPinValue(e.target.value), placeholder: "PIN administrador 1" }),
+                resetPinError && React.createElement("div", { style: { color: "var(--warn)", fontSize: 12, marginTop: 4 } }, resetPinError),
+                React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
+                    React.createElement("button", { className: "gj-btn danger", onClick: resetAll }, "Confirmar borrado"),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => setConfirmarReset(false) }, "Cancelar"))))))));
 }
 function SincronizacionView({ data, persist }) {
     const [estado, setEstado] = useState({ estado: "local", ultimoError: null, ultimaSync: null });
@@ -15924,6 +15951,9 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
             resultado: horaFin ? (actual.resultado || "hecho") : actual.resultado,
             horaInicio,
             horaFin,
+            // La corrección manual sustituye cualquier pausa/reanudación anterior por un único tramo,
+            // con las horas que ha puesto el administrador.
+            tramos: horaInicio ? [{ horaInicio, coordInicio: actual.coordInicio || null, horaFin, coordFin: actual.coordFin || null }] : [],
             validadoPorAdmin: true,
         };
         persist(next);
@@ -16158,10 +16188,13 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                 return null;
                             const fkey = o.id + s.clienteId + wid;
                             let txt = "sin empezar";
-                            if (ficha && ficha.estado === "en_progreso")
-                                txt = `en curso desde ${ficha.horaInicio}`;
+                            if (ficha && ficha.estado === "en_progreso") {
+                                const ultimoT = ficha.tramos && ficha.tramos.length > 0 ? ficha.tramos[ficha.tramos.length - 1] : null;
+                                const pausado = ultimoT && ultimoT.horaFin;
+                                txt = pausado ? `en pausa (desde ${ficha.horaInicio}, ${ficha.tramos.length} tramo${ficha.tramos.length > 1 ? "s" : ""})` : `en curso desde ${ficha.horaInicio}`;
+                            }
                             else if (ficha && ficha.estado === "completado")
-                                txt = `${ficha.resultado === "no_hecho" ? "no hecho" : "hecho"} ${ficha.horaInicio || "?"}\u2013${ficha.horaFin}`;
+                                txt = `${ficha.resultado === "no_hecho" ? "no hecho" : "hecho"} ${ficha.horaInicio || "?"}\u2013${ficha.horaFin}${ficha.tramos && ficha.tramos.length > 1 ? ` (${ficha.tramos.length} tramos)` : ""}`;
                             if (editingFichaje === fkey) {
                                 return (React.createElement("div", { key: wid, style: { display: "flex", gap: 4, alignItems: "center", marginBottom: 3, flexWrap: "wrap" } },
                                     React.createElement("span", { style: { fontWeight: 600 } }, w.nombre, ":"),
@@ -16317,6 +16350,18 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         order.actividadesExtra = order.actividadesExtra || [];
         const nombreTrabajador = worker ? worker.nombre : "";
         const horaAhora = nowTime();
+        // Si este trabajador tenía un mantenimiento en curso con un tramo abierto, se pausa (se le
+        // cierra ese tramo) al empezar esta otra labor. Al volver, "Reanudar" abre un tramo nuevo, así
+        // el tiempo del almacén/repostaje queda fuera del mantenimiento y se cuenta como desplazamiento.
+        (order.stops || []).forEach(s => {
+            const mia = s.porTrabajador && s.porTrabajador[workerId];
+            if (mia && mia.estado === "en_progreso" && mia.tramos && mia.tramos.length > 0) {
+                const ultimo = mia.tramos[mia.tramos.length - 1];
+                if (!ultimo.horaFin) {
+                    ultimo.horaFin = horaAhora;
+                }
+            }
+        });
         order.porTrabajadorJornada = order.porTrabajadorJornada || {};
         if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
             order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: horaAhora };
@@ -16527,7 +16572,20 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const cliente = next.clients.find(c => c.id === clienteId);
         const aviso = avisoUbicacionCliente(coord, cliente);
         stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "completado", resultado: "no_hecho", horaFin: hora, coordFin: coord, notaTrabajador: notaTexto, avisoUbicacionFin: aviso };
+        const miFichaNo = { ...(stop.porTrabajador[workerId] || {}) };
+        miFichaNo.tramos = miFichaNo.tramos || [];
+        const ultimoTramoN = miFichaNo.tramos[miFichaNo.tramos.length - 1];
+        if (ultimoTramoN && !ultimoTramoN.horaFin) {
+            ultimoTramoN.horaFin = hora;
+            ultimoTramoN.coordFin = coord;
+        }
+        miFichaNo.estado = "completado";
+        miFichaNo.resultado = "no_hecho";
+        miFichaNo.horaFin = hora;
+        miFichaNo.coordFin = coord;
+        miFichaNo.notaTrabajador = notaTexto;
+        miFichaNo.avisoUbicacionFin = aviso;
+        stop.porTrabajador[workerId] = miFichaNo;
         // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
         // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
         if (!stop.horaFin || hora > stop.horaFin) {
@@ -16579,7 +16637,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const cliente = next.clients.find(c => c.id === clienteId);
         const aviso = avisoUbicacionCliente(coord, cliente);
         stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso };
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
         if (stop.estado === "pendiente") {
             stop.estado = "en_progreso";
             stop.horaInicio = hora;
@@ -16605,13 +16663,26 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const cliente = next.clients.find(c => c.id === clienteId);
         const aviso = avisoUbicacionCliente(coord, cliente);
         stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso };
+        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
         if (stop.estado === "pendiente") {
             stop.estado = "en_progreso";
             stop.horaInicio = hora;
             stop.coordInicio = coord;
             stop.avisoUbicacionInicio = aviso;
         }
+        persist(next);
+    };
+    const reanudarParada = async (orderId, clienteId) => {
+        const coord = await getPosicionActual();
+        const hora = nowTime();
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.porTrabajador = stop.porTrabajador || {};
+        const mia = stop.porTrabajador[workerId] || { estado: "en_progreso", tramos: [] };
+        mia.tramos = [...(mia.tramos || []), { horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }];
+        mia.estado = "en_progreso";
+        stop.porTrabajador[workerId] = mia;
         persist(next);
     };
     const marcarHecho = async (orderId, clienteId) => {
@@ -16623,7 +16694,19 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         const cliente = next.clients.find(c => c.id === clienteId);
         const aviso = avisoUbicacionCliente(coord, cliente);
         stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "completado", resultado: "hecho", horaFin: hora, coordFin: coord, avisoUbicacionFin: aviso };
+        const miFichaHecho = { ...(stop.porTrabajador[workerId] || {}) };
+        miFichaHecho.tramos = miFichaHecho.tramos || [];
+        const ultimoTramoH = miFichaHecho.tramos[miFichaHecho.tramos.length - 1];
+        if (ultimoTramoH && !ultimoTramoH.horaFin) {
+            ultimoTramoH.horaFin = hora;
+            ultimoTramoH.coordFin = coord;
+        }
+        miFichaHecho.estado = "completado";
+        miFichaHecho.resultado = "hecho";
+        miFichaHecho.horaFin = hora;
+        miFichaHecho.coordFin = coord;
+        miFichaHecho.avisoUbicacionFin = aviso;
+        stop.porTrabajador[workerId] = miFichaHecho;
         // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
         // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
         if (!stop.horaFin || hora > stop.horaFin) {
@@ -16704,6 +16787,10 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 var _a, _b;
                 const miTrabajoPendiente = o.stops.some(s => { var _c; const f = (_c = s.porTrabajador) === null || _c === void 0 ? void 0 : _c[workerId]; return f && f.estado === "en_progreso"; });
                 const meFaltaFicharAlgo = o.stops.some(s => { var _c; return s.estado === "completado" && !((_c = s.porTrabajador) === null || _c === void 0 ? void 0 : _c[workerId]); });
+                const miAlmuerzoAbierto = (() => {
+                    const alm = o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[workerId];
+                    return !!(alm && alm.inicio && !alm.fin);
+                })();
                 const miJornada = (o.porTrabajadorJornada && o.porTrabajadorJornada[workerId]) || null;
                 const excesoHoras = minutosTotalesOrden(o) > 490;
                 return (React.createElement("div", { className: "gj-card", key: o.id },
@@ -16899,13 +16986,24 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                     miEstado === "pendiente" && (React.createElement("button", { className: "gj-btn accent", onClick: () => idxStop === 0 ? iniciarPrimeraParada(o.id, s.clienteId) : iniciarParada(o.id, s.clienteId) },
                                         React.createElement(Play, { size: 13 }),
                                         s.estado === "completado" ? " Fichar mi paso por aqu\u00ED" : " Iniciar")),
-                                    miEstado === "en_progreso" && notaAbierta !== key && (React.createElement("div", { style: { display: "flex", gap: 6 } },
-                                        React.createElement("button", { className: "gj-btn primary", onClick: () => marcarHecho(o.id, s.clienteId) },
-                                            React.createElement(CheckCircle2, { size: 13 }),
-                                            " Hecho"),
-                                        React.createElement("button", { className: "gj-btn danger", onClick: () => { setNotaAbierta(key); setNotaTexto(""); } },
-                                            React.createElement(XCircle, { size: 13 }),
-                                            " No hecho"))),
+                                    (() => {
+                                        const ultimoTramo = (miFicha === null || miFicha === void 0 ? void 0 : miFicha.tramos) && miFicha.tramos.length > 0 ? miFicha.tramos[miFicha.tramos.length - 1] : null;
+                                        const miPausado = miEstado === "en_progreso" && ultimoTramo && ultimoTramo.horaFin;
+                                        if (miEstado !== "en_progreso" || notaAbierta === key)
+                                            return null;
+                                        return React.createElement(React.Fragment, null,
+                                            miPausado && React.createElement("div", { style: { fontSize: 11.5, color: "var(--accent)", marginBottom: 4 } }, "\u23F8\uFE0F En pausa (te fuiste a otra labor) \u2014 pulsa \"Reanudar\" al volver, o \"Hecho\" si ya has terminado."),
+                                            React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                                                miPausado && React.createElement("button", { className: "gj-btn accent", onClick: () => reanudarParada(o.id, s.clienteId) },
+                                                    React.createElement(Play, { size: 13 }),
+                                                    " Reanudar"),
+                                                React.createElement("button", { className: "gj-btn primary", onClick: () => marcarHecho(o.id, s.clienteId) },
+                                                    React.createElement(CheckCircle2, { size: 13 }),
+                                                    " Hecho"),
+                                                React.createElement("button", { className: "gj-btn danger", onClick: () => { setNotaAbierta(key); setNotaTexto(""); } },
+                                                    React.createElement(XCircle, { size: 13 }),
+                                                    " No hecho")));
+                                    })(),
                                     miEstado === "completado" && (miFicha === null || miFicha === void 0 ? void 0 : miFicha.resultado) !== "no_hecho" && React.createElement(CheckCircle2, { size: 16, color: "var(--good)" }),
                                     (miFicha === null || miFicha === void 0 ? void 0 : miFicha.resultado) === "no_hecho" && React.createElement(AlertTriangle, { size: 16, color: "var(--warn)" })),
                                 miEstado === "pendiente" && s.estado === "completado" && (React.createElement("div", { style: { fontSize: 11, color: "var(--warn)", marginTop: 2 } }, "\u26A0\uFE0F El equipo ya lo ha marcado como hecho, pero t\u00FA todav\u00EDa no has fichado tu paso por aqu\u00ED. Debes hacerlo para poder finalizar tu jornada.")),
@@ -17045,8 +17143,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                             "Salida: ",
                             miJornada.salidaHora))))),
                     (miJornada === null || miJornada === void 0 ? void 0 : miJornada.salidaHora) ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Tu jornada ha finalizado \u2713")) : (React.createElement(React.Fragment, null,
-                        (miTrabajoPendiente || meFaltaFicharAlgo) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 8 } }, meFaltaFicharAlgo ? "\u26A0\uFE0F Tienes mantenimientos que el equipo ya dio por hechos pero que t\u00FA todav\u00EDa no has fichado. Debes fichar tu paso por ellos antes de finalizar." : "\u26A0\uFE0F Termina o marca como no hecho el mantenimiento que tienes en curso antes de finalizar.")),
-                        React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: miTrabajoPendiente || meFaltaFicharAlgo, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada")))));
+                        (miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 8 } }, miAlmuerzoAbierto ? "\u26A0\uFE0F Todav\u00EDa tienes el almuerzo sin cerrar. Pulsa \"Terminar almuerzo\" antes de finalizar, para que quede registrado el tiempo real." : meFaltaFicharAlgo ? "\u26A0\uFE0F Tienes mantenimientos que el equipo ya dio por hechos pero que t\u00FA todav\u00EDa no has fichado. Debes fichar tu paso por ellos antes de finalizar." : "\u26A0\uFE0F Termina o marca como no hecho el mantenimiento que tienes en curso antes de finalizar.")),
+                        React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada")))));
             })))));
 }
 function MaquinariaEnTalleresView({ data }) {
@@ -22019,7 +22117,9 @@ function RentabilidadView({ data, persist }) {
             });
         });
         const cuotaAnual = c.cuotaMensual * 12 * (diasPeriodo / diasAnioRef);
-        const costeAnual = horasPersona * (Number(costeHora) || 0);
+        const costeAnual = c.esSubcontratado
+            ? (Number(c.costeSubcontrataMensual) || 0) * 12 * (diasPeriodo / diasAnioRef)
+            : horasPersona * (Number(costeHora) || 0);
         const beneficio = cuotaAnual - costeAnual;
         const margen = cuotaAnual > 0 ? (beneficio / cuotaAnual) * 100 : 0;
         return { c, horasPersona, cuotaAnual, costeAnual, beneficio, margen };
@@ -22180,7 +22280,9 @@ function RentabilidadView({ data, persist }) {
                         React.createElement("th", null, "Beneficio"),
                         React.createElement("th", null, "Margen"))),
                 React.createElement("tbody", null, filas.map(f => (React.createElement("tr", { key: f.c.id },
-                    React.createElement("td", { style: { fontWeight: 600 } }, f.c.nombre),
+                    React.createElement("td", { style: { fontWeight: 600 } },
+                        f.c.nombre,
+                        f.c.esSubcontratado && React.createElement("div", { style: { fontSize: 10.5, fontWeight: 400, color: "var(--ink-soft)" } }, "Subcontrata")),
                     React.createElement("td", null, fmtHM(f.horasPersona)),
                     React.createElement("td", null, eur(f.cuotaAnual)),
                     React.createElement("td", null, eur(f.costeAnual)),
