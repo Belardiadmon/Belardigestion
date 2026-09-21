@@ -16712,11 +16712,25 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                     excesoHoras && o.horasAprobadas && (React.createElement("div", { style: { background: "var(--good-bg)", color: "var(--good)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u2714 Jornada larga aprobada por el administrador")),
                     React.createElement("div", { className: "gj-grid2", style: { marginBottom: 10 } },
                         React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                            React.createElement("label", { className: "gj-label" }, "Tiempo de carga y descarga (min)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: o.tiempoCargaMin || 0, onChange: e => updateTiempoOrden(o.id, "tiempoCargaMin", e.target.value) })),
+                            React.createElement("label", { className: "gj-label" }, "Tiempo de carga hoy"),
+                            React.createElement("div", { style: { fontSize: 18, fontWeight: 700, padding: "6px 0" } }, fmtHM((o.actividadesExtra || []).filter(a => a.categoria === "carga" && a.workerId === workerId && a.horaInicio && a.horaFin).reduce((sum, a) => sum + duracionActividadHoras(a, o), 0))),
+                            React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, "Suma sola de tus fichajes de \"Carga en nave\" de hoy.")),
                         React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                            React.createElement("label", { className: "gj-label" }, "Tiempo de almuerzo (min)"),
-                            React.createElement("input", { className: "gj-input", type: "number", value: (_a = o.tiempoAlmuerzoMin) !== null && _a !== void 0 ? _a : (data.settings.almuerzoEstandarMin || 15), onChange: e => updateTiempoOrden(o.id, "tiempoAlmuerzoMin", e.target.value) }))),
+                            React.createElement("label", { className: "gj-label" }, "Tiempo de almuerzo"),
+                            React.createElement("div", { style: { fontSize: 18, fontWeight: 700, padding: "6px 0" } }, (() => {
+                                const mio = o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[workerId];
+                                const referencia = (_a = o.tiempoAlmuerzoMin) !== null && _a !== void 0 ? _a : (data.settings.almuerzoEstandarMin || 15);
+                                if (!mio || !mio.inicio)
+                                    return `${referencia} min`;
+                                if (mio.fin)
+                                    return fmtHM(diffHours(mio.inicio, mio.fin));
+                                return fmtHM(diffHours(mio.inicio, nowTime())) + " (en curso)";
+                            })()),
+                            React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, "Antes de fichar, se muestra el tiempo de referencia; en cuanto fiches tu almuerzo, pasa a mostrar tu tiempo real."),
+                            adminMode && (React.createElement("div", { style: { marginTop: 6 } },
+                                React.createElement("label", { className: "gj-label" }, "Cambiar el tiempo de referencia (min)"),
+                                React.createElement("input", { className: "gj-input", type: "number", value: (_b = o.tiempoAlmuerzoMin) !== null && _b !== void 0 ? _b : (data.settings.almuerzoEstandarMin || 15), onChange: e => updateTiempoOrden(o.id, "tiempoAlmuerzoMin", e.target.value) }),
+                                React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, "Solo administradores. Tambi\u00E9n se usa como respaldo si alg\u00FAn d\u00eda no se llega a fichar el almuerzo real."))))),
                     React.createElement("div", { style: { marginBottom: 10, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
                         React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 } }, "Tu almuerzo"),
                         (() => {
@@ -21873,6 +21887,25 @@ function RentabilidadView({ data, persist }) {
     const [horasAnualesBase, setHorasAnualesBase] = useState(data.settings.horasAnualesBase || 1700);
     const [naveLat, setNaveLat] = useState(data.settings.naveLat || null);
     const [horaMinimaEntrada, setHoraMinimaEntrada] = useState(data.settings.horaMinimaEntrada || "07:45");
+    const [nuevaOpcionLista, setNuevaOpcionLista] = useState({ repostaje: "", talleres: "", almacenes: "" });
+    const añadirOpcionListaDesdeRentabilidad = (categoria) => {
+        const valor = (nuevaOpcionLista[categoria] || "").trim();
+        if (!valor)
+            return;
+        const next = structuredClone(data);
+        next.listasFichaje = next.listasFichaje || {};
+        next.listasFichaje[categoria] = [...(next.listasFichaje[categoria] || []), valor];
+        persist(next);
+        setNuevaOpcionLista({ ...nuevaOpcionLista, [categoria]: "" });
+    };
+    const quitarOpcionLista = (categoria, opcion) => {
+        if (!confirm(`¿Quitar "${opcion}" de la lista? (no afecta a lo ya fichado, solo a lo que se pueda elegir a partir de ahora)`))
+            return;
+        const next = structuredClone(data);
+        next.listasFichaje = next.listasFichaje || {};
+        next.listasFichaje[categoria] = (next.listasFichaje[categoria] || []).filter(o => o !== opcion);
+        persist(next);
+    };
     const guardarHoraMinima = () => {
         const next = structuredClone(data);
         next.settings.horaMinimaEntrada = horaMinimaEntrada;
@@ -22059,6 +22092,17 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("input", { className: "gj-input", type: "time", value: horaMinimaEntrada, onChange: e => setHoraMinimaEntrada(e.target.value) }),
                     React.createElement("button", { className: "gj-btn", onClick: guardarHoraMinima }, "Guardar")),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, "Si un trabajador ficha su primera entrada del d\u00EDa antes de esta hora, el tiempo de antes no cuenta como horas trabajadas \u2014 salvo que le actives una excepci\u00F3n ese d\u00eda en Rutas.")),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Listas de Fichar: repostaje, talleres y almacenes"),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "Las opciones que aparecen para elegir al fichar carga/repostaje/taller/almac\u00E9n. Tambi\u00E9n se pueden a\u00F1adir sobre la marcha desde la propia pantalla de Fichar."),
+                [["repostaje", "Repostaje"], ["talleres", "Talleres"], ["almacenes", "Almacenes"]].map(([cat, etiqueta]) => (React.createElement("div", { key: cat, style: { marginBottom: 10 } },
+                    React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600, marginBottom: 4 } }, etiqueta),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 6 } }, ((data.listasFichaje || {})[cat] || []).map(op => (React.createElement("span", { key: op, className: "gj-chip" },
+                        op,
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, marginLeft: 4 }, onClick: () => quitarOpcionLista(cat, op) }, "\u2715"))))),
+                    React.createElement("div", { style: { display: "flex", gap: 6 } },
+                        React.createElement("input", { className: "gj-input", value: nuevaOpcionLista[cat], onChange: e => setNuevaOpcionLista({ ...nuevaOpcionLista, [cat]: e.target.value }), placeholder: `A\u00F1adir a ${etiqueta.toLowerCase()}...` }),
+                        React.createElement("button", { className: "gj-btn", onClick: () => añadirOpcionListaDesdeRentabilidad(cat) }, "A\u00F1adir")))))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Ubicaci\u00F3n de la nave/almac\u00E9n"),
                 (naveLat && naveLng) ? (React.createElement("div", { style: { fontSize: 12.5, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" } },
