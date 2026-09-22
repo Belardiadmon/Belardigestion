@@ -16032,6 +16032,26 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), [campo]: valor };
         persist(next);
     };
+    const [fotoGrandeRutas, setFotoGrandeRutas] = useState(null);
+    const quitarFotoStopAdmin = (orderId, clienteId, campo, idx) => {
+        if (!confirm("¿Eliminar esta foto? No se puede deshacer."))
+            return;
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop[campo] = (stop[campo] || []).filter((_, i) => i !== idx);
+        persist(next);
+    };
+    const quitarFotoAlbaranAdmin = (orderId, actividadId) => {
+        if (!confirm("¿Eliminar esta foto de albarán? No se puede deshacer."))
+            return;
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+        if (act)
+            act.fotoAlbaran = null;
+        persist(next);
+    };
     const cambiarVehiculo = (orderId, vehiculo) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -16219,6 +16239,12 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             "\u2713 Parte avisado al cliente",
                             s.notificadoCanal ? ` por ${s.notificadoCanal}` : "",
                             s.notificadoHora ? ` a las ${s.notificadoHora}` : "")),
+                        adminMode && ((s.fotosAntes || []).length > 0 || (s.fotosDespues || []).length > 0) && (React.createElement("div", { style: { marginTop: 4 } },
+                            [["fotosAntes", "Antes"], ["fotosDespues", "Despu\u00E9s"]].map(([campo, etiqueta]) => (s[campo] || []).length > 0 && React.createElement("div", { key: campo, style: { marginBottom: 4 } },
+                                React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, etiqueta, ":"),
+                                React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } }, s[campo].map((f, i) => React.createElement("div", { key: i, style: { position: "relative" } },
+                                    React.createElement("img", { src: f.dataUrl, alt: "", style: { width: 40, height: 40, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)", cursor: "pointer" }, onClick: () => setFotoGrandeRutas(f.dataUrl) }),
+                                    React.createElement("button", { onClick: () => quitarFotoStopAdmin(o.id, s.clienteId, campo, i), style: { position: "absolute", top: -5, right: -5, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 16, height: 16, fontSize: 10, lineHeight: 1 } }, "\u00D7")))))))),
                         (() => {
                             const pendCliente = (data.pendientes || []).filter(p => p.clienteId === s.clienteId && !p.resuelto);
                             return pendCliente.length > 0 && (React.createElement("div", { style: { marginTop: 4, padding: 6, background: "var(--pend-bg)", borderRadius: 3 } },
@@ -16248,7 +16274,9 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                         " Enviar a ", w === null || w === void 0 ? void 0 :
                         w.nombre));
                 })))));
-        })));
+        })),
+        fotoGrandeRutas && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrandeRutas(null) },
+            React.createElement("img", { src: fotoGrandeRutas, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })));
 }
 function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, reasignarDispositivo, adminMode, requestUnlock }) {
     const workerId = (deviceWorkerId && deviceWorkerId !== "__admin__") ? deviceWorkerId : "";
@@ -21219,6 +21247,16 @@ function TrabajosView({ data, persist, adminRole }) {
         a.materialesImputados = (a.materialesImputados || []).filter(x => x.id !== lineaId);
         persist(next);
     };
+    const quitarFotoAlbaran = (orderId, actividadId) => {
+        if (!confirm("¿Borrar solo la foto del albarán? Los materiales imputados de esta obra NO se tocan, se quedan igual."))
+            return;
+        const next = structuredClone(data);
+        const o = next.orders.find(x => x.id === orderId);
+        const a = (o.actividadesExtra || []).find(x => x.id === actividadId);
+        if (a)
+            a.fotoAlbaran = null;
+        persist(next);
+    };
     const actualizarCampo = (id, campo, valor) => {
         const next = structuredClone(data);
         const c = next.clients.find(x => x.id === id);
@@ -21334,6 +21372,7 @@ function TrabajosView({ data, persist, adminRole }) {
                                     " en ",
                                     m.lugar),
                                 m.fotoAlbaran && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => setFotoGrande(m.fotoAlbaran) }, "Ver albar\u00E1n"),
+                                m.fotoAlbaran && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => quitarFotoAlbaran(m.orderId, m.actividadId) }, "Borrar foto"),
                                 React.createElement("button", { className: "gj-btn" + (m.bloqueado ? " primary" : " ghost"), style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => editarMaterial(m.orderId, m.actividadId, m.id, "bloqueado", !m.bloqueado) }, m.bloqueado ? "Bloqueado" : "Editable"),
                                 !m.bloqueado && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, onClick: () => eliminarLineaMaterial(m.orderId, m.actividadId, m.id) }, "Quitar"))))))) : null;
                     const filaConfirmacion = confirmarEliminarId === o.id ? React.createElement("tr", null, React.createElement("td", { colSpan: 7 },
