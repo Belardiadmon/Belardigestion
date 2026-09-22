@@ -16315,7 +16315,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             React.createElement("div", { style: { fontSize: 13, color: "var(--ink-soft)" } }, "Tu acceso a esta aplicaci\u00F3n ha sido desactivado. Si crees que es un error, contacta con la empresa.")));
     }
     const today = todayStr();
-    const misOrdenes = data.orders.filter(o => o.fecha === today && o.workerIds.includes(workerId));
+    const misOrdenes = adminMode
+        ? data.orders.filter(o => o.fecha === today)
+        : data.orders.filter(o => o.fecha === today && o.workerIds.includes(workerId));
     const updateStop = (orderId, clienteId, patch) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -20219,7 +20221,8 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         setFotosPartidas(f => ({ ...f, [key]: [...(f[key] || []), dataUrl] }));
     };
     const quitarFotoPartida = (key, idx) => setFotosPartidas(f => ({ ...f, [key]: (f[key] || []).filter((_, i) => i !== idx) }));
-    const [seccionAbierta, setSeccionAbierta] = useState(null);
+    const [seccionesCerradas, setSeccionesCerradas] = useState({});
+    const toggleSeccion = (titulo) => setSeccionesCerradas(prev => ({ ...prev, [titulo]: !prev[titulo] }));
     const [nuevaPartidaNombre, setNuevaPartidaNombre] = useState("");
     const [nuevaPartidaUnidad, setNuevaPartidaUnidad] = useState("ud");
     const partidasPersonalizadas = data.partidasPersonalizadasObra || [];
@@ -20553,10 +20556,10 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                 eur(costeHoraEmpresa),
                 "/hora = ",
                 eur(costeDesplazamientoObra)))),
-        SECCIONES_OBRA.map(sec => (React.createElement("div", { className: "gj-card" + (seccionAbierta === sec.titulo ? "" : " gj-collapsed"), key: sec.titulo },
-            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => setSeccionAbierta(seccionAbierta === sec.titulo ? null : sec.titulo) },
+        SECCIONES_OBRA.map(sec => (React.createElement("div", { className: "gj-card" + (seccionesCerradas[sec.titulo] ? " gj-collapsed" : ""), key: sec.titulo },
+            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion(sec.titulo) },
                 sec.titulo,
-                React.createElement("span", { style: { fontSize: 12 } }, seccionAbierta === sec.titulo ? "\u25B2" : "\u25BC")),
+                React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas[sec.titulo] ? "\u25BC" : "\u25B2")),
             sec.claves.map(k => {
                 const info = preciosBase[k] || { label: k, unidad: "ud" };
                 const tieneCantidad = Number(cantidades[k]) > 0;
@@ -20693,10 +20696,10 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                 React.createElement("button", { className: "gj-btn ghost block", onClick: añadirMaterialVario },
                     React.createElement(Plus, { size: 14 }),
                     " A\u00F1adir material vario")))))),
-        React.createElement("div", { className: "gj-card" + (seccionAbierta === "Partidas especiales" ? "" : " gj-collapsed") },
-            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => setSeccionAbierta(seccionAbierta === "Partidas especiales" ? null : "Partidas especiales") },
+        React.createElement("div", { className: "gj-card" + (seccionesCerradas["Partidas especiales"] ? " gj-collapsed" : "") },
+            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Partidas especiales") },
                 "Partidas especiales (libres)",
-                React.createElement("span", { style: { fontSize: 12 } }, seccionAbierta === "Partidas especiales" ? "\u25B2" : "\u25BC")),
+                React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas["Partidas especiales"] ? "\u25BC" : "\u25B2")),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Para algo puntual de este presupuesto en concreto, con el texto que quieras. A diferencia de \"Otras partidas\", esto NO se queda guardado para presupuestos futuros \u2014 puedes a\u00F1adir tantas como necesites."),
             especiales.map(e => (React.createElement("div", { key: e.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
                 React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: e.desc, onChange: ev => actualizarEspecial(e.id, "desc", ev.target.value), placeholder: "Descripci\u00F3n" }),
@@ -20707,10 +20710,10 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
                 React.createElement(Plus, { size: 14 }),
                 " A\u00F1adir partida especial")),
-        React.createElement("div", { className: "gj-card" + (seccionAbierta === "Otras partidas" ? "" : " gj-collapsed") },
-            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => setSeccionAbierta(seccionAbierta === "Otras partidas" ? null : "Otras partidas") },
+        React.createElement("div", { className: "gj-card" + (seccionesCerradas["Otras partidas"] ? " gj-collapsed" : "") },
+            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Otras partidas") },
                 "Otras partidas",
-                React.createElement("span", { style: { fontSize: 12 } }, seccionAbierta === "Otras partidas" ? "\u25B2" : "\u25BC")),
+                React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas["Otras partidas"] ? "\u25BC" : "\u25B2")),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Partidas que hab\u00E9is ido a\u00F1adiendo vosotros al cat\u00E1logo. A diferencia de las \"partidas especiales\" de cada secci\u00F3n (que son solo para este presupuesto), lo que a\u00F1adas aqu\u00ED se queda guardado para poder usarlo tambi\u00E9n en presupuestos de obra futuros."),
             partidasPersonalizadas.map(k => {
                 const info = preciosBase[k] || { label: k, unidad: "ud" };
@@ -20749,10 +20752,10 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
             React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, disabled: !nuevaPartidaNombre.trim(), onClick: añadirPartidaCatalogo },
                 React.createElement(Plus, { size: 14 }),
                 " A\u00F1adir partida al cat\u00E1logo")),
-        React.createElement("div", { className: "gj-card" + (seccionAbierta === "Instalaci\u00F3n de riego" ? "" : " gj-collapsed") },
-            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => setSeccionAbierta(seccionAbierta === "Instalaci\u00F3n de riego" ? null : "Instalaci\u00F3n de riego") },
+        React.createElement("div", { className: "gj-card" + (seccionesCerradas["Instalaci\u00F3n de riego"] ? " gj-collapsed" : "") },
+            React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Instalaci\u00F3n de riego") },
                 "Instalaci\u00F3n de riego",
-                React.createElement("span", { style: { fontSize: 12 } }, seccionAbierta === "Instalaci\u00F3n de riego" ? "\u25B2" : "\u25BC")),
+                React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas["Instalaci\u00F3n de riego"] ? "\u25BC" : "\u25B2")),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } },
                 "Busca el art\u00EDculo por nombre y t\u00F3calo para a\u00F1adirlo a la lista. Hay ",
                 catalogoRiego.length,
@@ -22457,9 +22460,30 @@ function RentabilidadObrasView({ data, persist }) {
 }
 
 
-  document.getElementById("gj-loading").style.display = "none";
+class GjErrorBoundary extends React.Component {
+    constructor(props) {
+        super(props);
+        this.state = { error: null };
+    }
+    static getDerivedStateFromError(error) {
+        return { error };
+    }
+    componentDidCatch(error, info) {
+        gjShowError("Error al dibujar la pantalla: " + (error && error.message ? error.message : error) + (info && info.componentStack ? "\n" + info.componentStack.split("\n").slice(0, 4).join("\n") : ""));
+    }
+    render() {
+        if (this.state.error) {
+            return React.createElement("div", { style: { padding: 20, textAlign: "center" } },
+                React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Ha ocurrido un error al mostrar esta pantalla."),
+                React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 12 } }, "El aviso detallado deber\u00EDa haber aparecido arriba del todo. Puedes intentar volver a otra pesta\u00F1a, o recargar la app."),
+                React.createElement("button", { className: "gj-btn primary", onClick: () => this.setState({ error: null }) }, "Intentar de nuevo"));
+        }
+        return this.props.children;
+    }
+}
+document.getElementById("gj-loading").style.display = "none";
   const root = ReactDOM.createRoot(document.getElementById("root"));
-  root.render(React.createElement(App));
+  root.render(React.createElement(GjErrorBoundary, null, React.createElement(App)));
 }
 try { gjRunApp(); } catch (err) { gjShowError("Error al iniciar la aplicacion: " + (err && err.message ? err.message : err)); }
 </script>
