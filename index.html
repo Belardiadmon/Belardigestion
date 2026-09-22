@@ -20342,6 +20342,17 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     const añadirEspecial = () => setEspeciales(e => [...e, { id: uid("pe"), desc: "", cantidad: 1, precio: 0 }]);
     const actualizarEspecial = (id, campo, valor) => setEspeciales(e => e.map(x => x.id === id ? { ...x, [campo]: valor } : x));
     const quitarEspecial = (id) => setEspeciales(e => e.filter(x => x.id !== id));
+    const [especialDescDraft, setEspecialDescDraft] = useState("");
+    const [especialCantidadDraft, setEspecialCantidadDraft] = useState("1");
+    const [especialPrecioDraft, setEspecialPrecioDraft] = useState("");
+    const añadirEspecialDesdeDraft = () => {
+        if (!especialDescDraft.trim())
+            return;
+        setEspeciales(e => [...e, { id: uid("pe"), desc: especialDescDraft.trim(), cantidad: especialCantidadDraft || 1, precio: especialPrecioDraft || 0 }]);
+        setEspecialDescDraft("");
+        setEspecialCantidadDraft("1");
+        setEspecialPrecioDraft("");
+    };
     // Desplazamiento: tiempo por trayecto x (ida y vuelta) x nº de días de obra x nº de personas asignadas
     const horasDesplazamientoObraTotal = ((Number(tiempoDesplazamientoObraMin) || 0) / 60) * (idaYVueltaObra ? 2 : 1) * (Number(numeroDiasObra) || 0) * (Number(numeroPersonasObra) || 0);
     const costeDesplazamientoObra = horasDesplazamientoObraTotal * costeHoraEmpresa;
@@ -20701,15 +20712,20 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                 "Partidas especiales (libres)",
                 React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas["Partidas especiales"] ? "\u25BC" : "\u25B2")),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Para algo puntual de este presupuesto en concreto, con el texto que quieras. A diferencia de \"Otras partidas\", esto NO se queda guardado para presupuestos futuros \u2014 puedes a\u00F1adir tantas como necesites."),
+            React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 8 } },
+                React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: especialDescDraft, onChange: e => setEspecialDescDraft(e.target.value), placeholder: "Descripci\u00F3n de la partida" }),
+                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: especialCantidadDraft, onChange: e => setEspecialCantidadDraft(e.target.value), placeholder: "Cant." }),
+                React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: especialPrecioDraft, onChange: e => setEspecialPrecioDraft(e.target.value), placeholder: "Precio" })),
+            React.createElement("button", { className: "gj-btn block", style: { marginBottom: 10 }, disabled: !especialDescDraft.trim(), onClick: añadirEspecialDesdeDraft },
+                React.createElement(Plus, { size: 14 }),
+                " A\u00F1adir a la lista"),
+            especiales.length > 0 && React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "A\u00F1adidas a este presupuesto:"),
             especiales.map(e => (React.createElement("div", { key: e.id, className: "gj-row", style: { gap: 6, marginBottom: 6 } },
                 React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: e.desc, onChange: ev => actualizarEspecial(e.id, "desc", ev.target.value), placeholder: "Descripci\u00F3n" }),
                 React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", value: e.cantidad, onChange: ev => actualizarEspecial(e.id, "cantidad", ev.target.value), placeholder: "Cant." }),
                 React.createElement("input", { className: "gj-input", style: { flex: 1 }, type: "number", step: "0.01", value: e.precio || "", onChange: ev => actualizarEspecial(e.id, "precio", ev.target.value), placeholder: "Precio" }),
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarEspecial(e.id) },
-                    React.createElement(X, { size: 14 })))),
-            React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
-                React.createElement(Plus, { size: 14 }),
-                " A\u00F1adir partida especial"))),
+                    React.createElement(X, { size: 14 })))))),
         React.createElement("div", { className: "gj-card" + (seccionesCerradas["Otras partidas"] ? " gj-collapsed" : "") },
             React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Otras partidas") },
                 "Otras partidas",
