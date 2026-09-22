@@ -13785,6 +13785,10 @@ function seedData() {
             trat_fungicida_aliette: { label: "Tratamiento con fungicida Aliette", unidad: "m²", precio: 0 },
             trat_topos: { label: "Tratamiento contra topos", unidad: "ud", precio: 0 },
             trat_ratas_ratones: { label: "Tratamiento contra ratas y ratones", unidad: "ud", precio: 0 },
+            plantacion_flores_temporada_vivaces: { label: "Plantación de flores de temporada y vivaces", unidad: "ud", precio: 0 },
+            plantacion_arbustos: { label: "Plantación de arbustos", unidad: "ud", precio: 0 },
+            plantacion_arbolado: { label: "Plantación de arbolado", unidad: "ud", precio: 0 },
+            plantacion_ejemplares: { label: "Plantación de ejemplares", unidad: "ud", precio: 0 },
             contenedor_voluminosos_5m3: { label: "Contenedor voluminosos 5 m³", unidad: "ud", precio: 0 },
             contenedor_voluminosos_8m3: { label: "Contenedor voluminosos 8 m³", unidad: "ud", precio: 0 },
             contenedor_voluminosos_12m3: { label: "Contenedor voluminosos 12 m³", unidad: "ud", precio: 0 },
@@ -14723,7 +14727,7 @@ function ConsentView({ onAceptar, nombreEmpresa, logo, esTrabajador }) {
                 React.createElement("ul", { style: { paddingLeft: 18, margin: "8px 0" } },
                     React.createElement("li", null, "Tu nombre y tel\u00E9fono, para asignarte rutas y fichajes."),
                     esTrabajador && (React.createElement("li", null,
-                        React.createElement("b", null, "Ubicaci\u00F3n puntual"),
+                        "Ubicaci\u00F3n puntual",
                         ": solo en el instante en que pulses \"Iniciar\" en tu primera visita del d\u00EDa, \"Empezar almuerzo\", \"Terminar almuerzo\" y \"Finalizar jornada\", para comprobar el cumplimiento del horario y del lugar de trabajo. La app ",
                         React.createElement("b", null, "no"),
                         " realiza seguimiento continuo ni conoce tu ubicaci\u00F3n en ning\u00FAn otro momento.")),
@@ -16820,6 +16824,25 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             misOrdenes.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No tienes ninguna ruta asignada hoy."),
             misOrdenes.map(o => {
                 var _a, _b;
+                const perteneceAMi = o.workerIds.includes(workerId);
+                const nombresCuadrilla = o.workerIds.map(id => { var _c; return (_c = getWorker(id)) === null || _c === void 0 ? void 0 : _c.nombre; }).filter(Boolean).join(", ");
+                if (adminMode && !perteneceAMi) {
+                    return (React.createElement("div", { className: "gj-card", key: o.id, style: { background: "var(--pend-bg)" } },
+                        React.createElement("div", { className: "gj-h3", style: { marginBottom: 4 } }, "Ruta de: ",
+                            nombresCuadrilla || "(sin trabajadores asignados)"),
+                        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "No est\u00E1s en esta cuadrilla \u2014 se muestra solo para consulta. Los botones de fichar no aparecen aqu\u00ED para no fichar por error a tu nombre en el trabajo de otro compa\u00F1ero."),
+                        o.vehiculo && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 6 } }, "Veh\u00EDculo: ", o.vehiculo),
+                        o.stops.map((s, i) => {
+                            var _c;
+                            const cli = getClient(s.clienteId);
+                            return React.createElement("div", { key: s.clienteId, style: { fontSize: 12.5, padding: "4px 0", borderBottom: i < o.stops.length - 1 ? "1px solid var(--line-soft)" : "none", display: "flex", justifyContent: "space-between" } },
+                                React.createElement("span", null,
+                                    i + 1,
+                                    ". ",
+                                    (_c = cli === null || cli === void 0 ? void 0 : cli.nombre) !== null && _c !== void 0 ? _c : "?"),
+                                React.createElement("span", { className: "gj-badge " + (s.estado === "completado" ? (s.resultado === "no_hecho" ? "no_hecho" : "completado") : s.estado === "en_progreso" ? "en_progreso" : "pendiente") }, s.estado === "completado" ? (s.resultado === "no_hecho" ? "No hecho" : "Hecho") : s.estado === "en_progreso" ? "En curso" : "Pendiente"));
+                        })));
+                }
                 const miTrabajoPendiente = o.stops.some(s => { var _c; const f = (_c = s.porTrabajador) === null || _c === void 0 ? void 0 : _c[workerId]; return f && f.estado === "en_progreso"; });
                 const meFaltaFicharAlgo = o.stops.some(s => { var _c; return s.estado === "completado" && !((_c = s.porTrabajador) === null || _c === void 0 ? void 0 : _c[workerId]); });
                 const miAlmuerzoAbierto = (() => {
@@ -16830,6 +16853,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 const excesoHoras = minutosTotalesOrden(o) > 490;
                 return (React.createElement("div", { className: "gj-card", key: o.id },
                     React.createElement("div", { className: "gj-h3", style: { marginBottom: 10 } }, "Tu ruta de hoy"),
+                    adminMode && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Cuadrilla: ", nombresCuadrilla),
                     excesoHoras && !o.horasAprobadas && (React.createElement("div", { style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u23F3 Jornada superior a 8h10 \u2014 pendiente de aprobaci\u00F3n por el administrador")),
                     excesoHoras && o.horasAprobadas && (React.createElement("div", { style: { background: "var(--good-bg)", color: "var(--good)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u2714 Jornada larga aprobada por el administrador")),
                     React.createElement("div", { className: "gj-grid2", style: { marginBottom: 10 } },
@@ -18386,6 +18410,15 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
         { id: "solo_lateral", label: "Solo 1 lateral" },
         { id: "solo_altura", label: "Solo altura" },
     ];
+    const [laboresExtra, setLaboresExtra] = useState([]);
+    const [nuevaLaborExtra, setNuevaLaborExtra] = useState("");
+    const añadirLaborExtra = () => {
+        if (!nuevaLaborExtra.trim())
+            return;
+        setLaboresExtra(l => [...l, nuevaLaborExtra.trim()]);
+        setNuevaLaborExtra("");
+    };
+    const quitarLaborExtra = (idx) => setLaboresExtra(l => l.filter((_, i) => i !== idx));
     const construirLabores = () => {
         const lineas = [];
         if (Number(mlDesbrozado) > 0)
@@ -18416,7 +18449,7 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
             lineas.push("Perfilado de alcorques");
         if (lineas.length > 0)
             lineas.push("Limpieza de hojas en otoño e invierno de los parterres");
-        return lineas;
+        return [...lineas, ...laboresExtra];
     };
     const guardar = () => {
         if (!nombre.trim())
@@ -18444,6 +18477,7 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
         setEmail("");
         setDniCliente("");
         setAvisoDuplicado(null);
+        setLaboresExtra([]);
     };
     const comprobarDuplicado = () => {
         const encontrado = buscarClienteParecido(data.clients, { nombre, direccion, dni: dniCliente });
@@ -18860,6 +18894,16 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
                 React.createElement("div", null,
                     "Fitosanitario: ",
                     eur(costeFitosanitarioAnual))),
+            React.createElement("div", { className: "gj-card" },
+                React.createElement("div", { className: "gj-h3" }, "Labores adicionales (texto libre)"),
+                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, "Para incluir en este presupuesto alguna labor que no est\u00E9 ya contemplada arriba (por ejemplo, algo puntual de este jard\u00EDn en concreto). Aparecer\u00E1 en el listado de labores del presupuesto de mantenimiento."),
+                laboresExtra.map((l, i) => (React.createElement("div", { key: i, className: "gj-row", style: { gap: 6, marginBottom: 6, alignItems: "center" } },
+                    React.createElement("span", { style: { flex: 1, fontSize: 13 } }, l),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => quitarLaborExtra(i) },
+                        React.createElement(X, { size: 14 }))))),
+                React.createElement("div", { className: "gj-row", style: { gap: 6 } },
+                    React.createElement("input", { className: "gj-input", value: nuevaLaborExtra, onChange: e => setNuevaLaborExtra(e.target.value), placeholder: "Ej: Retirada de hojarasca de estanque" }),
+                    React.createElement("button", { className: "gj-btn", disabled: !nuevaLaborExtra.trim(), onClick: añadirLaborExtra }, "A\u00F1adir"))),
             React.createElement("div", { style: { textAlign: "center", marginTop: 10, padding: 12, background: "var(--primary)", borderRadius: 6 } },
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--primary-ink)", opacity: 0.8 } },
                     "Total anual: ",
@@ -19650,6 +19694,12 @@ const SECCIONES_OBRA = [
     {
         titulo: "Drenajes",
         claves: ["drenajes"],
+    },
+    {
+        titulo: "Plantaciones",
+        claves: [
+            "plantacion_flores_temporada_vivaces", "plantacion_arbustos", "plantacion_arbolado", "plantacion_ejemplares",
+        ],
     },
     {
         titulo: "Contenedores",
