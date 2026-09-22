@@ -20709,7 +20709,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                     React.createElement(X, { size: 14 })))),
             React.createElement("button", { className: "gj-btn ghost", onClick: añadirEspecial },
                 React.createElement(Plus, { size: 14 }),
-                " A\u00F1adir partida especial")),
+                " A\u00F1adir partida especial"))),
         React.createElement("div", { className: "gj-card" + (seccionesCerradas["Otras partidas"] ? " gj-collapsed" : "") },
             React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Otras partidas") },
                 "Otras partidas",
@@ -20788,7 +20788,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         React.createElement("button", { className: "gj-btn accent block", onClick: guardar, disabled: !nombre.trim() || lineasCalculadas.length === 0 },
             React.createElement(Plus, { size: 14 }),
             " ",
-            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra")))))));
+            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra"))))));
 }
 function SolicitudesVisitasView({ data, persist }) {
     const [nombreSol, setNombreSol] = useState("");
