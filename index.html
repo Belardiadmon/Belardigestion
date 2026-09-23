@@ -15741,7 +15741,7 @@ function EquipoView({ data, persist }) {
     const [editing, setEditing] = useState(null);
     const [nuevoVehiculo, setNuevoVehiculo] = useState("");
     const [editandoVehiculo, setEditandoVehiculo] = useState(null);
-    const blank = { id: "", nombre: "", telefono: "", activo: true, tipoContrato: "completo", contratoInicio: "", contratoFin: "" };
+    const blank = { id: "", nombre: "", telefono: "", activo: true, categoriaProfesional: "", tipoContrato: "completo", contratoInicio: "", contratoFin: "" };
     const save = (form) => {
         const next = structuredClone(data);
         if (form.id) {
@@ -15802,6 +15802,9 @@ function EquipoView({ data, persist }) {
                 React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono (con prefijo, para WhatsApp)"),
                 React.createElement("input", { className: "gj-input", value: editing.telefono, onChange: e => setEditing({ ...editing, telefono: e.target.value }), placeholder: "34600111222" })),
             React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Categor\u00EDa profesional"),
+                React.createElement("input", { className: "gj-input", value: editing.categoriaProfesional || "", onChange: e => setEditing({ ...editing, categoriaProfesional: e.target.value }), placeholder: "Ej: Oficial de 1\u00AA, Pe\u00F3n, Capataz..." })),
+            React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tipo de contrato"),
                 React.createElement("select", { className: "gj-select", value: editing.tipoContrato || "completo", onChange: e => setEditing({ ...editing, tipoContrato: e.target.value }) },
                     React.createElement("option", { value: "completo" }, "Todo el a\u00F1o (12 meses)"),
@@ -15825,6 +15828,7 @@ function EquipoView({ data, persist }) {
                     w.nombre,
                     w.activo === false && React.createElement("span", { className: "gj-badge", style: { background: "var(--warn-bg)", color: "var(--warn)" } }, "Inactivo")),
                 React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, w.telefono),
+                w.categoriaProfesional && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, w.categoriaProfesional),
                 (w.tipoContrato === "discontinuo" || w.tipoContrato === "eventual") && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } },
                     w.tipoContrato === "discontinuo" ? "Fijo discontinuo" : "Eventual",
                     (w.contratoInicio || w.contratoFin) ? ` · ${w.contratoInicio ? fechaEs(w.contratoInicio) : "?"} – ${w.contratoFin ? fechaEs(w.contratoFin) : "?"}` : ""))),
@@ -17164,8 +17168,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                     (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, o.actividadesExtra.map(a => {
                         const maq = a.maquinaId ? (data.maquinaria || []).find(m => m.id === a.maquinaId) : null;
                         const etiquetaTipo = a.tipoTaller === "dejar" ? " · Dejar maquinaria" : a.tipoTaller === "recogida" ? " · Recogida de maquinaria" : a.tipoTaller === "consumibles" ? " · Consumibles" : "";
-                        const iconoCat = a.categoria === "repostaje" ? "\u26FD" : a.categoria === "talleres" ? "\uD83D\uDD27" : a.categoria === "carga" ? "\uD83D\uDE9B" : "\uD83D\uDCE6";
-                        const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : "Almac\u00E9n";
+                        const iconoCat = a.categoria === "repostaje" ? "\u26FD" : a.categoria === "talleres" ? "\uD83D\uDD27" : a.categoria === "carga" ? "\uD83D\uDE9B" : a.categoria === "permiso_personal" ? "\uD83D\uDCDD" : "\uD83D\uDCE6";
+                        const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : a.categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
                         return (React.createElement("div", { key: a.id, style: { fontSize: 12, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 6 } },
                             React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0 } },
                                 iconoCat,
@@ -17186,8 +17190,12 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "carga" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("carga"); setExtraLugar("Nave"); } }, "Carga en nave"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "repostaje" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("repostaje"); setExtraLugar(""); } }, "Repostaje"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "talleres" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("talleres"); setExtraLugar(""); } }, "Talleres"),
-                            React.createElement("button", { className: "gj-btn" + (extraCategoria === "almacenes" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("almacenes"); setExtraLugar(""); } }, "Almacenes")),
-                        extraCategoria && extraCategoria !== "carga" && (React.createElement("div", null,
+                            React.createElement("button", { className: "gj-btn" + (extraCategoria === "almacenes" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("almacenes"); setExtraLugar(""); } }, "Almacenes"),
+                            React.createElement("button", { className: "gj-btn" + (extraCategoria === "permiso_personal" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("permiso_personal"); setExtraLugar(""); } }, "Permiso personal")),
+                        extraCategoria === "permiso_personal" && (React.createElement("div", { style: { marginTop: 6 } },
+                            React.createElement("div", { className: "gj-label" }, "\u00BFPara qu\u00E9 gesti\u00F3n? (notario, examen, carn\u00E9 de conducir, revisi\u00F3n m\u00E9dica ajena a la empresa...)"),
+                            React.createElement("input", { className: "gj-input", value: extraLugar, onChange: e => setExtraLugar(e.target.value), placeholder: "Ej: Notar\u00EDa" }))),
+                        extraCategoria && extraCategoria !== "carga" && extraCategoria !== "permiso_personal" && (React.createElement("div", null,
                             React.createElement("select", { className: "gj-select", value: extraLugar, onChange: e => { setExtraLugar(e.target.value); setExtraTipoTaller(""); setExtraMaquinaId(""); } },
                                 React.createElement("option", { value: "" }, "Selecciona..."),
                                 (((_b = data.listasFichaje) === null || _b === void 0 ? void 0 : _b[extraCategoria]) || []).map(op => React.createElement("option", { key: op, value: op }, op))),
@@ -17843,26 +17851,44 @@ const TIPOS_DOC_TRABAJADOR_SUGERIDOS = [
     "Certificado de manejo de maquinaria",
     "Recibo de aut\u00F3nomos",
 ];
-function BloqueDocumentos({ titulo, tipos, documentos, onAñadirTipo, onQuitarTipo, onSubir, onQuitarDoc }) {
+function BloqueDocumentos({ titulo, tipos, documentos, onAñadirTipo, onQuitarTipo, onSubir, onQuitarDoc, onCambiarVencimiento, diasAviso }) {
     const [nuevoTipo, setNuevoTipo] = useState("");
+    const hoy = todayStr();
     return (React.createElement("div", { className: "gj-card" },
         React.createElement("div", { className: "gj-h3" }, titulo),
         tipos.map(tipo => {
             const doc = documentos[tipo];
+            let avisoTxt = null, avisoColor = null;
+            if (doc && doc.fechaVencimiento) {
+                const diasRestantes = Math.round((new Date(doc.fechaVencimiento) - new Date(hoy)) / 86400000);
+                if (diasRestantes < 0) {
+                    avisoTxt = "\u26A0\uFE0F Caducado";
+                    avisoColor = "var(--warn)";
+                }
+                else if (diasRestantes <= diasAviso) {
+                    avisoTxt = `\u26A0\uFE0F Caduca en ${diasRestantes} d\u00EDa${diasRestantes !== 1 ? "s" : ""}`;
+                    avisoColor = "var(--warn)";
+                }
+            }
             return (React.createElement("div", { key: tipo, style: { padding: "8px 0", borderBottom: "1px solid var(--line-soft)" } },
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "start", gap: 6 } },
                     React.createElement("div", { style: { fontSize: 13, fontWeight: 600 } }, tipo),
                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 10.5 }, onClick: () => onQuitarTipo(tipo) }, "Quitar tipo")),
-                doc ? (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 4, flexWrap: "wrap" } },
-                    React.createElement("a", { href: doc.dataUrl, download: doc.name, className: "gj-btn ghost", style: { fontSize: 12 } }, "\uD83D\uDCCE ", doc.name),
-                    React.createElement("span", { style: { fontSize: 11, color: "var(--ink-soft)" } }, fechaEs(doc.fecha)),
-                    React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => onQuitarDoc(tipo) }, "Quitar archivo"))) : (React.createElement("input", { className: "gj-input", style: { marginTop: 4 }, type: "file", accept: "image/*,application/pdf", onChange: e => { onSubir(tipo, e.target.files); e.target.value = ""; } }))));
+                doc ? (React.createElement("div", { style: { marginTop: 4 } },
+                    React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                        React.createElement("a", { href: doc.dataUrl, download: doc.name, className: "gj-btn ghost", style: { fontSize: 12 } }, "\uD83D\uDCCE ", doc.name),
+                        React.createElement("span", { style: { fontSize: 11, color: "var(--ink-soft)" } }, fechaEs(doc.fecha)),
+                        React.createElement("button", { className: "gj-btn ghost", style: { fontSize: 11 }, onClick: () => onQuitarDoc(tipo) }, "Quitar archivo")),
+                    React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", marginTop: 6 } },
+                        React.createElement("label", { style: { fontSize: 11, color: "var(--ink-soft)" } }, "Vence:"),
+                        React.createElement("input", { className: "gj-input", style: { padding: "2px 6px", fontSize: 12, width: 150 }, type: "date", value: doc.fechaVencimiento || "", onChange: e => onCambiarVencimiento(tipo, e.target.value) })),
+                    avisoTxt && React.createElement("div", { style: { fontSize: 12, fontWeight: 600, color: avisoColor, marginTop: 4 } }, avisoTxt))) : (React.createElement("input", { className: "gj-input", style: { marginTop: 4 }, type: "file", accept: "image/*,application/pdf", onChange: e => { onSubir(tipo, e.target.files); e.target.value = ""; } }))));
         }),
         React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 10 } },
             React.createElement("input", { className: "gj-input", value: nuevoTipo, onChange: e => setNuevoTipo(e.target.value), placeholder: "A\u00F1adir otro tipo de documento" }),
             React.createElement("button", { className: "gj-btn ghost", disabled: !nuevoTipo.trim(), onClick: () => { onAñadirTipo(nuevoTipo.trim()); setNuevoTipo(""); } }, "A\u00F1adir"))));
 }
-function DocumentacionView({ data, persist }) {
+function DocumentacionView({ data, persist, getWorker }) {
     const [seccionesCerradas, setSeccionesCerradas] = useState({});
     const toggleSeccion = t => setSeccionesCerradas(p => ({ ...p, [t]: !p[t] }));
     const [workerId, setWorkerId] = useState("");
@@ -17901,6 +17927,12 @@ function DocumentacionView({ data, persist }) {
             delete next.documentosEmpresa[tipo];
         persist(next);
     };
+    const cambiarVencimientoEmpresa = (tipo, fecha) => {
+        const next = structuredClone(data);
+        if (next.documentosEmpresa && next.documentosEmpresa[tipo])
+            next.documentosEmpresa[tipo].fechaVencimiento = fecha;
+        persist(next);
+    };
     const añadirTipoTrabajador = (tipo) => {
         const next = structuredClone(data);
         next.tiposDocumentoTrabajador = [...tiposTrabajador, tipo];
@@ -17931,14 +17963,43 @@ function DocumentacionView({ data, persist }) {
             delete next.documentosTrabajador[workerId][tipo];
         persist(next);
     };
+    const cambiarVencimientoTrabajador = (tipo, fecha) => {
+        const next = structuredClone(data);
+        if (next.documentosTrabajador && next.documentosTrabajador[workerId] && next.documentosTrabajador[workerId][tipo])
+            next.documentosTrabajador[workerId][tipo].fechaVencimiento = fecha;
+        persist(next);
+    };
+    const hoy = todayStr();
+    const avisosEmpresa = Object.entries(documentosEmpresa).filter(([tipo, doc]) => doc.fechaVencimiento && Math.round((new Date(doc.fechaVencimiento) - new Date(hoy)) / 86400000) <= 30);
+    const avisosTrabajador = [];
+    Object.entries(data.documentosTrabajador || {}).forEach(([wid, docs]) => {
+        Object.entries(docs).forEach(([tipo, doc]) => {
+            if (doc.fechaVencimiento && Math.round((new Date(doc.fechaVencimiento) - new Date(hoy)) / 86400000) <= 7)
+                avisosTrabajador.push({ wid, tipo, doc });
+        });
+    });
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Documentaci\u00F3n de empresa"),
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Dos bloques: los documentos propios de la empresa, y los documentos de cada trabajador. Las listas de tipos de documento son solo una sugerencia inicial \u2014 puedes a\u00F1adir o quitar las que quieras en cualquier momento."),
+        (avisosEmpresa.length > 0 || avisosTrabajador.length > 0) && (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
+            React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Documentos por caducar"),
+            avisosEmpresa.map(([tipo, doc]) => React.createElement("div", { key: tipo, style: { fontSize: 12.5 } },
+                "\uD83C\uDFE2 ",
+                tipo,
+                " \u2014 vence ",
+                fechaEs(doc.fechaVencimiento))),
+            avisosTrabajador.map(({ wid, tipo, doc }) => { var _a; return React.createElement("div", { key: wid + tipo, style: { fontSize: 12.5 } },
+                "\uD83D\uDC64 ",
+                ((_a = getWorker(wid)) === null || _a === void 0 ? void 0 : _a.nombre) || "\u2014",
+                " \u2014 ",
+                tipo,
+                " \u2014 vence ",
+                fechaEs(doc.fechaVencimiento)); }))),
         React.createElement("div", { className: "gj-card" + (seccionesCerradas["empresa"] ? " gj-collapsed" : "") },
             React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("empresa") },
                 "\uD83C\uDFE2 Empresa",
                 React.createElement("span", { style: { fontSize: 12 } }, seccionesCerradas["empresa"] ? "\u25BC" : "\u25B2")),
-            React.createElement(BloqueDocumentos, { titulo: "", tipos: tiposEmpresa, documentos: documentosEmpresa, onAñadirTipo: añadirTipoEmpresa, onQuitarTipo: quitarTipoEmpresa, onSubir: subirDocEmpresa, onQuitarDoc: quitarDocEmpresa })),
+            React.createElement(BloqueDocumentos, { titulo: "", tipos: tiposEmpresa, documentos: documentosEmpresa, onAñadirTipo: añadirTipoEmpresa, onQuitarTipo: quitarTipoEmpresa, onSubir: subirDocEmpresa, onQuitarDoc: quitarDocEmpresa, onCambiarVencimiento: cambiarVencimientoEmpresa, diasAviso: 30 })),
         React.createElement("div", { className: "gj-card" + (seccionesCerradas["trabajador"] ? " gj-collapsed" : "") },
             React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("trabajador") },
                 "\uD83D\uDC64 Trabajador",
@@ -17948,7 +18009,7 @@ function DocumentacionView({ data, persist }) {
                 React.createElement("select", { className: "gj-select", value: workerId, onChange: e => setWorkerId(e.target.value) },
                     React.createElement("option", { value: "" }, "Selecciona..."),
                     trabajadores.map(w => React.createElement("option", { key: w.id, value: w.id }, w.nombre)))),
-            workerId && React.createElement(BloqueDocumentos, { titulo: "", tipos: tiposTrabajador, documentos: documentosDeEsteTrabajador, onAñadirTipo: añadirTipoTrabajador, onQuitarTipo: quitarTipoTrabajador, onSubir: subirDocTrabajador, onQuitarDoc: quitarDocTrabajador }))));
+            workerId && React.createElement(BloqueDocumentos, { titulo: "", tipos: tiposTrabajador, documentos: documentosDeEsteTrabajador, onAñadirTipo: añadirTipoTrabajador, onQuitarTipo: quitarTipoTrabajador, onSubir: subirDocTrabajador, onQuitarDoc: quitarDocTrabajador, onCambiarVencimiento: cambiarVencimientoTrabajador, diasAviso: 7 }))));
 }
 function AlmuerzosHistorialView({ data, getWorker }) {
     const [workerId, setWorkerId] = useState("");
