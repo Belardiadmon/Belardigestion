@@ -17588,6 +17588,7 @@ function ClimaView({ data, persist }) {
                     }))))))))));
 }
 function PendientesView({ data, persist, getClient, adminMode }) {
+    const [fotoGrande, setFotoGrande] = useState(null);
     const [clienteId, setClienteId] = useState("");
     const [descripcion, setDescripcion] = useState("");
     const [origen, setOrigen] = useState("trabajador");
@@ -17725,14 +17726,16 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                             React.createElement(Trash2, { size: 13, color: "var(--warn)" })))),
                 React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5, marginTop: 4 } }, cli ? cli.nombre : "General"),
                 React.createElement("div", { style: { fontSize: 13, marginTop: 2 } }, p.descripcion),
-                p.fotos && p.fotos.length > 0 && (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } }, p.fotos.map((f, i) => (React.createElement("a", { key: i, href: f.dataUrl, target: "_blank", rel: "noreferrer" },
+                p.fotos && p.fotos.length > 0 && (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } }, p.fotos.map((f, i) => (React.createElement("button", { key: i, onClick: () => setFotoGrande(f.dataUrl), style: { padding: 0, border: "none", background: "none", cursor: "pointer" } },
                     React.createElement("img", { src: f.dataUrl, alt: f.name, style: { width: 60, height: 60, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } })))))),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } },
                     p.autor,
                     " \u00B7 ",
                     p.fecha),
                 React.createElement("button", { className: "gj-btn", style: { marginTop: 8 }, onClick: () => toggleResuelto(p.id) }, p.resuelto ? "Marcar como pendiente" : "Marcar como resuelto")));
-        })));
+        })),
+        fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })));
 }
 function SolicitudesVacacionesView({ data, persist, getWorker }) {
     const [mostrarResueltas, setMostrarResueltas] = useState(false);
