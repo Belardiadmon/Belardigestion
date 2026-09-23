@@ -17733,9 +17733,9 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                     " \u00B7 ",
                     p.fecha),
                 React.createElement("button", { className: "gj-btn", style: { marginTop: 8 }, onClick: () => toggleResuelto(p.id) }, p.resuelto ? "Marcar como pendiente" : "Marcar como resuelto")));
-        })),
+        }),
         fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
-            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })));
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } }))));
 }
 function SolicitudesVacacionesView({ data, persist, getWorker }) {
     const [mostrarResueltas, setMostrarResueltas] = useState(false);
