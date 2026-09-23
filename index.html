@@ -17817,9 +17817,12 @@ function EpisView({ data, persist }) {
                     React.createElement(X, { size: 14 })))))))));
 }
 const TIPOS_DOC_EMPRESA_SUGERIDOS = [
+    "TC1 (Recibo de liquidaci\u00F3n de cotizaciones)",
+    "TC2 (Relaci\u00F3n nominal de trabajadores)",
     "Plan de Prevenci\u00F3n de Riesgos Laborales",
     "Evaluaci\u00F3n de riesgos laborales",
     "P\u00F3liza de responsabilidad civil",
+    "Recibo del seguro de responsabilidad civil",
     "Seguro de accidentes / Mutua",
     "Certificado de estar al corriente con la Seguridad Social",
     "Certificado de estar al corriente con Hacienda",
@@ -17838,6 +17841,7 @@ const TIPOS_DOC_TRABAJADOR_SUGERIDOS = [
     "Revisi\u00F3n m\u00E9dica",
     "Carnet de aplicador de productos fitosanitarios",
     "Certificado de manejo de maquinaria",
+    "Recibo de aut\u00F3nomos",
 ];
 function BloqueDocumentos({ titulo, tipos, documentos, onAñadirTipo, onQuitarTipo, onSubir, onQuitarDoc }) {
     const [nuevoTipo, setNuevoTipo] = useState("");
