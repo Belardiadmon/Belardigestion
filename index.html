@@ -17185,7 +17185,8 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                 ")"),
                             !a.horaFin && (React.createElement("button", { className: "gj-btn primary", style: { padding: "4px 10px", fontSize: 11.5, flexShrink: 0 }, onClick: () => finalizarActividadExtra(o.id, a.id) }, "Finalizar"))));
                     }))),
-                    extraAbierto !== o.id ? (React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 8 }, onClick: () => setExtraAbierto(o.id) }, "+ Carga / Repostaje / Taller / Almac\u00E9n")) : (React.createElement("div", { className: "gj-card", style: { marginTop: 8 } },
+                    React.createElement("div", { className: "gj-card", style: { marginTop: 8 } },
+                        React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "+ Carga / Repostaje / Taller / Almac\u00E9n / Permiso personal"),
                         React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 6, flexWrap: "wrap" } },
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "carga" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("carga"); setExtraLugar("Nave"); } }, "Carga en nave"),
                             React.createElement("button", { className: "gj-btn" + (extraCategoria === "repostaje" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setExtraCategoria("repostaje"); setExtraLugar(""); } }, "Repostaje"),
@@ -17284,7 +17285,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                         extraCategoria !== "carga" && adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
                             React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
                             React.createElement("button", { className: "gj-btn ghost", onClick: () => añadirOpcionListaFichaje(extraCategoria) }, "A\u00F1adir"))),
-                        React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => { setExtraAbierto(null); setExtraCategoria(null); setExtraLugar(""); setExtraTipoTaller(""); setExtraMaquinaId(""); } }, "Cerrar"))),
+                        React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => { setExtraAbierto(null); setExtraCategoria(null); setExtraLugar(""); setExtraTipoTaller(""); setExtraMaquinaId(""); } }, "Cerrar")),
                     (miJornada && (miJornada.entradaCoord || miJornada.salidaCoord)) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 6, marginBottom: 4, fontSize: 11.5 } },
                         miJornada.entradaCoord && (adminMode ? (React.createElement("a", { href: mapsLinkCoord(miJornada.entradaCoord), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } },
                             "\uD83D\uDCCD Ver entrada (",
