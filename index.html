@@ -17633,11 +17633,20 @@ function PendientesView({ data, persist, getClient, adminMode }) {
     const [editandoId, setEditandoId] = useState(null);
     const [editDescripcion, setEditDescripcion] = useState("");
     const [editClienteId, setEditClienteId] = useState("");
+    const [editFotos, setEditFotos] = useState([]);
     const empezarEdicion = (p) => {
         setEditandoId(p.id);
         setEditDescripcion(p.descripcion);
         setEditClienteId(p.clienteId || "");
+        setEditFotos(p.fotos || []);
     };
+    const onFotosEdicion = async (e) => {
+        const files = Array.from(e.target.files || []);
+        const nuevas = await Promise.all(files.map(async (f) => ({ name: f.name, dataUrl: await leerFotoBase64(f) })));
+        setEditFotos(prev => [...prev, ...nuevas.filter(x => x.dataUrl)]);
+        e.target.value = "";
+    };
+    const quitarFotoEdicion = (i) => setEditFotos(prev => prev.filter((_, idx) => idx !== i));
     const guardarEdicion = (id) => {
         if (!editDescripcion.trim())
             return;
@@ -17645,6 +17654,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
         const p = next.pendientes.find(x => x.id === id);
         p.descripcion = editDescripcion.trim();
         p.clienteId = editClienteId || null;
+        p.fotos = editFotos;
         persist(next);
         setEditandoId(null);
     };
@@ -17695,6 +17705,12 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "\u00BFQu\u00E9 hay que hacer?"),
                         React.createElement("textarea", { className: "gj-input", rows: 2, value: editDescripcion, onChange: e => setEditDescripcion(e.target.value) })),
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "Fotos"),
+                        editFotos.length > 0 && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 6 } }, editFotos.map((f, i) => (React.createElement("div", { key: i, style: { position: "relative" } },
+                            React.createElement("img", { src: f.dataUrl, alt: f.name, style: { width: 60, height: 60, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
+                            React.createElement("button", { onClick: () => quitarFotoEdicion(i), style: { position: "absolute", top: -6, right: -6, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, lineHeight: 1 } }, "\u00D7"))))),
+                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, onChange: onFotosEdicion })),
                     React.createElement("div", { style: { display: "flex", gap: 6 } },
                         React.createElement("button", { className: "gj-btn primary", onClick: () => guardarEdicion(p.id) }, "Guardar"),
                         React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditandoId(null) }, "Cancelar"))));
