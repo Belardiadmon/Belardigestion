@@ -17630,6 +17630,24 @@ function PendientesView({ data, persist, getClient, adminMode }) {
         next.pendientes = next.pendientes.filter(x => x.id !== id);
         persist(next);
     };
+    const [editandoId, setEditandoId] = useState(null);
+    const [editDescripcion, setEditDescripcion] = useState("");
+    const [editClienteId, setEditClienteId] = useState("");
+    const empezarEdicion = (p) => {
+        setEditandoId(p.id);
+        setEditDescripcion(p.descripcion);
+        setEditClienteId(p.clienteId || "");
+    };
+    const guardarEdicion = (id) => {
+        if (!editDescripcion.trim())
+            return;
+        const next = structuredClone(data);
+        const p = next.pendientes.find(x => x.id === id);
+        p.descripcion = editDescripcion.trim();
+        p.clienteId = editClienteId || null;
+        persist(next);
+        setEditandoId(null);
+    };
     const pendientes = (data.pendientes || []).slice().sort((a, b) => (a.resuelto === b.resuelto ? 0 : a.resuelto ? 1 : -1));
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Trabajos pendientes"),
@@ -17657,7 +17675,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                     React.createElement("input", { className: "gj-input", value: autor, onChange: e => setAutor(e.target.value), placeholder: "Qui\u00E9n lo apunta" }))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Fotos (opcional)"),
-                React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, capture: "environment", onChange: onFotosPendiente }),
+                React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, onChange: onFotosPendiente }),
                 fotos.length > 0 && (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } }, fotos.map((f, i) => (React.createElement("div", { key: i, style: { position: "relative" } },
                     React.createElement("img", { src: f.dataUrl, alt: f.name, style: { width: 60, height: 60, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
                     React.createElement("button", { onClick: () => quitarFotoPendiente(i), style: { position: "absolute", top: -6, right: -6, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 18, height: 18, fontSize: 11, lineHeight: 1 } }, "\u00D7"))))))),
@@ -17667,11 +17685,28 @@ function PendientesView({ data, persist, getClient, adminMode }) {
         pendientes.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay trabajos pendientes anotados."),
         pendientes.map(p => {
             const cli = p.clienteId ? getClient(p.clienteId) : null;
+            if (editandoId === p.id) {
+                return (React.createElement("div", { className: "gj-card", key: p.id },
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "Cliente (opcional)"),
+                        React.createElement("select", { className: "gj-select", value: editClienteId, onChange: e => setEditClienteId(e.target.value) },
+                            React.createElement("option", { value: "" }, "General / sin cliente concreto"),
+                            data.clients.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre, c.esObra ? " (obra)" : "")))),
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "\u00BFQu\u00E9 hay que hacer?"),
+                        React.createElement("textarea", { className: "gj-input", rows: 2, value: editDescripcion, onChange: e => setEditDescripcion(e.target.value) })),
+                    React.createElement("div", { style: { display: "flex", gap: 6 } },
+                        React.createElement("button", { className: "gj-btn primary", onClick: () => guardarEdicion(p.id) }, "Guardar"),
+                        React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditandoId(null) }, "Cancelar"))));
+            }
             return (React.createElement("div", { className: "gj-card", key: p.id, style: { opacity: p.resuelto ? 0.55 : 1 } },
                 React.createElement("div", { className: "gj-row" },
                     React.createElement("span", { className: "gj-badge", style: { background: p.origen === "cliente" ? "var(--good-bg)" : p.origen === "administracion" ? "#DBEAFE" : "var(--pend-bg)", color: p.origen === "cliente" ? "var(--good)" : p.origen === "administracion" ? "#1E3A8A" : "var(--ink-soft)" } }, p.origen === "cliente" ? "cliente" : p.origen === "administracion" ? "administración" : "trabajador"),
-                    adminMode && React.createElement("button", { className: "gj-btn ghost", onClick: () => eliminar(p.id) },
-                        React.createElement(Trash2, { size: 13, color: "var(--warn)" }))),
+                    React.createElement("div", { style: { display: "flex", gap: 4 } },
+                        React.createElement("button", { className: "gj-btn ghost", onClick: () => empezarEdicion(p) },
+                            React.createElement(Pencil, { size: 13 })),
+                        adminMode && React.createElement("button", { className: "gj-btn ghost", onClick: () => eliminar(p.id) },
+                            React.createElement(Trash2, { size: 13, color: "var(--warn)" })))),
                 React.createElement("div", { style: { fontWeight: 600, fontSize: 13.5, marginTop: 4 } }, cli ? cli.nombre : "General"),
                 React.createElement("div", { style: { fontSize: 13, marginTop: 2 } }, p.descripcion),
                 p.fotos && p.fotos.length > 0 && (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } }, p.fotos.map((f, i) => (React.createElement("a", { key: i, href: f.dataUrl, target: "_blank", rel: "noreferrer" },
@@ -21290,7 +21325,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                         React.createElement(X, { size: 14 }))))),
                 React.createElement("button", { className: "gj-btn ghost block", onClick: añadirMaterialVario },
                     React.createElement(Plus, { size: 14 }),
-                    " A\u00F1adir material vario"))))))))))),
+                    " A\u00F1adir material vario"))))))))),
         React.createElement("div", { className: "gj-card" + (seccionesCerradas["Partidas especiales"] ? " gj-collapsed" : "") },
             React.createElement("div", { className: "gj-h3 gj-seccion-header", onClick: () => toggleSeccion("Partidas especiales") },
                 "Partidas especiales (libres)",
@@ -21388,7 +21423,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
         React.createElement("button", { className: "gj-btn accent block", onClick: guardar, disabled: !nombre.trim() || lineasCalculadas.length === 0 },
             React.createElement(Plus, { size: 14 }),
             " ",
-            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra"));
+            presupuestoEditar ? "Guardar cambios" : "Guardar presupuesto de obra"))));
 }
 function SolicitudesVisitasView({ data, persist }) {
     const [nombreSol, setNombreSol] = useState("");
