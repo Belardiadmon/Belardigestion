@@ -14397,6 +14397,14 @@ function App() {
         window.gjOnRemoteChange((nuevoData) => setData(nuevoData));
         if (window.gjIniciarRealtimeSupabase)
             window.gjIniciarRealtimeSupabase(STORAGE_KEY);
+        // Además del tiempo real, comprobamos cada 25s si hay una versión más nueva en el servidor.
+        // Es un respaldo por si el tiempo real no llega a activarse (p. ej. si no está habilitado
+        // en el proyecto de Supabase): así el dispositivo nunca se queda desactualizado del todo.
+        const intervalo = setInterval(() => {
+            if (window.gjSyncManualAhora)
+                window.gjSyncManualAhora(STORAGE_KEY);
+        }, 25000);
+        return () => clearInterval(intervalo);
     }, []);
     useEffect(() => {
         (async () => {
@@ -16396,6 +16404,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const [materialesLista, setMaterialesLista] = useState([]);
     const [materialObraId, setMaterialObraId] = useState("");
     const [materialFoto, setMaterialFoto] = useState(null);
+    const [almacenEnCursoId, setAlmacenEnCursoId] = useState(null); // { orderId, actividadId } de una recogida de material aún abierta
     const [extraNuevaMaquina, setExtraNuevaMaquina] = useState("");
     const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
     const [notaTexto, setNotaTexto] = useState("");
@@ -16494,8 +16503,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         if (!order.entradaMananaHora) {
             order.entradaMananaHora = horaAhora;
         }
+        const idActividadNueva = uid("ext");
         order.actividadesExtra.push({
-            id: uid("ext"), categoria, lugar, horaInicio: horaAhora, horaFin: null, trabajador: nombreTrabajador, workerId,
+            id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, trabajador: nombreTrabajador, workerId,
             tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
             maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
             obraId: esRecogidaMaterial ? (materialObraId || null) : null,
@@ -16540,17 +16550,26 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 maq.enTaller = null;
         }
         persist(next);
-        setExtraAbierto(null);
-        setExtraCategoria(null);
-        setExtraLugar("");
-        setExtraTipoTaller("");
-        setExtraMaquinaId("");
-        setMaterialesLista([]);
-        setMaterialObraId("");
-        setMaterialFoto(null);
-        setMaterialOrigen("nuevo");
-        setMaterialStockId("");
-        setMaterialCantidadUsada("");
+        if (esRecogidaMaterial) {
+            // Dejamos la ventana abierta: el trabajador va a seguir cargando materiales y la foto
+            // del albarán mientras dura la recogida, en vez de tener que volver a abrir todo el panel.
+            setAlmacenEnCursoId({ orderId, actividadId: idActividadNueva });
+            setMaterialesLista([]);
+            setMaterialCantidadUsada("");
+        }
+        else {
+            setExtraAbierto(null);
+            setExtraCategoria(null);
+            setExtraLugar("");
+            setExtraTipoTaller("");
+            setExtraMaquinaId("");
+            setMaterialesLista([]);
+            setMaterialObraId("");
+            setMaterialFoto(null);
+            setMaterialOrigen("nuevo");
+            setMaterialStockId("");
+            setMaterialCantidadUsada("");
+        }
     };
     const finalizarActividadExtra = (orderId, actividadId) => {
         const next = structuredClone(data);
@@ -16605,6 +16624,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         setMaterialNuevoNombre("");
     };
     const añadirLineaMaterial = () => {
+        let nuevaLinea = null;
         if (materialOrigen === "stock") {
             const stockItem = (data.almacenGeneral || []).find(s => s.id === materialStockId);
             if (!stockItem || !materialCantidadUsada)
@@ -16612,19 +16632,49 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             const usada = Number(materialCantidadUsada);
             if (usada <= 0 || usada > stockItem.cantidad)
                 return;
-            setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: stockItem.proveedor, material: stockItem.material, cantidad: usada, origen: "stock", stockId: stockItem.id }]);
-            setMaterialStockId("");
-            setMaterialCantidadUsada("");
-            return;
+            nuevaLinea = { id: uid("mat"), proveedor: stockItem.proveedor, material: stockItem.material, cantidad: usada, origen: "stock", stockId: stockItem.id };
         }
-        if (!materialProveedor || !materialNombre || !materialCantidad)
-            return;
-        const recogida = Number(materialCantidad);
-        const usada = materialCantidadUsada ? Number(materialCantidadUsada) : recogida;
-        setMaterialesLista([...materialesLista, { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: usada, origen: "nuevo", cantidadRecogida: recogida }]);
+        else {
+            if (!materialProveedor || !materialNombre || !materialCantidad)
+                return;
+            const recogida = Number(materialCantidad);
+            const usada = materialCantidadUsada ? Number(materialCantidadUsada) : recogida;
+            nuevaLinea = { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: usada, origen: "nuevo", cantidadRecogida: recogida };
+        }
+        if (almacenEnCursoId) {
+            const next = structuredClone(data);
+            const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
+            const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+            if (act) {
+                act.materialesImputados = [...(act.materialesImputados || []), { ...nuevaLinea, bloqueado: false }];
+                if (nuevaLinea.origen === "stock" && nuevaLinea.stockId) {
+                    next.almacenGeneral = next.almacenGeneral || [];
+                    const item = next.almacenGeneral.find(s => s.id === nuevaLinea.stockId);
+                    if (item) {
+                        item.cantidad = Math.max(0, item.cantidad - nuevaLinea.cantidad);
+                        if (item.cantidad === 0)
+                            next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+                    }
+                }
+                else if (nuevaLinea.cantidadRecogida && nuevaLinea.cantidadRecogida > nuevaLinea.cantidad) {
+                    next.almacenGeneral = next.almacenGeneral || [];
+                    const sobrante = nuevaLinea.cantidadRecogida - nuevaLinea.cantidad;
+                    const existente = next.almacenGeneral.find(s => s.proveedor === nuevaLinea.proveedor && s.material === nuevaLinea.material);
+                    if (existente)
+                        existente.cantidad += sobrante;
+                    else
+                        next.almacenGeneral.push({ id: uid("stk"), proveedor: nuevaLinea.proveedor, material: nuevaLinea.material, cantidad: sobrante });
+                }
+            }
+            persist(next);
+        }
+        else {
+            setMaterialesLista([...materialesLista, nuevaLinea]);
+        }
         setMaterialNombre("");
         setMaterialCantidad("");
         setMaterialCantidadUsada("");
+        setMaterialStockId("");
     };
     const quitarLineaMaterial = (id) => setMaterialesLista(materialesLista.filter(m => m.id !== id));
     const subirFotoAlbaran = async (files) => {
@@ -16633,6 +16683,31 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             return;
         const dataUrl = await leerFotoBase64(archivos[0]);
         setMaterialFoto(dataUrl);
+        if (almacenEnCursoId) {
+            const next = structuredClone(data);
+            const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
+            const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+            if (act)
+                act.fotoAlbaran = dataUrl;
+            persist(next);
+        }
+    };
+    const finalizarRecogidaMaterial = () => {
+        if (!almacenEnCursoId)
+            return;
+        finalizarActividadExtra(almacenEnCursoId.orderId, almacenEnCursoId.actividadId);
+        setAlmacenEnCursoId(null);
+        setExtraAbierto(null);
+        setExtraCategoria(null);
+        setExtraLugar("");
+        setExtraTipoTaller("");
+        setExtraMaquinaId("");
+        setMaterialesLista([]);
+        setMaterialObraId("");
+        setMaterialFoto(null);
+        setMaterialOrigen("nuevo");
+        setMaterialStockId("");
+        setMaterialCantidadUsada("");
     };
     const subirFotoStop = async (orderId, clienteId, campo, files) => {
         const archivos = Array.from(files || []);
@@ -17283,7 +17358,25 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                             m.proveedor,
                                             m.origen === "stock" ? ", del almac\u00E9n" : "",
                                             ")"),
-                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => quitarLineaMaterial(m.id) }, "Quitar")))))))),
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => quitarLineaMaterial(m.id) }, "Quitar"))))),
+                                (() => {
+                                    if (!almacenEnCursoId || almacenEnCursoId.orderId !== o.id)
+                                        return null;
+                                    const ordenEnCurso = data.orders.find(ord => ord.id === almacenEnCursoId.orderId);
+                                    const actEnCurso = ordenEnCurso && (ordenEnCurso.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+                                    if (!actEnCurso)
+                                        return null;
+                                    return React.createElement("div", { style: { marginTop: 8, padding: 6, background: "var(--pend-bg)", borderRadius: 4 } },
+                                        React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, marginBottom: 2 } }, "Ya guardado en esta recogida:"),
+                                        (actEnCurso.materialesImputados || []).length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Todav\u00EDa ning\u00FAn material.") : actEnCurso.materialesImputados.map(m => React.createElement("div", { key: m.id, style: { fontSize: 12.5 } },
+                                            m.cantidad,
+                                            " \u00D7 ",
+                                            m.material,
+                                            " (",
+                                            m.proveedor,
+                                            m.origen === "stock" ? ", del almac\u00E9n" : "",
+                                            ")")));
+                                })()))),
                                 extraTipoTaller === "dejar" && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("div", { className: "gj-label" }, "\u00BFQu\u00E9 m\u00E1quina se deja?"),
                                     React.createElement("select", { className: "gj-select", value: extraMaquinaId, onChange: e => setExtraMaquinaId(e.target.value) },
@@ -17308,7 +17401,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                             " (en ",
                                             m.enTaller.lugar,
                                             ")"))))))))))),
-                        React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))) || (extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar"),
+                        (almacenEnCursoId && almacenEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: finalizarRecogidaMaterial }, "Finalizar recogida")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))) || (extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar")),
                         extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 4 } }, "\u26A0\uFE0F Elige a qu\u00E9 obra van estos materiales antes de pulsar Iniciar \u2014 si no, no quedar\u00E1n asociados a ninguna obra.")),
                         extraCategoria !== "carga" && adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
                             React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
