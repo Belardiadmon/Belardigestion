@@ -22490,10 +22490,18 @@ function MapaView({ data, persist, focusClienteId, setFocusClienteId }) {
         });
         const map = L.map(mapRef.current);
         map.fitBounds([[42.775, -1.665], [42.845, -1.545]], { padding: [15, 15] });
-        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-            attribution: "&copy; colaboradores de OpenStreetMap",
+        // Capa de sat\u00e9lite (sin texto encima, as\u00ed que no tiene el problema de nombres en euskera)
+        // y una capa de calles como alternativa, con el interruptor arriba a la derecha del mapa.
+        const capaSatelite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+            attribution: "&copy; Esri, Maxar, Earthstar Geographics",
             maxZoom: 19,
-        }).addTo(map);
+        });
+        const capaCalles = L.tileLayer("https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png", {
+            attribution: "&copy; colaboradores de OpenStreetMap &copy; CARTO",
+            maxZoom: 19,
+        });
+        capaSatelite.addTo(map);
+        L.control.layers({ "\uD83D\uDEF0\uFE0F Sat\u00E9lite": capaSatelite, "\uD83D\uDDFA\uFE0F Mapa": capaCalles }, null, { position: "topright" }).addTo(map);
         mapInstance.current = map;
     }, [leafletReady]);
     // Geocodificar automáticamente las direcciones de los clientes que aún no tengan coordenadas
