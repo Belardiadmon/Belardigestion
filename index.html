@@ -14892,6 +14892,12 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                     l)))),
                 React.createElement("h4", { style: { marginTop: 16, marginBottom: 6 } }, "Observaciones"),
                 React.createElement("div", { style: { fontSize: 13, minHeight: 40, borderBottom: "1px dotted var(--line)" } }, (stop === null || stop === void 0 ? void 0 : stop.observaciones) || ""),
+                ((stop === null || stop === void 0 ? void 0 : stop.fotosAntes) || []).length > 0 && (React.createElement("div", { style: { marginTop: 16 } },
+                    React.createElement("h4", { style: { marginBottom: 6 } }, "Fotos \u2014 antes"),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, stop.fotosAntes.map((f, i) => React.createElement("img", { key: i, src: f.dataUrl || f, style: { width: 140, height: 140, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }))))),
+                ((stop === null || stop === void 0 ? void 0 : stop.fotosDespues) || []).length > 0 && (React.createElement("div", { style: { marginTop: 16 } },
+                    React.createElement("h4", { style: { marginBottom: 6 } }, "Fotos \u2014 despu\u00E9s"),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, stop.fotosDespues.map((f, i) => React.createElement("img", { key: i, src: f.dataUrl || f, style: { width: 140, height: 140, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }))))),
                 React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)" } },
                     React.createElement("div", null, "Nombre y firma del operario"),
                     React.createElement("div", null, "Conforme el cliente"))),
@@ -22645,6 +22651,7 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
         persist(next);
     };
     const [detalleDia, setDetalleDia] = useState(null); // { clienteId, dateStr }
+    const [printVisita, setPrintVisita] = useState(null); // { orderId, clienteId }
     const buscarVisitaReal = (clienteId, dateStr) => {
         for (const o of data.orders) {
             if (o.fecha !== dateStr)
@@ -22693,7 +22700,10 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
                     React.createElement("b", null, "Observaciones: "),
                     visita.stop.observaciones),
                 React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } },
-                    visita.stop.notificado ? `\u2713 Avisado al cliente${visita.stop.notificadoHora ? " a las " + visita.stop.notificadoHora : ""}` : "A\u00FAn no se ha avisado al cliente de esta visita."))
+                    visita.stop.notificado ? `\u2713 Avisado al cliente${visita.stop.notificadoHora ? " a las " + visita.stop.notificadoHora : ""}` : "A\u00FAn no se ha avisado al cliente de esta visita."),
+                React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 8 }, onClick: () => { setPrintVisita({ orderId: visita.order.id, clienteId: detalleDia.clienteId }); setDetalleDia(null); } },
+                    React.createElement(Printer, { size: 13 }),
+                    " Ver / imprimir parte"))
             : React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "No hay ning\u00FAn mantenimiento fichado ese d\u00EDa para este cliente \u2014 la marca de este calendario es manual, sin detalle guardado.");
         detalleModal = React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.5)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setDetalleDia(null) },
             React.createElement("div", { className: "gj-card", style: { maxWidth: 340, width: "100%" }, onClick: e => e.stopPropagation() },
@@ -22702,6 +22712,59 @@ function CalendarioView({ data, persist, getClient, adminMode, adminRole, reques
                 contenidoDetalle,
                 adminMode && React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 10 }, onClick: () => { toggleMark(detalleDia.clienteId, detalleDia.dateStr); setDetalleDia(null); } }, marcado ? "Quitar marca de visita" : "Marcar como visita hecha"),
                 React.createElement("button", { className: "gj-btn block", style: { marginTop: 6 }, onClick: () => setDetalleDia(null) }, "Cerrar")));
+    }
+    if (printVisita) {
+        const order = data.orders.find(o => o.id === printVisita.orderId);
+        const stop = order === null || order === void 0 ? void 0 : order.stops.find(s => s.clienteId === printVisita.clienteId);
+        const cliente = getClient(printVisita.clienteId);
+        const crew = order === null || order === void 0 ? void 0 : order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setPrintVisita(null) }, "\u2190 Volver"),
+            React.createElement("div", { className: "gj-print-area gj-card", style: { background: "#fff", padding: 20 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18, gap: 10 } },
+                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 54, maxWidth: 150, objectFit: "contain" } }),
+                    React.createElement("img", { src: `data:image/png;base64,${NEXUS_LOGO_B64}`, alt: "Nexus In & Out Design", style: { height: 44, objectFit: "contain", background: "#000", padding: 4, borderRadius: 4 } })),
+                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 16 } }, "PARTE DE TRABAJO"),
+                React.createElement("div", { style: { fontSize: 13.5, lineHeight: 1.8 } },
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Ruta:"),
+                        " ",
+                        crew),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Cliente:"),
+                        " ", cliente === null || cliente === void 0 ? void 0 :
+                        cliente.nombre),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Direcci\u00F3n:"),
+                        " ", cliente === null || cliente === void 0 ? void 0 :
+                        cliente.direccion),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Fecha:"),
+                        " ",
+                        order && fechaEs(order.fecha)),
+                    React.createElement("div", null,
+                        React.createElement("b", null, "Operarios:"),
+                        " ",
+                        crew)),
+                React.createElement("h4", { style: { marginTop: 16, marginBottom: 6 } }, "Trabajos"),
+                React.createElement("div", { style: { columns: 2, fontSize: 13 } }, LABORES_ESTANDAR.map(l => (React.createElement("div", { key: l, style: { marginBottom: 4 } },
+                    ((stop === null || stop === void 0 ? void 0 : stop.labores) || []).includes(l) ? "\u2611" : "\u2610",
+                    " ",
+                    l)))),
+                React.createElement("h4", { style: { marginTop: 16, marginBottom: 6 } }, "Observaciones"),
+                React.createElement("div", { style: { fontSize: 13, minHeight: 40, borderBottom: "1px dotted var(--line)" } }, (stop === null || stop === void 0 ? void 0 : stop.observaciones) || ""),
+                ((stop === null || stop === void 0 ? void 0 : stop.fotosAntes) || []).length > 0 && (React.createElement("div", { style: { marginTop: 16 } },
+                    React.createElement("h4", { style: { marginBottom: 6 } }, "Fotos \u2014 antes"),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, stop.fotosAntes.map((f, i) => React.createElement("img", { key: i, src: f.dataUrl || f, style: { width: 140, height: 140, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }))))),
+                ((stop === null || stop === void 0 ? void 0 : stop.fotosDespues) || []).length > 0 && (React.createElement("div", { style: { marginTop: 16 } },
+                    React.createElement("h4", { style: { marginBottom: 6 } }, "Fotos \u2014 despu\u00E9s"),
+                    React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, stop.fotosDespues.map((f, i) => React.createElement("img", { key: i, src: f.dataUrl || f, style: { width: 140, height: 140, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }))))),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12, color: "var(--ink-soft)" } },
+                    React.createElement("div", null, "Nombre y firma del operario"),
+                    React.createElement("div", null, "Conforme el cliente"))),
+            React.createElement("button", { className: "gj-btn primary block gj-no-print", style: { marginTop: 10 }, onClick: () => window.print() },
+                React.createElement(Printer, { size: 14 }),
+                " Imprimir / PDF")));
     }
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-row", style: { marginBottom: 10 } },
