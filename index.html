@@ -22537,11 +22537,23 @@ function MapaView({ data, persist, focusClienteId, setFocusClienteId }) {
             return;
         Object.values(markersRef.current).forEach(m => mapInstance.current.removeLayer(m));
         markersRef.current = {};
-        data.clients.filter(c => c.lat && c.lng).forEach(c => {
-            const marker = window.L.marker([c.lat, c.lng]).addTo(mapInstance.current);
+        data.clients.filter(c => (c.gpsLat && c.gpsLng) || (c.lat && c.lng)).forEach(c => {
+            const lat = c.gpsLat || c.lat;
+            const lng = c.gpsLng || c.lng;
+            const marker = window.L.marker([lat, lng], { draggable: true }).addTo(mapInstance.current);
             const safeName = c.nombre.replace(/</g, "&lt;");
             const safeAddr = c.direccion.replace(/</g, "&lt;");
-            marker.bindPopup(`<b>${safeName}${c.esObra ? " (obra)" : ""}</b><br>${safeAddr}<br><a href="${mapsLink(c.direccion)}" target="_blank" rel="noreferrer">Cómo llegar →</a>`);
+            marker.bindPopup(`<b>${safeName}${c.esObra ? " (obra)" : ""}</b><br>${safeAddr}<br>${c.gpsLat ? "📍 ubicación ajustada a mano" : "📍 según la dirección"} · arrastra el pin para ajustarla<br><a href="${mapsLink(c.direccion)}" target="_blank" rel="noreferrer">Cómo llegar →</a>`);
+            marker.on("dragend", () => {
+                const pos = marker.getLatLng();
+                const next = structuredClone(data);
+                const cc = next.clients.find(x => x.id === c.id);
+                if (cc) {
+                    cc.gpsLat = pos.lat;
+                    cc.gpsLng = pos.lng;
+                }
+                persist(next);
+            });
             markersRef.current[c.id] = marker;
         });
     }, [leafletReady, data.clients]);
@@ -22554,8 +22566,8 @@ function MapaView({ data, persist, focusClienteId, setFocusClienteId }) {
             setFocusClienteId(null);
             return;
         }
-        if (c.lat && c.lng) {
-            mapInstance.current.setView([c.lat, c.lng], 15);
+        if ((c.gpsLat && c.gpsLng) || (c.lat && c.lng)) {
+            mapInstance.current.setView([c.gpsLat || c.lat, c.gpsLng || c.lng], 15);
             const marker = markersRef.current[c.id];
             if (marker)
                 marker.openPopup();
@@ -22563,7 +22575,7 @@ function MapaView({ data, persist, focusClienteId, setFocusClienteId }) {
         }
         // si aún no tiene coordenadas (se está geocodificando), esperamos a que aparezcan en data.clients
     }, [focusClienteId, data.clients, leafletReady]);
-    const localizados = data.clients.filter(c => c.lat && c.lng).length;
+    const localizados = data.clients.filter(c => (c.gpsLat && c.gpsLng) || (c.lat && c.lng)).length;
     const fallidos = data.clients.filter(c => c.geocodeFailed).length;
     const total = data.clients.length;
     const reintentar = () => {
