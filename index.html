@@ -57,6 +57,7 @@ let gjRemoteChangeCallback = null;
 window.gjOnRemoteChange = (cb) => { gjRemoteChangeCallback = cb; };
 window.gjSyncManualAhora = null; // se rellena más abajo
 
+const GJ_LAST_SYNC_KEY = "gj_last_synced_updated_at_v1";
 async function gjSincronizarConSupabase(STORAGE_KEY) {
   const client = gjGetSupabaseClient();
   if (!client) { window.gjSyncStatus.estado = "local"; return null; }
@@ -67,7 +68,15 @@ async function gjSincronizarConSupabase(STORAGE_KEY) {
     // Si Supabase todavía no tiene datos reales (tabla recién creada, vacía), no la usamos:
     // dejamos que la app siga con sus datos locales, que se subirán solos en el próximo guardado.
     if (data && data.data && Array.isArray(data.data.workers) && data.data.workers.length > 0) {
+      // Solo sobrescribimos lo local si el servidor tiene una versión realmente más nueva que la
+      // última que este dispositivo sabe que existe. Así, si este móvil tiene un cambio reciente
+      // que todavía no ha llegado a subirse (por ejemplo, por un fallo de red momentáneo), no se
+      // pierde al recargar la página.
+      const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
+      const remotoEsMasNuevo = !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
+      if (!remotoEsMasNuevo) return null;
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data));
+      if (data.updated_at) localStorage.setItem(GJ_LAST_SYNC_KEY, data.updated_at);
       return data.data;
     }
     return null;
@@ -96,9 +105,11 @@ window.storage = {
       if (client) {
         try {
           const parsed = JSON.parse(value);
-          const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: new Date().toISOString() });
+          const ahoraISO = new Date().toISOString();
+          const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
           if (error) throw error;
-          window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
+          localStorage.setItem(GJ_LAST_SYNC_KEY, ahoraISO);
+          window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
         } catch (e) {
           window.gjSyncStatus = { estado: "error", ultimoError: (e && e.message) || String(e), ultimaSync: window.gjSyncStatus.ultimaSync };
           return null; // avisamos de fallo al guardar en remoto
