@@ -14721,7 +14721,8 @@ function App() {
                 view === "trabajador" && React.createElement(TrabajadorView, { ...props }),
                 view === "horas" && React.createElement(AdminGate, { ...props },
                     React.createElement(HorasView, { ...props })),
-                view === "calendario" && React.createElement(CalendarioView, { ...props }),
+                view === "calendario" && React.createElement(AdminGate, { ...props },
+                    React.createElement(CalendarioView, { ...props })),
                 view === "mapa" && React.createElement(MapaView, { ...props }),
                 view === "pendientes-presupuesto" && React.createElement(AdminGate, { ...props },
                     React.createElement(SolicitudesVisitasView, { ...props })),
@@ -22618,7 +22619,7 @@ function MapaView({ data, persist, focusClienteId, setFocusClienteId }) {
                 fallidos > 0 && React.createElement("button", { className: "gj-btn ghost", onClick: reintentar }, "Reintentar")))),
         data.clients.length === 0 && React.createElement("div", { className: "gj-card gj-empty", style: { marginTop: 10 } }, "A\u00F1ade clientes con direcci\u00F3n para verlos aqu\u00ED.")));
 }
-function CalendarioView({ data, persist, getClient, adminMode, adminRole, requestUnlock }) {
+function CalendarioView({ data, persist, getClient, getWorker, adminMode, adminRole, requestUnlock }) {
     const now = new Date();
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth());
