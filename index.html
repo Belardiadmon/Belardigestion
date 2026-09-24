@@ -16313,7 +16313,7 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                         var _a;
                         const w = getWorker(a.workerId);
                         const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : a.categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
-                        return (React.createElement("div", { key: a.id, style: { fontSize: 12, marginBottom: 2 } },
+                        return (React.createElement("div", { key: a.id, style: { fontSize: 12, marginBottom: 4 } },
                             React.createElement("span", { style: { fontWeight: 600 } }, (w === null || w === void 0 ? void 0 : w.nombre) || "?"),
                             ": ",
                             etiquetaCat,
@@ -16322,7 +16322,10 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             a.horaInicio || "?",
                             "\u2013",
                             a.horaFin || "en curso",
-                            ")"));
+                            ")",
+                            React.createElement("div", { style: { display: "flex", gap: 10, fontSize: 11, marginTop: 1 } },
+                                a.coordInicio ? React.createElement("a", { href: mapsLinkCoord(a.coordInicio), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n inicio") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
+                                a.horaFin && (a.coordFin ? React.createElement("a", { href: mapsLinkCoord(a.coordFin), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n fin") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin")))));
                     }))),
                 adminMode && (React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 } }, o.workerIds.map(wid => {
                     const w = getWorker(wid);
@@ -16456,7 +16459,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         p.resueltoFecha = todayStr();
         persist(next);
     };
-    const iniciarActividadExtra = (orderId, categoria, lugar) => {
+    const iniciarActividadExtra = async (orderId, categoria, lugar) => {
         if (!categoria || !lugar)
             return;
         const esTallerAlmacen = categoria === "talleres" || categoria === "almacenes";
@@ -16482,6 +16485,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 }
             }
         }
+        const coordInicio = await getPosicionActual();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         order.actividadesExtra = order.actividadesExtra || [];
@@ -16508,7 +16512,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         }
         const idActividadNueva = uid("ext");
         order.actividadesExtra.push({
-            id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, trabajador: nombreTrabajador, workerId,
+            id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio, coordFin: null, trabajador: nombreTrabajador, workerId,
             tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
             maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
             obraId: esRecogidaMaterial ? (materialObraId || null) : null,
@@ -16574,12 +16578,15 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
             setMaterialCantidadUsada("");
         }
     };
-    const finalizarActividadExtra = (orderId, actividadId) => {
+    const finalizarActividadExtra = async (orderId, actividadId) => {
+        const coordFin = await getPosicionActual();
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
-        if (act)
+        if (act) {
             act.horaFin = nowTime();
+            act.coordFin = coordFin;
+        }
         persist(next);
     };
     const añadirOpcionListaFichaje = (categoria) => {
