@@ -15368,12 +15368,15 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
         React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Ubicaci\u00F3n GPS (para planificar rutas por cercan\u00EDa)"),
             React.createElement("div", { className: "gj-row", style: { gap: 6 } },
-                React.createElement("button", { type: "button", className: "gj-btn ghost", style: { flex: 1 }, onClick: () => {
-                        if (!navigator.geolocation) {
-                            alert("Este dispositivo no permite obtener la ubicación.");
-                            return;
+                React.createElement("button", { type: "button", className: "gj-btn ghost", style: { flex: 1 }, onClick: async () => {
+                        const coord = await getPosicionActual();
+                        if (coord) {
+                            set("gpsLat", coord.lat);
+                            set("gpsLng", coord.lng);
                         }
-                        navigator.geolocation.getCurrentPosition(pos => { set("gpsLat", pos.coords.latitude); set("gpsLng", pos.coords.longitude); }, () => alert("No se ha podido obtener la ubicación. Puedes escribirla a mano abajo si la conoces."));
+                        else {
+                            alert("No se ha podido obtener la ubicación. Puedes escribirla a mano abajo si la conoces.");
+                        }
                     } }, "\uD83D\uDCCD Capturar ubicaci\u00F3n actual")),
             React.createElement("div", { className: "gj-grid2", style: { marginTop: 6 } },
                 React.createElement("input", { className: "gj-input", type: "number", step: "0.000001", value: (_a = form.gpsLat) !== null && _a !== void 0 ? _a : "", onChange: e => set("gpsLat", e.target.value), placeholder: "Latitud" }),
