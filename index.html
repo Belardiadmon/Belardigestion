@@ -13635,7 +13635,21 @@ function getPosicionActual() {
             resolve(null);
             return;
         }
-        navigator.geolocation.getCurrentPosition(pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }), () => resolve(null), { timeout: 8000, maximumAge: 0 });
+        // Con poca cobertura o el GPS recién arrancado, conseguir una posición desde cero puede
+        // tardar más de lo que dábamos antes (8s) y fallar sin más. Damos más margen (20s) y
+        // aceptamos una posición de hasta 1 minuto de antigüedad si el teléfono ya tenía una:
+        // es mucho más fiable y, para este uso (saber en qué jardín/nave estaba), de sobra precisa.
+        const intentar = (opciones, siFallaIntentarSinCache) => {
+            navigator.geolocation.getCurrentPosition(pos => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }), () => {
+                if (siFallaIntentarSinCache) {
+                    intentar({ timeout: 15000, maximumAge: 0, enableHighAccuracy: false }, false);
+                }
+                else {
+                    resolve(null);
+                }
+            }, opciones);
+        };
+        intentar({ timeout: 20000, maximumAge: 60000, enableHighAccuracy: true }, true);
     });
 }
 function distanciaKm(lat1, lng1, lat2, lng2) {
@@ -14803,7 +14817,8 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
     const completados = stops.filter(s => s.stop.estado === "completado");
     const pendientesAviso = allStopsPendientesAviso(data);
     const avisados = completados.filter(s => s.stop.notificado);
-    const horasPersonaHoy = completados.reduce((acc, s) => acc + diffHours(s.stop.horaInicio, s.stop.horaFin) * (s.stop.crewSize || s.order.workerIds.length), 0);
+    const horasActividadesExtraHoy = data.orders.filter(o => o.fecha === todayStr()).reduce((acc, o) => acc + (o.actividadesExtra || []).reduce((s, a) => s + duracionActividadHoras(a, o), 0), 0);
+    const horasPersonaHoy = completados.reduce((acc, s) => acc + diffHours(s.stop.horaInicio, s.stop.horaFin) * (s.stop.crewSize || s.order.workerIds.length), 0) + horasActividadesExtraHoy;
     const avisosAlmuerzo = [];
     data.orders.filter(o => o.fecha === todayStr()).forEach(o => {
         Object.entries(o.porTrabajadorAlmuerzo || {}).forEach(([wid, mio]) => {
@@ -16967,7 +16982,7 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 const distMin = Math.min(...clientesRuta.map(c => distanciaKm(pos.lat, pos.lng, c.lat, c.lng)));
                 return distMin > 0.05;
             });
-            mio.avisoUbicacion = fueraDeRango || coordsAComprobar.length === 0;
+            mio.avisoUbicacion = fueraDeRango;
         }
         order.porTrabajadorAlmuerzo[workerId] = mio;
         next.historialAlmuerzos = next.historialAlmuerzos || [];
