@@ -15627,11 +15627,14 @@ function SincronizacionView({ data, persist }) {
     };
     const sincronizarAhora = async () => {
         setSincronizando(true);
-        // Primero reintentamos SUBIR los datos de este móvil, por si el último guardado se quedó
-        // a medias (sin llegar a Supabase). Así nunca se sustituyen cambios locales sin subir por
-        // una versión más antigua que estuviera en el servidor.
-        await persist(data);
-        await window.gjSyncManualAhora(STORAGE_KEY);
+        // Primero comprobamos si el servidor tiene algo más nuevo que este móvil todavía no conoce
+        // (por ejemplo, un fichaje de otro trabajador que aún no ha llegado aquí). Solo si el
+        // servidor NO tiene nada más nuevo, volvemos a subir esta copia local, por si el último
+        // guardado se hubiera quedado a medias sin llegar a Supabase. Así nunca se sustituye por
+        // accidente un cambio reciente de otro dispositivo por una copia local más antigua.
+        const remoto = await window.gjSyncManualAhora(STORAGE_KEY);
+        if (!remoto)
+            await persist(data);
         setSincronizando(false);
     };
     const conectado = estado.estado === "conectado";
