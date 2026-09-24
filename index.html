@@ -16285,6 +16285,23 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             " ",
                             s.observaciones ? "Editar observación" : "Añadir observación")) : null));
                 }),
+                adminMode && (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
+                    React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 4 } }, "Otras actividades fichadas:"),
+                    (o.actividadesExtra || []).slice().sort((a, b) => (a.horaInicio || "").localeCompare(b.horaInicio || "")).map(a => {
+                        var _a;
+                        const w = getWorker(a.workerId);
+                        const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga en nave" : a.categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
+                        return (React.createElement("div", { key: a.id, style: { fontSize: 12, marginBottom: 2 } },
+                            React.createElement("span", { style: { fontWeight: 600 } }, (w === null || w === void 0 ? void 0 : w.nombre) || "?"),
+                            ": ",
+                            etiquetaCat,
+                            a.lugar ? ` \u2014 ${a.lugar}` : "",
+                            " (",
+                            a.horaInicio || "?",
+                            "\u2013",
+                            a.horaFin || "en curso",
+                            ")"));
+                    }))),
                 adminMode && (React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 } }, o.workerIds.map(wid => {
                     const w = getWorker(wid);
                     const companeros = o.workerIds.filter(id => id !== wid).map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean);
