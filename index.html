@@ -15996,6 +15996,38 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const [editingFichaje, setEditingFichaje] = useState(null); // orderId+clienteId+workerId
     const [fichajeInicio, setFichajeInicio] = useState("");
     const [fichajeFin, setFichajeFin] = useState("");
+    const [fichajeResultado, setFichajeResultado] = useState("hecho");
+    const [editingJornada, setEditingJornada] = useState(null); // orderId+workerId
+    const [editingAlmuerzo, setEditingAlmuerzo] = useState(null); // orderId+workerId
+    const [editingActExtra, setEditingActExtra] = useState(null); // actividadId
+    const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: entrada || null, salidaHora: salida || null, validadoPorAdmin: true };
+        persist(next);
+        setEditingJornada(null);
+    };
+    const guardarAlmuerzoManual = (orderId, workerId, inicio, fin) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
+        order.porTrabajadorAlmuerzo[workerId] = { ...(order.porTrabajadorAlmuerzo[workerId] || {}), inicio: inicio || null, fin: fin || null, validadoPorAdmin: true };
+        persist(next);
+        setEditingAlmuerzo(null);
+    };
+    const guardarActExtraManual = (orderId, actividadId, inicio, fin) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+        if (act) {
+            act.horaInicio = inicio || null;
+            act.horaFin = fin || null;
+            act.validadoPorAdmin = true;
+        }
+        persist(next);
+        setEditingActExtra(null);
+    };
     const guardarFichajeManual = (orderId, clienteId, workerId) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -16007,7 +16039,7 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         stop.porTrabajador[workerId] = {
             ...actual,
             estado: horaFin ? "completado" : (horaInicio ? "en_progreso" : "pendiente"),
-            resultado: horaFin ? (actual.resultado || "hecho") : actual.resultado,
+            resultado: horaFin ? fichajeResultado : actual.resultado,
             horaInicio,
             horaFin,
             // La corrección manual sustituye cualquier pausa/reanudación anterior por un único tramo,
@@ -16015,6 +16047,18 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
             tramos: horaInicio ? [{ horaInicio, coordInicio: actual.coordInicio || null, horaFin, coordFin: actual.coordFin || null }] : [],
             validadoPorAdmin: true,
         };
+        // También actualizamos el resumen de la parada (el estado que se ve arriba del todo),
+        // para que quede coherente con la corrección que acaba de hacer el administrador.
+        if (horaFin) {
+            stop.horaInicio = stop.horaInicio || horaInicio;
+            stop.horaFin = horaFin;
+            stop.estado = "completado";
+            stop.resultado = fichajeResultado;
+        }
+        else if (horaInicio) {
+            stop.horaInicio = stop.horaInicio || horaInicio;
+            stop.estado = "en_progreso";
+        }
         persist(next);
         setEditingFichaje(null);
         setFichajeInicio("");
@@ -16229,6 +16273,13 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             (j === null || j === void 0 ? void 0 : j.salidaCoord) ? (React.createElement("a", { href: mapsLinkCoord(j.salidaCoord), target: "_blank", rel: "noreferrer" },
                                 "\uD83D\uDCCD salida ",
                                 j.salidaHora)) : (j === null || j === void 0 ? void 0 : j.salidaHora) ? `salida ${j.salidaHora}` : "sin salida",
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingJornada(o.id + wid); setFichajeInicio((j === null || j === void 0 ? void 0 : j.entradaHora) || ""); setFichajeFin((j === null || j === void 0 ? void 0 : j.salidaHora) || ""); } },
+                                React.createElement(Pencil, { size: 10 })),
+                            editingJornada === o.id + wid && (React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value) }),
+                                React.createElement("span", null, "\u2013"),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeFin, onChange: e => setFichajeFin(e.target.value) }),
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarJornadaManual(o.id, wid, fichajeInicio, fichajeFin) }, "Guardar"))),
                             (j === null || j === void 0 ? void 0 : j.avisoUbicacionSalida) && (React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F la salida no coincide con la nave")),
                             React.createElement("label", { style: { display: "flex", alignItems: "center", gap: 4, marginTop: 3, fontWeight: 400 } },
                                 React.createElement("input", { type: "checkbox", checked: (j === null || j === void 0 ? void 0 : j.excepcionHorario) || false, onChange: e => actualizarExcepcionHorario(o.id, wid, "excepcionHorario", e.target.checked) }),
@@ -16247,7 +16298,14 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                     alm.inicioCoord ? React.createElement("a", { href: mapsLinkCoord(alm.inicioCoord), target: "_blank", rel: "noreferrer" }, alm.inicio) : alm.inicio,
                                     " \u2013 ",
                                     alm.fin ? (alm.finCoord ? React.createElement("a", { href: mapsLinkCoord(alm.finCoord), target: "_blank", rel: "noreferrer" }, alm.fin) : alm.fin) : "en curso",
-                                    (alm.avisoTiempo || alm.avisoUbicacion) && React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F"));
+                                    (alm.avisoTiempo || alm.avisoUbicacion) && React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F"),
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingAlmuerzo(o.id + wid); setFichajeInicio(alm.inicio || ""); setFichajeFin(alm.fin || ""); } },
+                                        React.createElement(Pencil, { size: 10 })),
+                                    editingAlmuerzo === o.id + wid && (React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
+                                        React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value) }),
+                                        React.createElement("span", null, "\u2013"),
+                                        React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeFin, onChange: e => setFichajeFin(e.target.value) }),
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarAlmuerzoManual(o.id, wid, fichajeInicio, fichajeFin) }, "Guardar"))));
                             })())));
                     }))),
                 o.stops.map((s, i) => {
@@ -16279,13 +16337,16 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                     React.createElement("span", { style: { fontWeight: 600 } }, w.nombre, ":"),
                                     React.createElement("input", { className: "gj-input", type: "time", style: { width: 90, padding: "2px 4px", fontSize: 11.5 }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value), placeholder: "inicio" }),
                                     React.createElement("input", { className: "gj-input", type: "time", style: { width: 90, padding: "2px 4px", fontSize: 11.5 }, value: fichajeFin, onChange: e => setFichajeFin(e.target.value), placeholder: "fin" }),
+                                    React.createElement("select", { className: "gj-select", style: { padding: "2px 4px", fontSize: 11.5, width: "auto" }, value: fichajeResultado, onChange: e => setFichajeResultado(e.target.value) },
+                                        React.createElement("option", { value: "hecho" }, "Hecho"),
+                                        React.createElement("option", { value: "no_hecho" }, "No hecho")),
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarFichajeManual(o.id, s.clienteId, wid) }, "Guardar"),
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => setEditingFichaje(null) }, "Cancelar")));
                             }
                             return (React.createElement("span", { key: wid, style: { marginRight: 10 } },
                                 `${w.nombre}: ${txt}`,
                                 (ficha === null || ficha === void 0 ? void 0 : ficha.validadoPorAdmin) && " (validado)",
-                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10, marginLeft: 3 }, title: "Corregir fichaje de este trabajador", onClick: () => { setEditingFichaje(fkey); setFichajeInicio((ficha === null || ficha === void 0 ? void 0 : ficha.horaInicio) || ""); setFichajeFin((ficha === null || ficha === void 0 ? void 0 : ficha.horaFin) || ""); } },
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10, marginLeft: 3 }, title: "Corregir fichaje de este trabajador", onClick: () => { setEditingFichaje(fkey); setFichajeInicio((ficha === null || ficha === void 0 ? void 0 : ficha.horaInicio) || ""); setFichajeFin((ficha === null || ficha === void 0 ? void 0 : ficha.horaFin) || ""); setFichajeResultado((ficha === null || ficha === void 0 ? void 0 : ficha.resultado) || "hecho"); } },
                                     React.createElement(Pencil, { size: 10 }))));
                         }))),
                         adminMode && (s.coordInicio || s.coordFin) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 2, fontSize: 11.5 } },
@@ -16338,6 +16399,13 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             "\u2013",
                             a.horaFin || "en curso",
                             ")",
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingActExtra(a.id); setFichajeInicio(a.horaInicio || ""); setFichajeFin(a.horaFin || ""); } },
+                                React.createElement(Pencil, { size: 10 })),
+                            editingActExtra === a.id && (React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value) }),
+                                React.createElement("span", null, "\u2013"),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeFin, onChange: e => setFichajeFin(e.target.value) }),
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarActExtraManual(o.id, a.id, fichajeInicio, fichajeFin) }, "Guardar"))),
                             React.createElement("div", { style: { display: "flex", gap: 10, fontSize: 11, marginTop: 1 } },
                                 a.coordInicio ? React.createElement("a", { href: mapsLinkCoord(a.coordInicio), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n inicio") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
                                 a.horaFin && (a.coordFin ? React.createElement("a", { href: mapsLinkCoord(a.coordFin), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n fin") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin")))));
