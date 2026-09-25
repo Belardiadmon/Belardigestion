@@ -16867,6 +16867,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     };
     const marcarNoHecho = async (orderId, clienteId) => {
         var _a;
+        const orderChk2 = data.orders.find(o => o.id === orderId);
+        const stopChk2 = orderChk2 === null || orderChk2 === void 0 ? void 0 : orderChk2.stops.find(s => s.clienteId === clienteId);
+        const miFichaChk2 = stopChk2 === null || stopChk2 === void 0 ? void 0 : stopChk2.porTrabajador && stopChk2.porTrabajador[workerId];
+        if (!(miFichaChk2 === null || miFichaChk2 === void 0 ? void 0 : miFichaChk2.horaInicio)) {
+            if (!confirm("No has pulsado \"Iniciar\" en esta parada, as\u00ED que no hay hora de inicio guardada. Si contin\u00faas, se guardar\u00e1 como que has empezado y terminado ahora mismo.\n\n\u00bfQuieres continuar igualmente?"))
+                return;
+        }
         const coord = await getPosicionActual();
         const hora = nowTime();
         const next = structuredClone(data);
@@ -16989,6 +16996,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         persist(next);
     };
     const marcarHecho = async (orderId, clienteId) => {
+        const orderChk = data.orders.find(o => o.id === orderId);
+        const stopChk = orderChk === null || orderChk === void 0 ? void 0 : orderChk.stops.find(s => s.clienteId === clienteId);
+        const miFichaChk = stopChk === null || stopChk === void 0 ? void 0 : stopChk.porTrabajador && stopChk.porTrabajador[workerId];
+        if (!(miFichaChk === null || miFichaChk === void 0 ? void 0 : miFichaChk.horaInicio)) {
+            if (!confirm("No has pulsado \"Iniciar\" en esta parada, as\u00ED que no hay hora de inicio guardada. Si contin\u00faas, se guardar\u00e1 como que has empezado y terminado ahora mismo.\n\n\u00bfQuieres marcarlo como hecho igualmente?"))
+                return;
+        }
         const coord = await getPosicionActual();
         const hora = nowTime();
         const next = structuredClone(data);
@@ -18425,7 +18439,78 @@ function RevisionesMedicasView({ data, persist, getWorker }) {
                         React.createElement("input", { className: "gj-input", type: "file", accept: "image/*,application/pdf", onChange: e => { subirDocumento(r.id, e.target.files); e.target.value = ""; } })))))));
         })));
 }
-function HorasView({ data, persist, getWorker, adminMode }) {
+function ResumenDiarioView({ data, getWorker, getClient }) {
+    const [fecha, setFecha] = useState(todayStr());
+    const ordersDelDia = data.orders.filter(o => o.fecha === fecha);
+    const workerIds = [...new Set(ordersDelDia.flatMap(o => o.workerIds))];
+    const trabajadores = workerIds.map(id => getWorker(id)).filter(Boolean).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const filas = trabajadores.map(w => {
+        let horasMantenimiento = 0, horasObra = 0, horasAlmuerzo = 0, horasDesplazamiento = 0, horasOtras = 0;
+        let entrada = null, salida = null;
+        ordersDelDia.filter(o => o.workerIds.includes(w.id)).forEach(o => {
+            const j = o.porTrabajadorJornada && o.porTrabajadorJornada[w.id];
+            if (j === null || j === void 0 ? void 0 : j.entradaHora) {
+                if (!entrada || j.entradaHora < entrada)
+                    entrada = j.entradaHora;
+            }
+            if (j === null || j === void 0 ? void 0 : j.salidaHora) {
+                if (!salida || j.salidaHora > salida)
+                    salida = j.salidaHora;
+            }
+            (o.stops || []).forEach(s => {
+                const dur = duracionStopHorasTrabajador(s, w.id, o);
+                if (dur <= 0)
+                    return;
+                const cliente = getClient(s.clienteId);
+                if (cliente === null || cliente === void 0 ? void 0 : cliente.esObra)
+                    horasObra += dur;
+                else
+                    horasMantenimiento += dur;
+            });
+            const miAlm = o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[w.id];
+            if ((miAlm === null || miAlm === void 0 ? void 0 : miAlm.inicio) && (miAlm === null || miAlm === void 0 ? void 0 : miAlm.fin)) {
+                horasAlmuerzo += diffHours(miAlm.inicio, miAlm.fin);
+            }
+            horasDesplazamiento += desplazamientoHorasOrden(o, w.id);
+            (o.actividadesExtra || []).filter(a => a.workerId === w.id && a.horaFin).forEach(a => { horasOtras += duracionActividadHoras(a, o); });
+        });
+        const totalPartes = horasMantenimiento + horasObra + horasAlmuerzo + horasDesplazamiento + horasOtras;
+        const totalJornada = (entrada && salida) ? diffHours(entrada, salida) : null;
+        const diferencia = totalJornada !== null ? totalJornada - totalPartes : null;
+        return { worker: w, entrada, salida, horasMantenimiento, horasObra, horasAlmuerzo, horasDesplazamiento, horasOtras, totalPartes, totalJornada, diferencia };
+    });
+    return (React.createElement("div", null,
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Para cada trabajador que ficho algo ese d\u00EDa: el desglose de d\u00F3nde se fue su tiempo, y el total, para comprobar que las partes cuadran con la jornada completa (entrada\u2013salida)."),
+        React.createElement("div", { className: "gj-field" },
+            React.createElement("label", { className: "gj-label" }, "Fecha"),
+            React.createElement("input", { className: "gj-input", type: "date", value: fecha, onChange: e => setFecha(e.target.value) })),
+        filas.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Nadie ficho nada ese d\u00EDa."),
+        filas.map(f => (React.createElement("div", { className: "gj-card", key: f.worker.id },
+            React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center" } },
+                React.createElement("div", { style: { fontWeight: 600 } }, f.worker.nombre),
+                React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } },
+                    f.entrada || "?",
+                    " \u2013 ",
+                    f.salida || "en curso")),
+            React.createElement("div", { style: { fontSize: 13, marginTop: 8, lineHeight: 1.9 } },
+                React.createElement("div", null, "\uD83C\uDF33 Mantenimiento: ", React.createElement("b", null, fmtHM(f.horasMantenimiento))),
+                f.horasObra > 0 && React.createElement("div", null, "\uD83C\uDFD7\uFE0F Obra: ", React.createElement("b", null, fmtHM(f.horasObra))),
+                React.createElement("div", null, "\uD83C\uDF7D\uFE0F Almuerzo: ", React.createElement("b", null, fmtHM(f.horasAlmuerzo))),
+                React.createElement("div", null, "\uD83D\uDE97 Desplazamientos: ", React.createElement("b", null, fmtHM(f.horasDesplazamiento))),
+                f.horasOtras > 0 && React.createElement("div", null, "\uD83D\uDCE6 Carga/almac\u00E9n/talleres/permisos: ", React.createElement("b", null, fmtHM(f.horasOtras)))),
+            React.createElement("div", { style: { marginTop: 10, paddingTop: 8, borderTop: "1px solid var(--line)", display: "flex", justifyContent: "space-between" } },
+                React.createElement("div", null,
+                    React.createElement("b", null, "Suma de las partes: "),
+                    fmtHM(f.totalPartes)),
+                React.createElement("div", null,
+                    React.createElement("b", null, "Jornada completa: "),
+                    f.totalJornada !== null ? fmtHM(f.totalJornada) : "\u2014")),
+            f.diferencia !== null && Math.abs(f.diferencia) > (1 / 60) && (React.createElement("div", { style: { fontSize: 12.5, color: "var(--warn)", fontWeight: 600, marginTop: 4 } },
+                "\u26A0\uFE0F Descuadre de ",
+                fmtHM(Math.abs(f.diferencia)),
+                " sin explicar entre la jornada y la suma de las partes.")))))));
+}
+function HorasView({ data, persist, getWorker, getClient, adminMode }) {
     var _a;
     const now = new Date();
     const [workerId, setWorkerId] = useState(((_a = data.workers[0]) === null || _a === void 0 ? void 0 : _a.id) || "");
@@ -18601,10 +18686,11 @@ function HorasView({ data, persist, getWorker, adminMode }) {
             return "";
         return "long";
     };
-    const interruptorSubvista = React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 10 } },
+    const interruptorSubvista = React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 10, flexWrap: "wrap" } },
         React.createElement("button", { className: "gj-btn" + (subvista === "horas" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("horas") }, "Horas"),
         React.createElement("button", { className: "gj-btn" + (subvista === "almuerzos" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("almuerzos") }, "\uD83C\uDF7D\uFE0F Almuerzos"),
-        React.createElement("button", { className: "gj-btn" + (subvista === "revisiones" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("revisiones") }, "\uD83E\uDE7A Rev. m\u00E9dicas"));
+        React.createElement("button", { className: "gj-btn" + (subvista === "revisiones" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("revisiones") }, "\uD83E\uDE7A Rev. m\u00E9dicas"),
+        React.createElement("button", { className: "gj-btn" + (subvista === "resumen" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("resumen") }, "\uD83D\uDCCB Resumen diario"));
     if (subvista === "almuerzos") {
         return (React.createElement("div", null,
             React.createElement("h2", { className: "gj-h2" }, "Horas, vacaciones, bajas y permisos"),
@@ -18616,6 +18702,12 @@ function HorasView({ data, persist, getWorker, adminMode }) {
             React.createElement("h2", { className: "gj-h2" }, "Horas, vacaciones, bajas y permisos"),
             interruptorSubvista,
             React.createElement(RevisionesMedicasView, { data, persist, getWorker })));
+    }
+    if (subvista === "resumen") {
+        return (React.createElement("div", null,
+            React.createElement("h2", { className: "gj-h2" }, "Horas, vacaciones, bajas y permisos"),
+            interruptorSubvista,
+            React.createElement(ResumenDiarioView, { data, getWorker, getClient })));
     }
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Horas, vacaciones, bajas y permisos"),
