@@ -106,6 +106,23 @@ window.storage = {
         try {
           const parsed = JSON.parse(value);
           const ahoraISO = new Date().toISOString();
+          const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
+          // Comprobación de seguridad ANTES de subir: si el servidor tiene ya una versión más nueva
+          // que la última que este móvil conoce, significa que otro dispositivo ha guardado algo
+          // desde la última vez que nos pusimos al día — y esa subida nuestra, al ser la copia
+          // completa de los datos, se lo llevaría por delante. En ese caso NO subimos: nos ponemos
+          // al día con lo del servidor y avisamos de que este guardado en concreto no se ha hecho,
+          // para no destruir nada de nadie.
+          if (ultimaConocida) {
+            const { data: filaActual, error: errorLectura } = await client.from("gj_app_data").select("updated_at").eq("id", 1).single();
+            if (!errorLectura && filaActual && filaActual.updated_at && filaActual.updated_at > ultimaConocida) {
+              const remoto = await gjSincronizarConSupabase(key);
+              if (remoto && gjRemoteChangeCallback)
+                gjRemoteChangeCallback(remoto);
+              window.gjSyncStatus = { estado: "conflicto", ultimoError: "Otro dispositivo guard\u00F3 algo m\u00E1s reciente; este cambio concreto no se ha subido, para no perder lo suyo. Vuelve a intentarlo.", ultimaSync: window.gjSyncStatus.ultimaSync };
+              return null;
+            }
+          }
           const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
           if (error) throw error;
           localStorage.setItem(GJ_LAST_SYNC_KEY, ahoraISO);
@@ -14483,10 +14500,10 @@ function App() {
         setData(next);
         try {
             const r = await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
-            setSaveError(!r);
+            setSaveError(!r ? ((window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") ? "conflicto" : "error") : false);
         }
         catch (e) {
-            setSaveError(true);
+            setSaveError("error");
         }
     }, []);
     useEffect(() => {
@@ -14670,12 +14687,13 @@ function App() {
                     React.createElement("h1", null, data.settings.nombreEmpresa),
                     React.createElement("div", { className: "gj-sub" },
                         "Gesti\u00F3n de mantenimientos ",
-                        saveError ? "· sin conexión con el guardado" : "")),
+                        saveError === "error" ? "\u00B7 sin conexi\u00F3n con el guardado" : "")),
                 adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: () => setAdminRole(null) },
                     React.createElement(Unlock, { size: 14 }),
                     " ",
                     adminRole === "admin1" ? data.settings.adminNombre1 : data.settings.adminNombre2)) : (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: requestUnlock },
                     React.createElement(Lock, { size: 14 })))),
+            saveError === "conflicto" && React.createElement("div", { className: "gj-no-print", style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F Otro m\u00F3vil guard\u00F3 algo justo ahora. Este \u00FAltimo cambio tuyo NO se ha subido, para no perder lo suyo \u2014 vuelve a hacerlo."),
             pinPrompt && (React.createElement("div", { className: "gj-pin-overlay gj-no-print" },
                 React.createElement("div", { className: "gj-label" }, "PIN de administrador"),
                 React.createElement("div", { style: { display: "flex", gap: 6 } },
@@ -20059,6 +20077,8 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
     };
     const [confirmarFusion, setConfirmarFusion] = useState(null); // coincidente, o null
     const marcarAprobado = () => {
+        if (!confirm("¿Seguro que quieres marcar este presupuesto como APROBADO? Se creará (o actualizará) la ficha del cliente y pasará a Trabajos."))
+            return;
         const coincidente = buscarClienteCoincidente(data.clients, p);
         if (coincidente) {
             setConfirmarFusion(coincidente);
@@ -20650,6 +20670,8 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
     const printRef = useRef(null);
     const [confirmarFusion, setConfirmarFusion] = useState(null); // coincidente, o null
     const marcarAprobado = () => {
+        if (!confirm("¿Seguro que quieres marcar este presupuesto como APROBADO? Se creará (o actualizará) la ficha del cliente y pasará a Trabajos."))
+            return;
         const coincidente = buscarClienteCoincidente(data.clients, p);
         if (coincidente) {
             setConfirmarFusion(coincidente);
