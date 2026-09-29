@@ -14414,7 +14414,7 @@ const GROUPS = [
             { id: "solicitudes-vacaciones", label: "Vacaciones", icon: Umbrella },
             { id: "epis", label: "EPIs y ropa", icon: Shirt },
             { id: "documentacion", label: "Documentaci\u00F3n", icon: FolderIcon },
-            { id: "bolsa-materiales", label: "Bolsa de materiales", icon: PackageIcon },
+            { id: "bolsa-materiales", label: "Almac\u00E9n", icon: PackageIcon },
             { id: "horas", label: "Horas", icon: Clock },
             { id: "clientes", label: "Clientes", icon: Users },
             { id: "equipo", label: "Equipo", icon: HardHat },
@@ -18537,13 +18537,18 @@ function BloqueDocumentos({ titulo, tipos, documentos, onAñadirTipo, onQuitarTi
             React.createElement("input", { className: "gj-input", value: nuevoTipo, onChange: e => setNuevoTipo(e.target.value), placeholder: "A\u00F1adir otro tipo de documento" }),
             React.createElement("button", { className: "gj-btn ghost", disabled: !nuevoTipo.trim(), onClick: () => { onAñadirTipo(nuevoTipo.trim()); setNuevoTipo(""); } }, "A\u00F1adir"))));
 }
-function BolsaMaterialesView({ data, persist }) {
+function BolsaMaterialesView({ data, persist, getWorker }) {
     const [proveedor, setProveedor] = useState("");
     const [material, setMaterial] = useState("");
+    const [familia, setFamilia] = useState("");
     const [cantidad, setCantidad] = useState("");
     const [editandoId, setEditandoId] = useState(null);
     const [cantidadEdit, setCantidadEdit] = useState("");
+    const [familiaEdit, setFamiliaEdit] = useState("");
+    const [fotoGrande, setFotoGrande] = useState(null);
+    const [familiasCerradas, setFamiliasCerradas] = useState({});
     const bolsa = data.almacenGeneral || [];
+    const SIN_FAMILIA = "Sin familia";
     const añadirManual = () => {
         if (!proveedor.trim() || !material.trim() || !cantidad || Number(cantidad) <= 0)
             return;
@@ -18552,21 +18557,25 @@ function BolsaMaterialesView({ data, persist }) {
         const existente = next.almacenGeneral.find(s => s.proveedor.toLowerCase() === proveedor.trim().toLowerCase() && s.material.toLowerCase() === material.trim().toLowerCase());
         if (existente) {
             existente.cantidad += Number(cantidad);
+            if (familia.trim())
+                existente.familia = familia.trim();
         }
         else {
-            next.almacenGeneral.push({ id: uid("stk"), proveedor: proveedor.trim(), material: material.trim(), cantidad: Number(cantidad) });
+            next.almacenGeneral.push({ id: uid("stk"), proveedor: proveedor.trim(), material: material.trim(), familia: familia.trim() || SIN_FAMILIA, cantidad: Number(cantidad) });
         }
         persist(next);
-        setProveedor(""); setMaterial(""); setCantidad("");
+        setProveedor(""); setMaterial(""); setFamilia(""); setCantidad("");
     };
-    const guardarCantidad = (id) => {
+    const guardarEdicion = (id) => {
         const next = structuredClone(data);
         next.almacenGeneral = next.almacenGeneral || [];
         const item = next.almacenGeneral.find(s => s.id === id);
         if (item) {
             const v = Number(cantidadEdit);
-            if (v > 0)
+            if (v > 0) {
                 item.cantidad = v;
+                item.familia = familiaEdit.trim() || SIN_FAMILIA;
+            }
             else
                 next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== id);
         }
@@ -18574,37 +18583,72 @@ function BolsaMaterialesView({ data, persist }) {
         setEditandoId(null);
     };
     const eliminar = (id) => {
-        if (!confirm("¿Eliminar esta línea de la bolsa de materiales?"))
+        if (!confirm("¿Eliminar esta línea del almacén?"))
             return;
         const next = structuredClone(data);
         next.almacenGeneral = (next.almacenGeneral || []).filter(s => s.id !== id);
         persist(next);
     };
+    const porFamilia = {};
+    bolsa.forEach(s => {
+        const f = s.familia || SIN_FAMILIA;
+        porFamilia[f] = porFamilia[f] || [];
+        porFamilia[f].push(s);
+    });
+    const familiasOrdenadas = Object.keys(porFamilia).sort((a, b) => a === SIN_FAMILIA ? 1 : b === SIN_FAMILIA ? -1 : a.localeCompare(b));
+    const albaranes = [];
+    (data.orders || []).forEach(o => {
+        (o.actividadesExtra || []).forEach(a => {
+            if ((a.categoria === "almacenes" || a.categoria === "carga") && a.fotoAlbaran) {
+                albaranes.push({ fecha: o.fecha, workerId: a.workerId, lugar: a.lugar, horaInicio: a.horaInicio, fotoAlbaran: a.fotoAlbaran });
+            }
+        });
+    });
+    albaranes.sort((a, b) => (b.fecha + (b.horaInicio || "")).localeCompare(a.fecha + (a.horaInicio || "")));
     return (React.createElement("div", null,
-        React.createElement("h2", { className: "gj-h2" }, "Bolsa de materiales"),
-        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Materiales sobrantes de recogidas en almac\u00E9n, disponibles para usar en otro mantenimiento u obra. El administrador puede a\u00F1adir, corregir o eliminar l\u00edneas a mano."),
+        React.createElement("h2", { className: "gj-h2" }, "Almac\u00E9n"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Materiales disponibles por familia, con sus unidades, y los albaranes fotografiados en las recogidas. El administrador puede a\u00F1adir, corregir o eliminar l\u00edneas a mano en cualquier momento."),
         React.createElement("div", { className: "gj-card", style: { marginBottom: 12 } },
             React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 } }, "A\u00F1adir material a mano"),
             React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
-                React.createElement("input", { className: "gj-input", style: { flex: "1 1 140px" }, placeholder: "Proveedor", value: proveedor, onChange: e => setProveedor(e.target.value) }),
-                React.createElement("input", { className: "gj-input", style: { flex: "1 1 140px" }, placeholder: "Material", value: material, onChange: e => setMaterial(e.target.value) }),
+                React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Familia (ej: Riego, Abonos...)", value: familia, onChange: e => setFamilia(e.target.value) }),
+                React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Proveedor", value: proveedor, onChange: e => setProveedor(e.target.value) }),
+                React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Material", value: material, onChange: e => setMaterial(e.target.value) }),
                 React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 90 }, placeholder: "Cantidad", value: cantidad, onChange: e => setCantidad(e.target.value) }),
                 React.createElement("button", { className: "gj-btn primary", onClick: añadirManual }, "A\u00F1adir"))),
-        bolsa.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay materiales en la bolsa ahora mismo.") :
-            bolsa.slice().sort((a, b) => a.material.localeCompare(b.material)).map(s => (React.createElement("div", { className: "gj-card", key: s.id },
-                React.createElement("div", { className: "gj-row" },
-                    React.createElement("div", null,
-                        React.createElement("div", { style: { fontWeight: 600 } }, s.material),
-                        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, s.proveedor)),
-                    editandoId === s.id ? (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 80, padding: "3px 6px" }, value: cantidadEdit, onChange: e => setCantidadEdit(e.target.value), autoFocus: true }),
-                        React.createElement("button", { className: "gj-btn primary", style: { padding: "3px 8px" }, onClick: () => guardarCantidad(s.id) }, "Guardar"),
-                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px" }, onClick: () => setEditandoId(null) }, "Cancelar"))) : (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
-                        React.createElement("span", { style: { fontWeight: 600 } }, s.cantidad),
-                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => { setEditandoId(s.id); setCantidadEdit(String(s.cantidad)); } },
-                            React.createElement(Pencil, { size: 12 })),
-                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => eliminar(s.id) },
-                            React.createElement(Trash2, { size: 12, color: "var(--warn)" }))))))))));
+        React.createElement("h3", { className: "gj-h3" }, "Materiales por familia"),
+        bolsa.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay materiales en el almac\u00E9n ahora mismo.") :
+            familiasOrdenadas.map(f => (React.createElement("div", { key: f, style: { marginBottom: 10 } },
+                React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 6, cursor: "pointer", padding: "4px 2px" }, onClick: () => setFamiliasCerradas(p => ({ ...p, [f]: !p[f] })) },
+                    React.createElement(ChevronRight, { size: 14, style: { transform: familiasCerradas[f] ? "none" : "rotate(90deg)" } }),
+                    React.createElement("span", { style: { fontWeight: 700, fontSize: 13 } }, f),
+                    React.createElement("span", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, "(", porFamilia[f].length, ")")),
+                !familiasCerradas[f] && porFamilia[f].slice().sort((a, b) => a.material.localeCompare(b.material)).map(s => (React.createElement("div", { className: "gj-card", key: s.id, style: { marginLeft: 16 } },
+                    React.createElement("div", { className: "gj-row" },
+                        React.createElement("div", null,
+                            React.createElement("div", { style: { fontWeight: 600 } }, s.material),
+                            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, s.proveedor)),
+                        editandoId === s.id ? (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
+                            React.createElement("input", { className: "gj-input", style: { width: 100, padding: "3px 6px" }, placeholder: "Familia", value: familiaEdit, onChange: e => setFamiliaEdit(e.target.value) }),
+                            React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 70, padding: "3px 6px" }, value: cantidadEdit, onChange: e => setCantidadEdit(e.target.value), autoFocus: true }),
+                            React.createElement("button", { className: "gj-btn primary", style: { padding: "3px 8px" }, onClick: () => guardarEdicion(s.id) }, "Guardar"),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px" }, onClick: () => setEditandoId(null) }, "Cancelar"))) : (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                            React.createElement("span", { style: { fontWeight: 600 } }, s.cantidad),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => { setEditandoId(s.id); setCantidadEdit(String(s.cantidad)); setFamiliaEdit(s.familia || ""); } },
+                                React.createElement(Pencil, { size: 12 })),
+                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => eliminar(s.id) },
+                                React.createElement(Trash2, { size: 12, color: "var(--warn)" })))))))))),
+        React.createElement("h3", { className: "gj-h3" }, "Albaranes fotografiados"),
+        albaranes.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay ning\u00FAn albar\u00E1n fotografiado.") :
+            React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8 } }, albaranes.map((a, i) => {
+                const w = getWorker(a.workerId);
+                return React.createElement("div", { key: i, style: { width: 100, cursor: "pointer" }, onClick: () => setFotoGrande(a.fotoAlbaran) },
+                    React.createElement("img", { src: a.fotoAlbaran, alt: "Albar\u00E1n", style: { width: 100, height: 100, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
+                    React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", marginTop: 2 } }, fechaEs(a.fecha)),
+                    React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, (w === null || w === void 0 ? void 0 : w.nombre) || "?"));
+            })),
+        fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
+            React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })))));
 }
 function DocumentacionView({ data, persist, getWorker }) {
     const [seccionesCerradas, setSeccionesCerradas] = useState({});
@@ -23863,12 +23907,33 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("td", null, React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => eliminarEjercicioCerrado(e.id) }, "Eliminar")))))))))));
 }
 function RentabilidadObrasView({ data, persist }) {
+    const [detalleAbierto, setDetalleAbierto] = useState(null); // clienteId
+    const [gastoConcepto, setGastoConcepto] = useState("");
+    const [gastoTipo, setGastoTipo] = useState("subcontrata");
+    const [gastoImporte, setGastoImporte] = useState("");
     const obras = data.clients.filter(c => c.esObra);
     const costeHora = Number(data.settings.costeHora) || 0;
+    const añadirGasto = (clienteId) => {
+        if (!gastoConcepto.trim() || !gastoImporte || Number(gastoImporte) <= 0)
+            return;
+        const next = structuredClone(data);
+        const cli = next.clients.find(c => c.id === clienteId);
+        cli.gastosObra = cli.gastosObra || [];
+        cli.gastosObra.push({ id: uid("gas"), tipo: gastoTipo, concepto: gastoConcepto.trim(), importe: Number(gastoImporte), fecha: todayStr() });
+        persist(next);
+        setGastoConcepto(""); setGastoImporte("");
+    };
+    const eliminarGasto = (clienteId, gastoId) => {
+        const next = structuredClone(data);
+        const cli = next.clients.find(c => c.id === clienteId);
+        cli.gastosObra = (cli.gastosObra || []).filter(g => g.id !== gastoId);
+        persist(next);
+    };
     const filas = obras.map(c => {
         let horasPersona = 0;
         let primera = null, ultima = null;
         const materiales = [];
+        const materialesUsadosMap = {};
         data.orders.forEach(o => {
             o.stops.forEach(s => {
                 if (s.clienteId === c.id && s.estado === "completado") {
@@ -23881,12 +23946,23 @@ function RentabilidadObrasView({ data, persist }) {
                 if (s.clienteId === c.id && s.materiales && s.materiales.trim()) {
                     materiales.push({ fecha: o.fecha, materiales: s.materiales.trim() });
                 }
+                if (s.clienteId === c.id) {
+                    (s.materialesUsados || []).forEach(m => {
+                        const k = m.material + "|" + m.proveedor;
+                        materialesUsadosMap[k] = materialesUsadosMap[k] || { material: m.material, proveedor: m.proveedor, cantidad: 0 };
+                        materialesUsadosMap[k].cantidad += m.cantidad;
+                    });
+                }
             });
         });
-        const costeEstimado = horasPersona * costeHora;
+        const materialesUsados = Object.values(materialesUsadosMap);
+        const gastosObra = c.gastosObra || [];
+        const totalGastos = gastosObra.reduce((a, g) => a + g.importe, 0);
+        const costeManoObra = horasPersona * costeHora;
+        const costeEstimado = costeManoObra + totalGastos;
         const beneficio = c.presupuesto - costeEstimado;
         const margen = c.presupuesto > 0 ? (beneficio / c.presupuesto) * 100 : 0;
-        return { c, horasPersona, costeEstimado, beneficio, margen, primera, ultima, materiales };
+        return { c, horasPersona, costeManoObra, gastosObra, totalGastos, costeEstimado, beneficio, margen, primera, ultima, materiales, materialesUsados };
     });
     const totalPresupuesto = filas.reduce((a, f) => a + f.c.presupuesto, 0);
     const totalCoste = filas.reduce((a, f) => a + f.costeEstimado, 0);
@@ -23917,7 +23993,8 @@ function RentabilidadObrasView({ data, persist }) {
                         React.createElement("th", null, "Presupuesto"),
                         React.createElement("th", null, "Coste est."),
                         React.createElement("th", null, "Beneficio"),
-                        React.createElement("th", null, "Margen"))),
+                        React.createElement("th", null, "Margen"),
+                        React.createElement("th", null))),
                 React.createElement("tbody", null, filas.map(f => (React.createElement("tr", { key: f.c.id },
                     React.createElement("td", { style: { fontWeight: 600 } },
                         f.c.nombre,
@@ -23932,8 +24009,50 @@ function RentabilidadObrasView({ data, persist }) {
                     React.createElement("td", { style: { color: f.beneficio >= 0 ? "var(--good)" : "var(--warn)", fontWeight: 600 } }, eur(f.beneficio)),
                     React.createElement("td", null,
                         f.margen.toFixed(0),
-                        "%"))))))),
+                        "%"),
+                    React.createElement("td", null,
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 11.5 }, onClick: () => setDetalleAbierto(detalleAbierto === f.c.id ? null : f.c.id) }, detalleAbierto === f.c.id ? "Cerrar" : "Ver detalle")))))))),
         obras.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no hay clientes de obras dados de alta."),
+        detalleAbierto && (() => {
+            const f = filas.find(x => x.c.id === detalleAbierto);
+            if (!f)
+                return null;
+            return React.createElement("div", { className: "gj-card", style: { marginTop: 4, marginBottom: 12, border: "2px solid var(--primary)" } },
+                React.createElement("div", { className: "gj-h3", style: { marginTop: 0 } }, "Detalle completo \u2014 ", f.c.nombre),
+                React.createElement("div", { className: "gj-grid2", style: { marginBottom: 10 } },
+                    React.createElement("div", { className: "gj-stat" },
+                        React.createElement("div", { className: "n" }, fmtHM(f.horasPersona)),
+                        React.createElement("div", { className: "l" }, "Mano de obra (horas-persona) \u2014 ", eur(f.costeManoObra))),
+                    React.createElement("div", { className: "gj-stat" },
+                        React.createElement("div", { className: "n" }, eur(f.totalGastos)),
+                        React.createElement("div", { className: "l" }, "Subcontratas y alquileres")),
+                    React.createElement("div", { className: "gj-stat" },
+                        React.createElement("div", { className: "n" }, eur(f.costeEstimado)),
+                        React.createElement("div", { className: "l" }, "Coste total")),
+                    React.createElement("div", { className: "gj-stat" },
+                        React.createElement("div", { className: "n", style: { color: f.beneficio >= 0 ? "var(--good)" : "var(--warn)" } }, eur(f.beneficio)),
+                        React.createElement("div", { className: "l" }, "Beneficio (", f.margen.toFixed(0), "%)"))),
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 4 } }, "Materiales utilizados"),
+                f.materialesUsados.length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Ninguno registrado desde la bolsa/manual.") : f.materialesUsados.map((m, i) => React.createElement("div", { key: i, style: { fontSize: 12.5, marginBottom: 2 } }, m.material, " \u2014 ", m.cantidad, " (", m.proveedor, ")")),
+                f.materiales.length > 0 && (React.createElement("div", { style: { marginTop: 6 } },
+                    React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", fontWeight: 600 } }, "Notas de materiales:"),
+                    f.materiales.map((m, i) => React.createElement("div", { key: i, style: { fontSize: 12 } }, fechaEs(m.fecha), " \u2014 ", m.materiales)))),
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginTop: 10, marginBottom: 4 } }, "Subcontratas y alquileres"),
+                f.gastosObra.length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 4 } }, "Ninguno registrado todav\u00EDa.") : f.gastosObra.map(g => React.createElement("div", { key: g.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12.5, marginBottom: 2 } },
+                    React.createElement("span", null, g.tipo === "subcontrata" ? "\uD83D\uDC77 " : g.tipo === "alquiler" ? "\uD83D\uDE9C " : "\u2022 ", g.concepto, " (", fechaEs(g.fecha), ")"),
+                    React.createElement("span", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                        eur(g.importe),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px" }, onClick: () => eliminarGasto(f.c.id, g.id) },
+                            React.createElement(Trash2, { size: 11, color: "var(--warn)" }))))),
+                React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 6 } },
+                    React.createElement("select", { className: "gj-select", style: { flex: "0 0 130px" }, value: gastoTipo, onChange: e => setGastoTipo(e.target.value) },
+                        React.createElement("option", { value: "subcontrata" }, "Subcontrata"),
+                        React.createElement("option", { value: "alquiler" }, "Alquiler"),
+                        React.createElement("option", { value: "otro" }, "Otro")),
+                    React.createElement("input", { className: "gj-input", style: { flex: "1 1 140px" }, placeholder: "Concepto", value: gastoConcepto, onChange: e => setGastoConcepto(e.target.value) }),
+                    React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 90 }, placeholder: "Importe \u20AC", value: gastoImporte, onChange: e => setGastoImporte(e.target.value) }),
+                    React.createElement("button", { className: "gj-btn primary", onClick: () => añadirGasto(f.c.id) }, "A\u00F1adir")));
+        })(),
         React.createElement("h3", { className: "gj-h3", style: { marginTop: 12 } }, "Materiales utilizados por obra"),
         filas.filter(f => f.materiales.length > 0).length === 0 ? (React.createElement("div", { className: "gj-card gj-empty" }, "Todav\u00EDa no se han registrado materiales en ninguna obra.")) : (filas.filter(f => f.materiales.length > 0).map(f => (React.createElement("div", { className: "gj-card", key: f.c.id },
             React.createElement("div", { style: { fontWeight: 600, marginBottom: 4 } }, f.c.nombre),
