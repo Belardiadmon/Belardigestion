@@ -12938,6 +12938,7 @@ const X = gjMakeIcon("✕");
 const Send = gjMakeIcon("➤");
 const Mail = gjMakeIcon("✉");
 const Sprout = gjMakeIcon("🌱");
+const PackageIcon = gjMakeIcon("📦");
 const ChevronLeft = gjMakeIcon("‹");
 const ChevronRight = gjMakeIcon("›");
 const Trash2 = gjMakeIcon("🗑");
@@ -14413,6 +14414,7 @@ const GROUPS = [
             { id: "solicitudes-vacaciones", label: "Vacaciones", icon: Umbrella },
             { id: "epis", label: "EPIs y ropa", icon: Shirt },
             { id: "documentacion", label: "Documentaci\u00F3n", icon: FolderIcon },
+            { id: "bolsa-materiales", label: "Bolsa de materiales", icon: PackageIcon },
             { id: "horas", label: "Horas", icon: Clock },
             { id: "clientes", label: "Clientes", icon: Users },
             { id: "equipo", label: "Equipo", icon: HardHat },
@@ -14761,6 +14763,8 @@ function App() {
                     React.createElement(EpisView, { ...props })),
                 view === "documentacion" && React.createElement(AdminGate, { ...props },
                     React.createElement(DocumentacionView, { ...props })),
+                view === "bolsa-materiales" && React.createElement(AdminGate, { ...props },
+                    React.createElement(BolsaMaterialesView, { ...props })),
                 view === "pendientes" && React.createElement(PendientesView, { ...props }),
                 view === "riego" && React.createElement(RiegoView, { ...props }),
                 view === "clima" && React.createElement(ClimaView, { ...props }),
@@ -14859,6 +14863,8 @@ function allStopsPendientesAviso(data) {
 }
 function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }) {
     const [printStop, setPrintStop] = useState(null); // { orderId, clienteId }
+    const [editandoHorasPend, setEditandoHorasPend] = useState(null); // orderId en edición
+    const [horasPendBorrador, setHorasPendBorrador] = useState({}); // { workerId: { entrada, salida } }
     const stops = allStopsToday(data);
     const pendientes = stops.filter(s => s.stop.estado === "pendiente").length;
     const enProgreso = stops.filter(s => s.stop.estado === "en_progreso").length;
@@ -14874,12 +14880,44 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                 avisosAlmuerzo.push({ order: o, workerId: wid, mio });
         });
     });
-    const horasPendientes = data.orders.filter(o => minutosTotalesOrden(o) > 490 && !o.horasAprobadas);
+    const horasPendientes = data.orders.filter(o => minutosTotalesOrden(o) > 490 && !o.horasAprobadas && !o.horasDenegadas);
     const aprobarHoras = (orderId) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
         order.horasAprobadas = true;
+        order.horasDenegadas = false;
         persist(next);
+    };
+    const denegarHoras = (orderId) => {
+        if (!confirm("¿Denegar estas horas? Quedará constancia de que se han revisado y no se aprueban tal como están fichadas. El fichaje en sí no se borra ni se modifica."))
+            return;
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        order.horasAprobadas = false;
+        order.horasDenegadas = true;
+        persist(next);
+    };
+    const abrirModificarHoras = (o) => {
+        const borrador = {};
+        o.workerIds.forEach(wid => {
+            const j = (o.porTrabajadorJornada && o.porTrabajadorJornada[wid]) || {};
+            borrador[wid] = { entrada: j.entradaHora || "", salida: j.salidaHora || "" };
+        });
+        setHorasPendBorrador(borrador);
+        setEditandoHorasPend(o.id);
+    };
+    const guardarModificacionHoras = (orderId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+        Object.entries(horasPendBorrador).forEach(([wid, v]) => {
+            order.porTrabajadorJornada[wid] = { ...(order.porTrabajadorJornada[wid] || {}), entradaHora: v.entrada || null, salidaHora: v.salida || null, validadoPorAdmin: true };
+        });
+        // Al corregir las horas a mano, se da la jornada por revisada y aprobada tal como queda.
+        order.horasAprobadas = true;
+        order.horasDenegadas = false;
+        persist(next);
+        setEditandoHorasPend(null);
     };
     const notificar = (orderId, clienteId, canal) => {
         const next = structuredClone(data);
@@ -14970,6 +15008,7 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
             horasPendientes.map(o => {
                 const crew = o.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
                 const totalMin = minutosTotalesOrden(o);
+                const editando = editandoHorasPend === o.id;
                 return (React.createElement("div", { className: "gj-card", key: o.id, style: { background: "var(--warn-bg)" } },
                     React.createElement("div", { className: "gj-row" },
                         React.createElement("div", null,
@@ -14979,7 +15018,33 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
                                 " \u00B7 ",
                                 fmtHM(totalMin / 60),
                                 " en total")),
-                        React.createElement("button", { className: "gj-btn primary", onClick: () => aprobarHoras(o.id) }, "Aprobar"))));
+                        !editando && React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                            React.createElement("button", { className: "gj-btn primary", onClick: () => aprobarHoras(o.id) }, "Aprobar"),
+                            React.createElement("button", { className: "gj-btn ghost", onClick: () => abrirModificarHoras(o) }, "Modificar"),
+                            React.createElement("button", { className: "gj-btn danger", onClick: () => denegarHoras(o.id) }, "Denegar"))),
+                    editando && (React.createElement("div", { style: { marginTop: 8, borderTop: "1px solid rgba(0,0,0,.08)", paddingTop: 8 } },
+                        o.workerIds.map(wid => {
+                            var _a;
+                            const w = getWorker(wid);
+                            const v = horasPendBorrador[wid] || { entrada: "", salida: "" };
+                            return (React.createElement("div", { key: wid, style: { display: "flex", gap: 6, alignItems: "center", marginBottom: 6, flexWrap: "wrap" } },
+                                React.createElement("span", { style: { fontWeight: 600, fontSize: 12.5, minWidth: 70 } }, (_a = w === null || w === void 0 ? void 0 : w.nombre) !== null && _a !== void 0 ? _a : "\u2014"),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "3px 6px", fontSize: 12.5 }, value: v.entrada, onChange: e => setHorasPendBorrador(prev => ({ ...prev, [wid]: { ...v, entrada: e.target.value } })) }),
+                                React.createElement("span", { style: { fontSize: 12 } }, "\u2013"),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "3px 6px", fontSize: 12.5 }, value: v.salida, onChange: e => setHorasPendBorrador(prev => ({ ...prev, [wid]: { ...v, salida: e.target.value } })) })));
+                        }),
+                        React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 4 } },
+                            React.createElement("button", { className: "gj-btn primary", onClick: () => guardarModificacionHoras(o.id) }, "Guardar y aprobar"),
+                            React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditandoHorasPend(null) }, "Cancelar"))))));
+            }))),
+        adminMode && data.orders.filter(o => o.horasDenegadas && o.fecha === todayStr()).length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("h3", { className: "gj-h3" }, "Horas denegadas hoy"),
+            data.orders.filter(o => o.horasDenegadas && o.fecha === todayStr()).map(o => {
+                const crew = o.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+                return (React.createElement("div", { className: "gj-card", key: o.id },
+                    React.createElement("div", { className: "gj-row" },
+                        React.createElement("div", { style: { fontWeight: 600 } }, crew),
+                        React.createElement("button", { className: "gj-btn ghost", onClick: () => abrirModificarHoras(o) }, "Revisar de nuevo"))));
             }))),
         adminMode && avisosAlmuerzo.length > 0 && (React.createElement(React.Fragment, null,
             React.createElement("h3", { className: "gj-h3" }, "Avisos de almuerzo de hoy"),
@@ -16061,6 +16126,20 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const [editingJornada, setEditingJornada] = useState(null); // orderId+workerId
     const [editingAlmuerzo, setEditingAlmuerzo] = useState(null); // orderId+workerId
     const [editingActExtra, setEditingActExtra] = useState(null); // actividadId
+    const [materialAdminAbierta, setMaterialAdminAbierta] = useState(null); // key = orderId+clienteId
+    const [materialAdminOrigen, setMaterialAdminOrigen] = useState("bolsa");
+    const [materialAdminStockId, setMaterialAdminStockId] = useState("");
+    const [materialAdminCantidadBolsa, setMaterialAdminCantidadBolsa] = useState("");
+    const [materialAdminProveedor, setMaterialAdminProveedor] = useState("");
+    const [materialAdminNombre, setMaterialAdminNombre] = useState("");
+    const [materialAdminCantidadNueva, setMaterialAdminCantidadNueva] = useState("");
+    const [materialActAbierta, setMaterialActAbierta] = useState(null); // actividadId
+    const [materialActOrigen, setMaterialActOrigen] = useState("bolsa");
+    const [materialActStockId, setMaterialActStockId] = useState("");
+    const [materialActCantidadBolsa, setMaterialActCantidadBolsa] = useState("");
+    const [materialActProveedor, setMaterialActProveedor] = useState("");
+    const [materialActNombre, setMaterialActNombre] = useState("");
+    const [materialActCantidadNueva, setMaterialActCantidadNueva] = useState("");
     const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -16068,6 +16147,98 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: entrada || null, salidaHora: salida || null, validadoPorAdmin: true };
         persist(next);
         setEditingJornada(null);
+    };
+    const añadirMaterialParadaAdmin = (orderId, clienteId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.materialesUsados = stop.materialesUsados || [];
+        if (materialAdminOrigen === "bolsa") {
+            const cant = Number(materialAdminCantidadBolsa);
+            if (!materialAdminStockId || !cant || cant <= 0)
+                return;
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === materialAdminStockId);
+            if (!item || cant > item.cantidad)
+                return;
+            item.cantidad -= cant;
+            stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
+            if (item.cantidad <= 0)
+                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+        }
+        else {
+            const cant = Number(materialAdminCantidadNueva);
+            if (!materialAdminNombre.trim() || !cant || cant <= 0)
+                return;
+            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant });
+        }
+        persist(next);
+        setMaterialAdminStockId(""); setMaterialAdminCantidadBolsa("");
+        setMaterialAdminProveedor(""); setMaterialAdminNombre(""); setMaterialAdminCantidadNueva("");
+    };
+    const eliminarMaterialParadaAdmin = (orderId, clienteId, lineaId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        const linea = (stop.materialesUsados || []).find(m => m.id === lineaId);
+        if (linea && linea.origen === "bolsa" && linea.stockId) {
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === linea.stockId);
+            if (item)
+                item.cantidad += linea.cantidad;
+            else
+                next.almacenGeneral.push({ id: linea.stockId, proveedor: linea.proveedor, material: linea.material, cantidad: linea.cantidad });
+        }
+        stop.materialesUsados = (stop.materialesUsados || []).filter(m => m.id !== lineaId);
+        persist(next);
+    };
+    const añadirMaterialActividadAdmin = (orderId, actividadId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+        if (!act)
+            return;
+        act.materialesImputados = act.materialesImputados || [];
+        if (materialActOrigen === "bolsa") {
+            const cant = Number(materialActCantidadBolsa);
+            if (!materialActStockId || !cant || cant <= 0)
+                return;
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === materialActStockId);
+            if (!item || cant > item.cantidad)
+                return;
+            item.cantidad -= cant;
+            act.materialesImputados.push({ id: uid("mat"), origen: "stock", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant, bloqueado: false });
+            if (item.cantidad <= 0)
+                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+        }
+        else {
+            const cant = Number(materialActCantidadNueva);
+            if (!materialActNombre.trim() || !cant || cant <= 0)
+                return;
+            act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false });
+        }
+        persist(next);
+        setMaterialActStockId(""); setMaterialActCantidadBolsa("");
+        setMaterialActProveedor(""); setMaterialActNombre(""); setMaterialActCantidadNueva("");
+    };
+    const eliminarMaterialActividadAdmin = (orderId, actividadId, lineaId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+        if (!act)
+            return;
+        const linea = (act.materialesImputados || []).find(m => m.id === lineaId);
+        if (linea && linea.origen === "stock" && linea.stockId) {
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === linea.stockId);
+            if (item)
+                item.cantidad += linea.cantidad;
+            else
+                next.almacenGeneral.push({ id: linea.stockId, proveedor: linea.proveedor, material: linea.material, cantidad: linea.cantidad });
+        }
+        act.materialesImputados = (act.materialesImputados || []).filter(m => m.id !== lineaId);
+        persist(next);
     };
     const guardarAlmuerzoManual = (orderId, workerId, inicio, fin) => {
         const next = structuredClone(data);
@@ -16442,7 +16613,35 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                             React.createElement("button", { className: "gj-btn", onClick: () => guardarObs(o.id, s.clienteId, document.getElementById("obs-" + o.id + s.clienteId).value) }, "Guardar"))) : adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 4px", fontSize: 11.5 }, onClick: () => setEditingObs(o.id + s.clienteId) },
                             React.createElement(Pencil, { size: 11 }),
                             " ",
-                            s.observaciones ? "Editar observación" : "Añadir observación")) : null));
+                            s.observaciones ? "Editar observación" : "Añadir observación")) : null,
+                        adminMode && (React.createElement("div", { style: { marginTop: 6, borderTop: "1px solid var(--line-soft)", paddingTop: 4 } },
+                            React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "var(--ink-soft)" } }, "Materiales usados:"),
+                            (s.materialesUsados || []).length === 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, "Ninguno todav\u00EDa."),
+                            (s.materialesUsados || []).map(m => (React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12 } },
+                                React.createElement("span", null, m.material, " \u2014 ", m.cantidad, m.origen === "bolsa" ? " (de la bolsa)" : " (nuevo)"),
+                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px" }, onClick: () => eliminarMaterialParadaAdmin(o.id, s.clienteId, m.id) },
+                                    React.createElement(Trash2, { size: 11, color: "var(--warn)" }))))),
+                            materialAdminAbierta !== (o.id + s.clienteId) ? (React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 5px", fontSize: 11, marginTop: 2 }, onClick: () => setMaterialAdminAbierta(o.id + s.clienteId) },
+                                React.createElement(Plus, { size: 10 }),
+                                " A\u00F1adir material (aunque la parada ya est\u00E9 cerrada)")) : (React.createElement("div", { style: { marginTop: 4 } },
+                                React.createElement("div", { style: { display: "flex", gap: 10, marginBottom: 4 } },
+                                    React.createElement("label", { style: { fontSize: 11.5 } },
+                                        React.createElement("input", { type: "radio", checked: materialAdminOrigen === "bolsa", onChange: () => setMaterialAdminOrigen("bolsa") }),
+                                        " De la bolsa"),
+                                    React.createElement("label", { style: { fontSize: 11.5 } },
+                                        React.createElement("input", { type: "radio", checked: materialAdminOrigen === "nuevo", onChange: () => setMaterialAdminOrigen("nuevo") }),
+                                        " Nuevo")),
+                                materialAdminOrigen === "bolsa" ? (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+                                    React.createElement("select", { className: "gj-select", style: { flex: "1 1 140px", fontSize: 11.5, padding: "2px 4px" }, value: materialAdminStockId, onChange: e => setMaterialAdminStockId(e.target.value) },
+                                        React.createElement("option", { value: "" }, "Elige..."),
+                                        (data.almacenGeneral || []).filter(st => st.cantidad > 0).map(st => React.createElement("option", { key: st.id, value: st.id }, st.material, " (", st.cantidad, ")"))),
+                                    React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadBolsa, onChange: e => setMaterialAdminCantidadBolsa(e.target.value) }))) : (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+                                    React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Proveedor", value: materialAdminProveedor, onChange: e => setMaterialAdminProveedor(e.target.value) }),
+                                    React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Material", value: materialAdminNombre, onChange: e => setMaterialAdminNombre(e.target.value) }),
+                                    React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadNueva, onChange: e => setMaterialAdminCantidadNueva(e.target.value) }))),
+                                React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 4 } },
+                                    React.createElement("button", { className: "gj-btn primary", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => añadirMaterialParadaAdmin(o.id, s.clienteId) }, "A\u00F1adir"),
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => setMaterialAdminAbierta(null) }, "Cerrar"))))))));
                 }),
                 adminMode && (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
                     React.createElement("div", { style: { fontSize: 11.5, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 4 } }, "Otras actividades fichadas:"),
@@ -16469,7 +16668,33 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                 React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarActExtraManual(o.id, a.id, fichajeInicio, fichajeFin) }, "Guardar"))),
                             React.createElement("div", { style: { display: "flex", gap: 10, fontSize: 11, marginTop: 1 } },
                                 a.coordInicio ? React.createElement("a", { href: mapsLinkCoord(a.coordInicio), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n inicio") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
-                                a.horaFin && (a.coordFin ? React.createElement("a", { href: mapsLinkCoord(a.coordFin), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n fin") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin")))));
+                                a.horaFin && (a.coordFin ? React.createElement("a", { href: mapsLinkCoord(a.coordFin), target: "_blank", rel: "noreferrer" }, "\uD83D\uDCCD ubicaci\u00F3n fin") : React.createElement("span", { style: { color: "var(--warn)" } }, "Sin ubicaci\u00F3n de fin"))),
+                            a.categoria === "almacenes" && (React.createElement("div", { style: { marginTop: 4, paddingTop: 3, borderTop: "1px dashed var(--line-soft)" } },
+                                (a.materialesImputados || []).map(m => (React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 11.5 } },
+                                    React.createElement("span", null, m.material, " \u2014 ", m.cantidad, m.origen === "stock" ? " (de la bolsa)" : " (nuevo)"),
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px" }, onClick: () => eliminarMaterialActividadAdmin(o.id, a.id, m.id) },
+                                        React.createElement(Trash2, { size: 10, color: "var(--warn)" }))))),
+                                materialActAbierta !== a.id ? (React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px", fontSize: 11 }, onClick: () => setMaterialActAbierta(a.id) },
+                                    React.createElement(Plus, { size: 10 }),
+                                    " A\u00F1adir material")) : (React.createElement("div", { style: { marginTop: 3 } },
+                                    React.createElement("div", { style: { display: "flex", gap: 8, marginBottom: 3 } },
+                                        React.createElement("label", { style: { fontSize: 11 } },
+                                            React.createElement("input", { type: "radio", checked: materialActOrigen === "bolsa", onChange: () => setMaterialActOrigen("bolsa") }),
+                                            " De la bolsa"),
+                                        React.createElement("label", { style: { fontSize: 11 } },
+                                            React.createElement("input", { type: "radio", checked: materialActOrigen === "nuevo", onChange: () => setMaterialActOrigen("nuevo") }),
+                                            " Nuevo")),
+                                    materialActOrigen === "bolsa" ? (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+                                        React.createElement("select", { className: "gj-select", style: { flex: "1 1 130px", fontSize: 11, padding: "2px 4px" }, value: materialActStockId, onChange: e => setMaterialActStockId(e.target.value) },
+                                            React.createElement("option", { value: "" }, "Elige..."),
+                                            (data.almacenGeneral || []).filter(st => st.cantidad > 0).map(st => React.createElement("option", { key: st.id, value: st.id }, st.material, " (", st.cantidad, ")"))),
+                                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadBolsa, onChange: e => setMaterialActCantidadBolsa(e.target.value) }))) : (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
+                                        React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Proveedor", value: materialActProveedor, onChange: e => setMaterialActProveedor(e.target.value) }),
+                                        React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Material", value: materialActNombre, onChange: e => setMaterialActNombre(e.target.value) }),
+                                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadNueva, onChange: e => setMaterialActCantidadNueva(e.target.value) }))),
+                                    React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3 } },
+                                        React.createElement("button", { className: "gj-btn primary", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => añadirMaterialActividadAdmin(o.id, a.id) }, "A\u00F1adir"),
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => setMaterialActAbierta(null) }, "Cerrar"))))))));
                     }))),
                 adminMode && (React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 6, marginTop: 8 } }, o.workerIds.map(wid => {
                     const w = getWorker(wid);
@@ -16490,6 +16715,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const workerId = (deviceWorkerId && deviceWorkerId !== "__admin__") ? deviceWorkerId : "";
     const worker = workerId ? getWorker(workerId) : null;
     const [notaAbierta, setNotaAbierta] = useState(null);
+    const [materialParadaAbierta, setMaterialParadaAbierta] = useState(null); // key = orderId+clienteId
+    const [materialParadaOrigen, setMaterialParadaOrigen] = useState("bolsa"); // "bolsa" | "nuevo"
+    const [materialParadaStockId, setMaterialParadaStockId] = useState("");
+    const [materialParadaCantidadBolsa, setMaterialParadaCantidadBolsa] = useState("");
+    const [materialParadaProveedor, setMaterialParadaProveedor] = useState("");
+    const [materialParadaNombre, setMaterialParadaNombre] = useState("");
+    const [materialParadaCantidadNueva, setMaterialParadaCantidadNueva] = useState("");
     const [mostrarSolicitudVacaciones, setMostrarSolicitudVacaciones] = useState(false);
     const [vacFechaInicio, setVacFechaInicio] = useState("");
     const [vacFechaFin, setVacFechaFin] = useState("");
@@ -16580,6 +16812,51 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60), workerIds: [...order.workerIds] });
             }
         }
+        persist(next);
+    };
+    const añadirMaterialParada = (orderId, clienteId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        stop.materialesUsados = stop.materialesUsados || [];
+        if (materialParadaOrigen === "bolsa") {
+            const cant = Number(materialParadaCantidadBolsa);
+            if (!materialParadaStockId || !cant || cant <= 0)
+                return;
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === materialParadaStockId);
+            if (!item || cant > item.cantidad)
+                return;
+            item.cantidad -= cant;
+            stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
+            if (item.cantidad <= 0)
+                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+        }
+        else {
+            const cant = Number(materialParadaCantidadNueva);
+            if (!materialParadaNombre.trim() || !cant || cant <= 0)
+                return;
+            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialParadaProveedor.trim(), material: materialParadaNombre.trim(), cantidad: cant });
+        }
+        persist(next);
+        setMaterialParadaStockId(""); setMaterialParadaCantidadBolsa("");
+        setMaterialParadaProveedor(""); setMaterialParadaNombre(""); setMaterialParadaCantidadNueva("");
+    };
+    const eliminarMaterialParada = (orderId, clienteId, lineaId) => {
+        const next = structuredClone(data);
+        const order = next.orders.find(o => o.id === orderId);
+        const stop = order.stops.find(s => s.clienteId === clienteId);
+        const linea = (stop.materialesUsados || []).find(m => m.id === lineaId);
+        if (linea && linea.origen === "bolsa" && linea.stockId) {
+            // Se devuelve la cantidad a la bolsa al quitar la línea (por si se añadió por error).
+            next.almacenGeneral = next.almacenGeneral || [];
+            const item = next.almacenGeneral.find(s => s.id === linea.stockId);
+            if (item)
+                item.cantidad += linea.cantidad;
+            else
+                next.almacenGeneral.push({ id: linea.stockId, proveedor: linea.proveedor, material: linea.material, cantidad: linea.cantidad });
+        }
+        stop.materialesUsados = (stop.materialesUsados || []).filter(m => m.id !== lineaId);
         persist(next);
     };
     const toggleLabor = (orderId, clienteId, labor) => {
@@ -17227,8 +17504,9 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                 return (React.createElement("div", { className: "gj-card", key: o.id },
                     React.createElement("div", { className: "gj-h3", style: { marginBottom: 10 } }, "Tu ruta de hoy"),
                     adminMode && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Cuadrilla: ", nombresCuadrilla),
-                    excesoHoras && !o.horasAprobadas && (React.createElement("div", { style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u23F3 Jornada superior a 8h10 \u2014 pendiente de aprobaci\u00F3n por el administrador")),
+                    excesoHoras && !o.horasAprobadas && !o.horasDenegadas && (React.createElement("div", { style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u23F3 Jornada superior a 8h10 \u2014 pendiente de aprobaci\u00F3n por el administrador")),
                     excesoHoras && o.horasAprobadas && (React.createElement("div", { style: { background: "var(--good-bg)", color: "var(--good)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u2714 Jornada larga aprobada por el administrador")),
+                    excesoHoras && o.horasDenegadas && (React.createElement("div", { style: { background: "var(--danger-bg, #fbe3e3)", color: "var(--danger, #b23)", padding: "8px 10px", borderRadius: 4, fontSize: 12.5, fontWeight: 600, marginBottom: 10 } }, "\u2716 Jornada larga NO aprobada por el administrador \u2014 h\u00E1blalo con \u00E9l")),
                     React.createElement("div", { className: "gj-grid2", style: { marginBottom: 10 } },
                         React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
                             React.createElement("label", { className: "gj-label" }, "Tiempo de carga hoy"),
@@ -17371,8 +17649,35 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                         "x/d\u00EDa")),
                                     !riegoPodaAbierto && cli.riegoEstado === "off" && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, "Riego OFF")))),
                                 React.createElement("div", { style: { marginTop: 6 } },
-                                    React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Materiales aportados/utilizados (opcional)"),
+                                    React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Notas de materiales (opcional)"),
                                     React.createElement("input", { className: "gj-input", defaultValue: s.materiales || "", placeholder: "Ej: 2 sacos de sustrato, manguera 10m", onBlur: e => updateStop(o.id, s.clienteId, { materiales: e.target.value }) })),
+                                React.createElement("div", { style: { marginTop: 6 } },
+                                    React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Materiales usados"),
+                                    (s.materialesUsados || []).map(m => (React.createElement("div", { key: m.id, style: { display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 12, padding: "3px 0" } },
+                                        React.createElement("span", null, m.material, " \u2014 ", m.cantidad, m.origen === "bolsa" ? " (de la bolsa)" : " (nuevo)"),
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px" }, onClick: () => eliminarMaterialParada(o.id, s.clienteId, m.id) },
+                                            React.createElement(Trash2, { size: 11, color: "var(--warn)" }))))),
+                                    materialParadaAbierta !== (o.id + s.clienteId) ? (React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px", fontSize: 11.5, marginTop: 2 }, onClick: () => setMaterialParadaAbierta(o.id + s.clienteId) },
+                                        React.createElement(Plus, { size: 11 }),
+                                        " A\u00F1adir material")) : (React.createElement("div", { className: "gj-card", style: { marginTop: 4, padding: 8 } },
+                                        React.createElement("div", { style: { display: "flex", gap: 10, marginBottom: 6 } },
+                                            React.createElement("label", { style: { fontSize: 12 } },
+                                                React.createElement("input", { type: "radio", checked: materialParadaOrigen === "bolsa", onChange: () => setMaterialParadaOrigen("bolsa") }),
+                                                " De la bolsa"),
+                                            React.createElement("label", { style: { fontSize: 12 } },
+                                                React.createElement("input", { type: "radio", checked: materialParadaOrigen === "nuevo", onChange: () => setMaterialParadaOrigen("nuevo") }),
+                                                " Nuevo / no est\u00E1 en la bolsa")),
+                                        materialParadaOrigen === "bolsa" ? (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                                            React.createElement("select", { className: "gj-select", style: { flex: "1 1 160px" }, value: materialParadaStockId, onChange: e => setMaterialParadaStockId(e.target.value) },
+                                                React.createElement("option", { value: "" }, "Elige material..."),
+                                                (data.almacenGeneral || []).filter(st => st.cantidad > 0).map(st => React.createElement("option", { key: st.id, value: st.id }, st.material, " (", st.cantidad, " disp., ", st.proveedor, ")"))),
+                                            React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 80 }, placeholder: "Cant.", value: materialParadaCantidadBolsa, onChange: e => setMaterialParadaCantidadBolsa(e.target.value) }))) : (React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                                            React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Proveedor", value: materialParadaProveedor, onChange: e => setMaterialParadaProveedor(e.target.value) }),
+                                            React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Material", value: materialParadaNombre, onChange: e => setMaterialParadaNombre(e.target.value) }),
+                                            React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 80 }, placeholder: "Cant.", value: materialParadaCantidadNueva, onChange: e => setMaterialParadaCantidadNueva(e.target.value) }))),
+                                        React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
+                                            React.createElement("button", { className: "gj-btn primary", style: { padding: "3px 8px", fontSize: 12 }, onClick: () => añadirMaterialParada(o.id, s.clienteId) }, "A\u00F1adir"),
+                                            React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 12 }, onClick: () => setMaterialParadaAbierta(null) }, "Cerrar"))))),
                                 React.createElement("div", { className: "gj-grid2", style: { marginTop: 6 } },
                                     React.createElement("div", null,
                                         React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Foto antes"),
@@ -18231,6 +18536,75 @@ function BloqueDocumentos({ titulo, tipos, documentos, onAñadirTipo, onQuitarTi
         React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 10 } },
             React.createElement("input", { className: "gj-input", value: nuevoTipo, onChange: e => setNuevoTipo(e.target.value), placeholder: "A\u00F1adir otro tipo de documento" }),
             React.createElement("button", { className: "gj-btn ghost", disabled: !nuevoTipo.trim(), onClick: () => { onAñadirTipo(nuevoTipo.trim()); setNuevoTipo(""); } }, "A\u00F1adir"))));
+}
+function BolsaMaterialesView({ data, persist }) {
+    const [proveedor, setProveedor] = useState("");
+    const [material, setMaterial] = useState("");
+    const [cantidad, setCantidad] = useState("");
+    const [editandoId, setEditandoId] = useState(null);
+    const [cantidadEdit, setCantidadEdit] = useState("");
+    const bolsa = data.almacenGeneral || [];
+    const añadirManual = () => {
+        if (!proveedor.trim() || !material.trim() || !cantidad || Number(cantidad) <= 0)
+            return;
+        const next = structuredClone(data);
+        next.almacenGeneral = next.almacenGeneral || [];
+        const existente = next.almacenGeneral.find(s => s.proveedor.toLowerCase() === proveedor.trim().toLowerCase() && s.material.toLowerCase() === material.trim().toLowerCase());
+        if (existente) {
+            existente.cantidad += Number(cantidad);
+        }
+        else {
+            next.almacenGeneral.push({ id: uid("stk"), proveedor: proveedor.trim(), material: material.trim(), cantidad: Number(cantidad) });
+        }
+        persist(next);
+        setProveedor(""); setMaterial(""); setCantidad("");
+    };
+    const guardarCantidad = (id) => {
+        const next = structuredClone(data);
+        next.almacenGeneral = next.almacenGeneral || [];
+        const item = next.almacenGeneral.find(s => s.id === id);
+        if (item) {
+            const v = Number(cantidadEdit);
+            if (v > 0)
+                item.cantidad = v;
+            else
+                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== id);
+        }
+        persist(next);
+        setEditandoId(null);
+    };
+    const eliminar = (id) => {
+        if (!confirm("¿Eliminar esta línea de la bolsa de materiales?"))
+            return;
+        const next = structuredClone(data);
+        next.almacenGeneral = (next.almacenGeneral || []).filter(s => s.id !== id);
+        persist(next);
+    };
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Bolsa de materiales"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Materiales sobrantes de recogidas en almac\u00E9n, disponibles para usar en otro mantenimiento u obra. El administrador puede a\u00F1adir, corregir o eliminar l\u00edneas a mano."),
+        React.createElement("div", { className: "gj-card", style: { marginBottom: 12 } },
+            React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 } }, "A\u00F1adir material a mano"),
+            React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap" } },
+                React.createElement("input", { className: "gj-input", style: { flex: "1 1 140px" }, placeholder: "Proveedor", value: proveedor, onChange: e => setProveedor(e.target.value) }),
+                React.createElement("input", { className: "gj-input", style: { flex: "1 1 140px" }, placeholder: "Material", value: material, onChange: e => setMaterial(e.target.value) }),
+                React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 90 }, placeholder: "Cantidad", value: cantidad, onChange: e => setCantidad(e.target.value) }),
+                React.createElement("button", { className: "gj-btn primary", onClick: añadirManual }, "A\u00F1adir"))),
+        bolsa.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay materiales en la bolsa ahora mismo.") :
+            bolsa.slice().sort((a, b) => a.material.localeCompare(b.material)).map(s => (React.createElement("div", { className: "gj-card", key: s.id },
+                React.createElement("div", { className: "gj-row" },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 600 } }, s.material),
+                        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, s.proveedor)),
+                    editandoId === s.id ? (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 80, padding: "3px 6px" }, value: cantidadEdit, onChange: e => setCantidadEdit(e.target.value), autoFocus: true }),
+                        React.createElement("button", { className: "gj-btn primary", style: { padding: "3px 8px" }, onClick: () => guardarCantidad(s.id) }, "Guardar"),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px" }, onClick: () => setEditandoId(null) }, "Cancelar"))) : (React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center" } },
+                        React.createElement("span", { style: { fontWeight: 600 } }, s.cantidad),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => { setEditandoId(s.id); setCantidadEdit(String(s.cantidad)); } },
+                            React.createElement(Pencil, { size: 12 })),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 6px" }, onClick: () => eliminar(s.id) },
+                            React.createElement(Trash2, { size: 12, color: "var(--warn)" }))))))))));
 }
 function DocumentacionView({ data, persist, getWorker }) {
     const [seccionesCerradas, setSeccionesCerradas] = useState({});
