@@ -18742,8 +18742,14 @@ function BolsaMaterialesView({ data, persist, getWorker }) {
     const [familiaEdit, setFamiliaEdit] = useState("");
     const [fotoGrande, setFotoGrande] = useState(null);
     const [familiasCerradas, setFamiliasCerradas] = useState({});
+    const [verInventario, setVerInventario] = useState(false);
     const bolsa = data.almacenGeneral || [];
     const SIN_FAMILIA = "Sin familia";
+    const exportarInventario = () => {
+        const filas = bolsa.slice().sort((a, b) => (a.familia || SIN_FAMILIA).localeCompare(b.familia || SIN_FAMILIA) || a.material.localeCompare(b.material))
+            .map(s => [s.familia || SIN_FAMILIA, s.material, s.proveedor, s.cantidad]);
+        downloadCSV(`inventario-almacen-${todayStr()}.csv`, ["Familia", "Material", "Proveedor", "Cantidad"], filas);
+    };
     const añadirManual = () => {
         if (!proveedor.trim() || !material.trim() || !cantidad || Number(cantidad) <= 0)
             return;
@@ -18811,6 +18817,22 @@ function BolsaMaterialesView({ data, persist, getWorker }) {
                 React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Material", list: "dl-materiales-belardi", value: material, onChange: e => setMaterial(e.target.value) }),
                 React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 90 }, placeholder: "Cantidad", value: cantidad, onChange: e => setCantidad(e.target.value) }),
                 React.createElement("button", { className: "gj-btn primary", onClick: añadirManual }, "A\u00F1adir"))),
+        React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
+            React.createElement("button", { className: "gj-btn " + (verInventario ? "primary" : "ghost"), onClick: () => setVerInventario(v => !v) }, verInventario ? "Ocultar inventario completo" : "Visualizar inventario completo"),
+            React.createElement("button", { className: "gj-btn ghost", onClick: exportarInventario }, "Exportar (CSV)")),
+        verInventario && (React.createElement("div", { className: "gj-card", style: { marginBottom: 12, overflowX: "auto" } },
+            bolsa.length === 0 ? React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "No hay materiales en el almac\u00E9n ahora mismo.") :
+                React.createElement("table", { className: "gj-table" },
+                    React.createElement("thead", null, React.createElement("tr", null,
+                        React.createElement("th", null, "Familia"),
+                        React.createElement("th", null, "Material"),
+                        React.createElement("th", null, "Proveedor"),
+                        React.createElement("th", null, "Cantidad"))),
+                    React.createElement("tbody", null, bolsa.slice().sort((a, b) => (a.familia || SIN_FAMILIA).localeCompare(b.familia || SIN_FAMILIA) || a.material.localeCompare(b.material)).map(s => React.createElement("tr", { key: s.id },
+                        React.createElement("td", null, s.familia || SIN_FAMILIA),
+                        React.createElement("td", null, s.material),
+                        React.createElement("td", null, s.proveedor),
+                        React.createElement("td", null, s.cantidad))))))),
         React.createElement("h3", { className: "gj-h3" }, "Materiales por familia"),
         bolsa.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay materiales en el almac\u00E9n ahora mismo.") :
             familiasOrdenadas.map(f => (React.createElement("div", { key: f, style: { marginBottom: 10 } },
