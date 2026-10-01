@@ -107,24 +107,30 @@ window.storage = {
           const parsed = JSON.parse(value);
           const ahoraISO = new Date().toISOString();
           const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
-          // Comprobación de seguridad ANTES de subir: si el servidor tiene ya una versión más nueva
-          // que la última que este móvil conoce, significa que otro dispositivo ha guardado algo
-          // desde la última vez que nos pusimos al día — y esa subida nuestra, al ser la copia
-          // completa de los datos, se lo llevaría por delante. En ese caso NO subimos: nos ponemos
-          // al día con lo del servidor y avisamos de que este guardado en concreto no se ha hecho,
-          // para no destruir nada de nadie.
+          // Subida protegida contra carreras: si este móvil ya conoce una versión anterior, la
+          // actualización solo se aplica si el servidor SIGUE teniendo exactamente esa versión en
+          // ese instante (comprobación y escritura en una sola operación atómica de base de datos,
+          // sin hueco entre "mirar" y "escribir" en el que otro móvil pueda colarse). Si otro
+          // dispositivo guardó algo entre medias, esta subida no se aplica: nos ponemos al día con
+          // lo de fuera y avisamos de que este cambio concreto no se ha subido, para no perder nada.
+          let filasActualizadas = null;
           if (ultimaConocida) {
-            const { data: filaActual, error: errorLectura } = await client.from("gj_app_data").select("updated_at").eq("id", 1).single();
-            if (!errorLectura && filaActual && filaActual.updated_at && filaActual.updated_at > ultimaConocida) {
-              const remoto = await gjSincronizarConSupabase(key);
-              if (remoto && gjRemoteChangeCallback)
-                gjRemoteChangeCallback(remoto);
-              window.gjSyncStatus = { estado: "conflicto", ultimoError: "Otro dispositivo guard\u00F3 algo m\u00E1s reciente; este cambio concreto no se ha subido, para no perder lo suyo. Vuelve a intentarlo.", ultimaSync: window.gjSyncStatus.ultimaSync };
-              return null;
-            }
+            const { data: filas, error: errorUpdate } = await client.from("gj_app_data").update({ data: parsed, updated_at: ahoraISO }).eq("id", 1).eq("updated_at", ultimaConocida).select("id");
+            if (errorUpdate) throw errorUpdate;
+            filasActualizadas = filas;
           }
-          const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
-          if (error) throw error;
+          if (ultimaConocida && (!filasActualizadas || filasActualizadas.length === 0)) {
+            const remoto = await gjSincronizarConSupabase(key);
+            if (remoto && gjRemoteChangeCallback)
+              gjRemoteChangeCallback(remoto);
+            window.gjSyncStatus = { estado: "conflicto", ultimoError: "Otro dispositivo guard\u00F3 algo m\u00E1s reciente; este cambio concreto no se ha subido, para no perder lo suyo. Vuelve a intentarlo.", ultimaSync: window.gjSyncStatus.ultimaSync };
+            return null;
+          }
+          if (!ultimaConocida) {
+            // Primera subida de este móvil (o nunca sincronizó antes): no hay nada que comparar todavía.
+            const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
+            if (error) throw error;
+          }
           localStorage.setItem(GJ_LAST_SYNC_KEY, ahoraISO);
           window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
         } catch (e) {
@@ -12939,6 +12945,7 @@ const Send = gjMakeIcon("➤");
 const Mail = gjMakeIcon("✉");
 const Sprout = gjMakeIcon("🌱");
 const PackageIcon = gjMakeIcon("📦");
+const Scissors = gjMakeIcon("✂️");
 const ChevronLeft = gjMakeIcon("‹");
 const ChevronRight = gjMakeIcon("›");
 const Trash2 = gjMakeIcon("🗑");
@@ -13640,7 +13647,7 @@ function festivoAfectaObras(data, dateStr) {
 }
 const LABORES_ESTANDAR = [
     "Limpieza y preparación", "Siega", "Recorte de bordes", "Escarificado", "Abonado",
-    "Sustitución de aparatos", "Revisión de riego", "Podas", "Tratamiento herbicidas",
+    "Sustitución de aparatos", "Revisión de riego", "Poda completa", "Poda parcial", "Poda pendiente", "Tratamiento herbicidas",
     "Tratamiento fitosanitarios", "Escarda",
 ];
 const LABORES_CUADRO = [
@@ -14404,6 +14411,7 @@ const GROUPS = [
             { id: "trabajador", label: "Fichar", icon: Smartphone },
             { id: "pendientes", label: "Pendientes", icon: ClipboardList },
             { id: "riego", label: "Riego", icon: Sprout },
+            { id: "podas", label: "Podas", icon: Scissors },
             { id: "clima", label: "Clima", icon: CloudRain },
             { id: "talleres", label: "Talleres", icon: Hammer },
             { id: "mapa", label: "Mapa", icon: Map },
@@ -14442,6 +14450,8 @@ const GROUPS = [
 const TABS = GROUPS.flatMap(g => g.views);
 function App() {
     const [data, setData] = useState(null);
+    const dataRef = useRef(null);
+    useEffect(() => { dataRef.current = data; }, [data]);
     const [loading, setLoading] = useState(true);
     const [saveError, setSaveError] = useState(false);
     const [view, setView] = useState("panel");
@@ -14537,6 +14547,43 @@ function App() {
             setSaveError("error");
         }
     }, []);
+    // Como persist, pero para acciones pequeñas y bien definidas (fichar inicio/hecho, almuerzo,
+    // actividades extra...): si el guardado choca porque otro móvil guardó algo justo antes, en vez
+    // de avisar y parar, vuelve a aplicar la MISMA acción sobre los datos ya actualizados y lo
+    // reintenta sola, hasta 3 veces, sin que el trabajador tenga que darse cuenta ni volver a pulsar.
+    // patchFn recibe los datos base (clonados ya por el propio patchFn) y debe devolver el nuevo "next".
+    const persistConReintento = useCallback(async (patchFn) => {
+        let base = dataRef.current;
+        for (let intento = 1; intento <= 3; intento++) {
+            const next = patchFn(base);
+            setData(next);
+            try {
+                const r = await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
+                if (r) {
+                    setSaveError(false);
+                    return true;
+                }
+                if (window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (raw) {
+                        try {
+                            base = JSON.parse(raw);
+                            continue; // reintenta con los datos frescos
+                        }
+                        catch (e) { /* si no se puede leer, caemos al aviso de abajo */ }
+                    }
+                }
+                setSaveError((window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") ? "conflicto" : "error");
+                return false;
+            }
+            catch (e) {
+                setSaveError("error");
+                return false;
+            }
+        }
+        setSaveError("conflicto");
+        return false;
+    }, []);
     useEffect(() => {
         if (!data)
             return;
@@ -14579,7 +14626,7 @@ function App() {
     }
     const getClient = (id) => data.clients.find(c => c.id === id);
     const getWorker = (id) => data.workers.find(w => w.id === id);
-    const props = { data, persist, getClient, getWorker, adminMode, adminRole, requestUnlock, setView, focusClienteId, setFocusClienteId, deviceWorkerId, reasignarDispositivo };
+    const props = { data, persist, persistConReintento, getClient, getWorker, adminMode, adminRole, requestUnlock, setView, focusClienteId, setFocusClienteId, deviceWorkerId, reasignarDispositivo };
     const workerDeEsteDispositivo = (deviceWorkerId && deviceWorkerId !== "__admin__") ? getWorker(deviceWorkerId) : null;
     if (workerDeEsteDispositivo && workerDeEsteDispositivo.activo === false && !adminMode) {
         return (React.createElement("div", { className: "gj", style: { padding: 32, textAlign: "center", minHeight: "100vh" } },
@@ -14771,6 +14818,7 @@ function App() {
                     React.createElement(BolsaMaterialesView, { ...props })),
                 view === "pendientes" && React.createElement(PendientesView, { ...props }),
                 view === "riego" && React.createElement(RiegoView, { ...props }),
+                view === "podas" && React.createElement(PodasView, { ...props }),
                 view === "clima" && React.createElement(ClimaView, { ...props }),
                 view === "talleres" && React.createElement(MaquinariaEnTalleresView, { ...props }),
                 view === "trabajador" && React.createElement(TrabajadorView, { ...props }),
@@ -16715,7 +16763,7 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         fotoGrandeRutas && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrandeRutas(null) },
             React.createElement("img", { src: fotoGrandeRutas, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } }))));
 }
-function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, reasignarDispositivo, adminMode, requestUnlock }) {
+function TrabajadorView({ data, persist, persistConReintento, getClient, getWorker, deviceWorkerId, reasignarDispositivo, adminMode, requestUnlock }) {
     const workerId = (deviceWorkerId && deviceWorkerId !== "__admin__") ? deviceWorkerId : "";
     const worker = workerId ? getWorker(workerId) : null;
     const [notaAbierta, setNotaAbierta] = useState(null);
@@ -17251,24 +17299,26 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const finalizarJornada = async (orderId) => {
         const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const aviso = avisoUbicacionPunto(coord, next.settings.naveLat, next.settings.naveLng);
-        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
-        order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), salidaHora: hora, salidaCoord: coord, avisoUbicacionSalida: aviso };
-        // Resumen de la ruta: la salida se amplía si alguien sigue trabajando y se va más tarde.
-        if (!order.salidaJornadaHora || hora > order.salidaJornadaHora) {
-            order.salidaJornadaHora = hora;
-            order.salidaJornadaCoord = coord;
-        }
-        // La jornada de la ruta se da por finalizada solo cuando TODOS los asignados han fichado su salida.
-        order.jornadaFinalizada = order.workerIds.every(wid => { var _a; return !!((_a = order.porTrabajadorJornada[wid]) === null || _a === void 0 ? void 0 : _a.salidaHora); });
-        if (order.tiempoCargaMin > 0 && !order.tiempoCargaRegistrado) {
-            next.historialTiempoCarga = next.historialTiempoCarga || [];
-            next.historialTiempoCarga.push({ fecha: order.fecha, minutos: Number(order.tiempoCargaMin) });
-            order.tiempoCargaRegistrado = true;
-        }
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const aviso = avisoUbicacionPunto(coord, next.settings.naveLat, next.settings.naveLng);
+            order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), salidaHora: hora, salidaCoord: coord, avisoUbicacionSalida: aviso };
+            // Resumen de la ruta: la salida se amplía si alguien sigue trabajando y se va más tarde.
+            if (!order.salidaJornadaHora || hora > order.salidaJornadaHora) {
+                order.salidaJornadaHora = hora;
+                order.salidaJornadaCoord = coord;
+            }
+            // La jornada de la ruta se da por finalizada solo cuando TODOS los asignados han fichado su salida.
+            order.jornadaFinalizada = order.workerIds.every(wid => { var _a; return !!((_a = order.porTrabajadorJornada[wid]) === null || _a === void 0 ? void 0 : _a.salidaHora); });
+            if (order.tiempoCargaMin > 0 && !order.tiempoCargaRegistrado) {
+                next.historialTiempoCarga = next.historialTiempoCarga || [];
+                next.historialTiempoCarga.push({ fecha: order.fecha, minutos: Number(order.tiempoCargaMin) });
+                order.tiempoCargaRegistrado = true;
+            }
+            return next;
+        });
     };
     const iniciarPrimeraParada = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
@@ -17299,33 +17349,37 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     const iniciarParada = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        const cliente = next.clients.find(c => c.id === clienteId);
-        const aviso = avisoUbicacionCliente(coord, cliente);
-        stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
-        if (stop.estado === "pendiente") {
-            stop.estado = "en_progreso";
-            stop.horaInicio = hora;
-            stop.coordInicio = coord;
-            stop.avisoUbicacionInicio = aviso;
-        }
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            stop.porTrabajador = stop.porTrabajador || {};
+            stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
+            if (stop.estado === "pendiente") {
+                stop.estado = "en_progreso";
+                stop.horaInicio = hora;
+                stop.coordInicio = coord;
+                stop.avisoUbicacionInicio = aviso;
+            }
+            return next;
+        });
     };
     const reanudarParada = async (orderId, clienteId) => {
         const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.porTrabajador = stop.porTrabajador || {};
-        const mia = stop.porTrabajador[workerId] || { estado: "en_progreso", tramos: [] };
-        mia.tramos = [...(mia.tramos || []), { horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }];
-        mia.estado = "en_progreso";
-        stop.porTrabajador[workerId] = mia;
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.porTrabajador = stop.porTrabajador || {};
+            const mia = stop.porTrabajador[workerId] || { estado: "en_progreso", tramos: [] };
+            mia.tramos = [...(mia.tramos || []), { horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }];
+            mia.estado = "en_progreso";
+            stop.porTrabajador[workerId] = mia;
+            return next;
+        });
     };
     const marcarHecho = async (orderId, clienteId) => {
         const orderChk = data.orders.find(o => o.id === orderId);
@@ -17337,41 +17391,43 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
         }
         const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        const cliente = next.clients.find(c => c.id === clienteId);
-        const aviso = avisoUbicacionCliente(coord, cliente);
-        stop.porTrabajador = stop.porTrabajador || {};
-        const miFichaHecho = { ...(stop.porTrabajador[workerId] || {}) };
-        miFichaHecho.tramos = miFichaHecho.tramos || [];
-        const ultimoTramoH = miFichaHecho.tramos[miFichaHecho.tramos.length - 1];
-        if (ultimoTramoH && !ultimoTramoH.horaFin) {
-            ultimoTramoH.horaFin = hora;
-            ultimoTramoH.coordFin = coord;
-        }
-        miFichaHecho.estado = "completado";
-        miFichaHecho.resultado = "hecho";
-        miFichaHecho.horaFin = hora;
-        miFichaHecho.coordFin = coord;
-        miFichaHecho.avisoUbicacionFin = aviso;
-        stop.porTrabajador[workerId] = miFichaHecho;
-        // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
-        // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
-        if (!stop.horaFin || hora > stop.horaFin) {
-            stop.horaFin = hora;
-            stop.coordFin = coord;
-            stop.resultado = "hecho";
-            stop.avisoUbicacionFin = aviso;
-        }
-        stop.estado = "completado";
-        stop.crewSize = order.workerIds.length;
-        if (cliente && cliente.esMantenimiento) {
-            next.historialDuracionVisitas = next.historialDuracionVisitas || {};
-            next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
-            next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60), workerIds: [...order.workerIds] });
-        }
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            stop.porTrabajador = stop.porTrabajador || {};
+            const miFichaHecho = { ...(stop.porTrabajador[workerId] || {}) };
+            miFichaHecho.tramos = miFichaHecho.tramos || [];
+            const ultimoTramoH = miFichaHecho.tramos[miFichaHecho.tramos.length - 1];
+            if (ultimoTramoH && !ultimoTramoH.horaFin) {
+                ultimoTramoH.horaFin = hora;
+                ultimoTramoH.coordFin = coord;
+            }
+            miFichaHecho.estado = "completado";
+            miFichaHecho.resultado = "hecho";
+            miFichaHecho.horaFin = hora;
+            miFichaHecho.coordFin = coord;
+            miFichaHecho.avisoUbicacionFin = aviso;
+            stop.porTrabajador[workerId] = miFichaHecho;
+            // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
+            // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
+            if (!stop.horaFin || hora > stop.horaFin) {
+                stop.horaFin = hora;
+                stop.coordFin = coord;
+                stop.resultado = "hecho";
+                stop.avisoUbicacionFin = aviso;
+            }
+            stop.estado = "completado";
+            stop.crewSize = order.workerIds.length;
+            if (cliente && cliente.esMantenimiento) {
+                next.historialDuracionVisitas = next.historialDuracionVisitas || {};
+                next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
+                next.historialDuracionVisitas[clienteId].push({ fecha: order.fecha, minutos: Math.round(duracionStopHoras(stop, order) * 60), workerIds: [...order.workerIds] });
+            }
+            return next;
+        });
     };
     const updateTiempoOrden = (orderId, campo, valor) => {
         const next = structuredClone(data);
@@ -17381,41 +17437,47 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
     };
     const empezarAlmuerzo = async (orderId) => {
         const coord = await getPosicionActual();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
-        order.porTrabajadorAlmuerzo[workerId] = { inicio: nowTime(), inicioCoord: coord, fin: null, finCoord: null, avisoTiempo: false, avisoUbicacion: false };
-        persist(next);
+        const hora = nowTime();
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
+            order.porTrabajadorAlmuerzo[workerId] = { inicio: hora, inicioCoord: coord, fin: null, finCoord: null, avisoTiempo: false, avisoUbicacion: false };
+            return next;
+        });
     };
     const terminarAlmuerzo = async (orderId) => {
         const coord = await getPosicionActual();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
-        const mio = order.porTrabajadorAlmuerzo[workerId] || {};
-        mio.fin = nowTime();
-        mio.finCoord = coord;
-        const minutosReales = diffHours(mio.inicio, mio.fin) * 60;
-        const limite = (order.tiempoAlmuerzoMin || data.settings.almuerzoEstandarMin || 15) + 20;
-        mio.avisoTiempo = minutosReales > limite;
-        mio.avisoUbicacion = false;
-        const clientesRuta = order.stops.map(s => getClient(s.clienteId)).filter(c => c && c.lat && c.lng);
-        if (clientesRuta.length > 0) {
-            const coordsAComprobar = [mio.inicioCoord, mio.finCoord].filter(Boolean);
-            const fueraDeRango = coordsAComprobar.some(pos => {
-                const distMin = Math.min(...clientesRuta.map(c => distanciaKm(pos.lat, pos.lng, c.lat, c.lng)));
-                return distMin > 0.05;
+        const hora = nowTime();
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
+            const mio = order.porTrabajadorAlmuerzo[workerId] || {};
+            mio.fin = hora;
+            mio.finCoord = coord;
+            const minutosReales = diffHours(mio.inicio, mio.fin) * 60;
+            const limite = (order.tiempoAlmuerzoMin || next.settings.almuerzoEstandarMin || 15) + 20;
+            mio.avisoTiempo = minutosReales > limite;
+            mio.avisoUbicacion = false;
+            const clientesRuta = order.stops.map(s => next.clients.find(c => c.id === s.clienteId)).filter(c => c && c.lat && c.lng);
+            if (clientesRuta.length > 0) {
+                const coordsAComprobar = [mio.inicioCoord, mio.finCoord].filter(Boolean);
+                const fueraDeRango = coordsAComprobar.some(pos => {
+                    const distMin = Math.min(...clientesRuta.map(c => distanciaKm(pos.lat, pos.lng, c.lat, c.lng)));
+                    return distMin > 0.05;
+                });
+                mio.avisoUbicacion = fueraDeRango;
+            }
+            order.porTrabajadorAlmuerzo[workerId] = mio;
+            next.historialAlmuerzos = next.historialAlmuerzos || [];
+            next.historialAlmuerzos.push({
+                id: uid("alm"), workerId, fecha: order.fecha, orderId: order.id,
+                horaInicio: mio.inicio, horaFin: mio.fin, minutos: Math.round(minutosReales),
+                avisoTiempo: mio.avisoTiempo, avisoUbicacion: mio.avisoUbicacion,
             });
-            mio.avisoUbicacion = fueraDeRango;
-        }
-        order.porTrabajadorAlmuerzo[workerId] = mio;
-        next.historialAlmuerzos = next.historialAlmuerzos || [];
-        next.historialAlmuerzos.push({
-            id: uid("alm"), workerId, fecha: order.fecha, orderId: order.id,
-            horaInicio: mio.inicio, horaFin: mio.fin, minutos: Math.round(minutosReales),
-            avisoTiempo: mio.avisoTiempo, avisoUbicacion: mio.avisoUbicacion,
+            return next;
         });
-        persist(next);
     };
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Fichar"),
@@ -17615,9 +17677,13 @@ function TrabajadorView({ data, persist, getClient, getWorker, deviceWorkerId, r
                                         React.createElement(ListChecks, { size: 12 }),
                                         " Labores realizadas ",
                                         (s.labores && s.labores.length > 0) ? `(${s.labores.length})` : ""),
-                                    laboresAbiertas === key && (React.createElement("div", { style: { marginTop: 4, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } }, LABORES_ESTANDAR.map(labor => (React.createElement("label", { key: labor, className: "gj-row", style: { cursor: "pointer", padding: "3px 0" } },
-                                        React.createElement("span", { style: { fontSize: 12.5 } }, labor),
-                                        React.createElement("input", { type: "checkbox", checked: (s.labores || []).includes(labor), onChange: () => toggleLabor(o.id, s.clienteId, labor) })))))),
+                                    laboresAbiertas === key && (React.createElement("div", { style: { marginTop: 4, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
+                                        LABORES_ESTANDAR.map(labor => (React.createElement("label", { key: labor, className: "gj-row", style: { cursor: "pointer", padding: "3px 0" } },
+                                            React.createElement("span", { style: { fontSize: 12.5 } }, labor),
+                                            React.createElement("input", { type: "checkbox", checked: (s.labores || []).includes(labor), onChange: () => toggleLabor(o.id, s.clienteId, labor) })))),
+                                        (s.labores || []).includes("Poda pendiente") && (React.createElement("div", { style: { marginTop: 4 } },
+                                            React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Qu\u00E9 queda pendiente de la poda (opcional)"),
+                                            React.createElement("input", { className: "gj-input", defaultValue: s.notaPoda || "", placeholder: "Ej: falta el seto del fondo, no caben las m\u00E1quinas...", onBlur: e => updateStop(o.id, s.clienteId, { notaPoda: e.target.value }) }))))),
                                     !laboresAbiertas && s.labores && s.labores.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, s.labores.join(", "))))),
                                 (cli === null || cli === void 0 ? void 0 : cli.esMantenimiento) && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "4px 6px", fontSize: 11.5 }, onClick: () => setRiegoPodaAbierto(riegoPodaAbierto === key ? null : key) },
@@ -17921,6 +17987,44 @@ function MaquinariaEnTalleresView({ data }) {
                 ") desde el ",
                 fechaEs(m.enTaller.fecha),
                 m.enTaller.trabajador && ` — la dejó ${m.enTaller.trabajador}`)))))));
+}
+function PodasView({ data, getClient }) {
+    const [filtro, setFiltro] = useState("todas"); // todas | completa | parcial | pendiente
+    const [busqueda, setBusqueda] = useState("");
+    const registros = [];
+    data.orders.forEach(o => {
+        o.stops.forEach(s => {
+            const tiposPoda = (s.labores || []).filter(l => l === "Poda completa" || l === "Poda parcial" || l === "Poda pendiente");
+            tiposPoda.forEach(tipo => {
+                const cli = getClient(s.clienteId);
+                registros.push({ fecha: o.fecha, clienteId: s.clienteId, clienteNombre: (cli === null || cli === void 0 ? void 0 : cli.nombre) || "?", tipo, notaPoda: s.notaPoda || "" });
+            });
+        });
+    });
+    registros.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const etiquetaTipo = { "Poda completa": "Completa", "Poda parcial": "Parcial", "Poda pendiente": "Pendiente" };
+    const colorTipo = { "Poda completa": "completado", "Poda parcial": "en_progreso", "Poda pendiente": "no_hecho" };
+    const filtrados = registros.filter(r => {
+        if (filtro !== "todas" && r.tipo !== ("Poda " + filtro))
+            return false;
+        if (busqueda.trim() && !r.clienteNombre.toLowerCase().includes(busqueda.trim().toLowerCase()))
+            return false;
+        return true;
+    });
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Historial de podas"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Todas las podas marcadas en las visitas, por cliente y fecha: completas, parciales y las que han quedado pendientes."),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 8 }, placeholder: "Buscar por cliente...", value: busqueda, onChange: e => setBusqueda(e.target.value) }),
+        React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" } },
+            ["todas", "completa", "parcial", "pendiente"].map(f => React.createElement("button", { key: f, className: "gj-btn " + (filtro === f ? "primary" : "ghost"), style: { padding: "4px 10px", fontSize: 12 }, onClick: () => setFiltro(f) }, f === "todas" ? "Todas" : f === "completa" ? "Completas" : f === "parcial" ? "Parciales" : "Pendientes"))),
+        filtrados.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay podas registradas con ese filtro.") :
+            filtrados.map((r, i) => React.createElement("div", { className: "gj-card", key: i },
+                React.createElement("div", { className: "gj-row" },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 600 } }, r.clienteNombre),
+                        React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, fechaEs(r.fecha))),
+                    React.createElement("span", { className: "gj-badge " + colorTipo[r.tipo] }, etiquetaTipo[r.tipo])),
+                r.notaPoda && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4 } }, r.notaPoda)))));
 }
 function RiegoView({ data, persist, adminMode }) {
     const clientesMantenimiento = (data.clients || []).filter(c => c.esMantenimiento).sort((a, b) => a.nombre.localeCompare(b.nombre));
