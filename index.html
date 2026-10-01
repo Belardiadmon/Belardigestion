@@ -14930,7 +14930,7 @@ function allStopsPendientesAviso(data) {
     });
     return list.sort((a, b) => a.order.fecha.localeCompare(b.order.fecha));
 }
-function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }) {
+function PanelView({ data, persist, persistConReintento, getClient, getWorker, adminMode, adminRole }) {
     const [printStop, setPrintStop] = useState(null); // { orderId, clienteId }
     const [editandoHorasPend, setEditandoHorasPend] = useState(null); // orderId en edición
     const [horasPendBorrador, setHorasPendBorrador] = useState({}); // { workerId: { entrada, salida } }
@@ -14950,6 +14950,42 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
         });
     });
     const horasPendientes = data.orders.filter(o => minutosTotalesOrden(o) > 490 && !o.horasAprobadas && !o.horasDenegadas);
+    // Compañero de ruta retrasado: uno de los dos ya cerró esta parada y ha empezado otra, pero el
+    // otro sigue sin cerrarla 15 minutos después. Se calcula al vuelo cada vez que se abre el Panel
+    // (no hay avisos push reales en esta app, así que esto se ve en cuanto alguien entra a mirar).
+    const horaAhoraMin = (() => { const [h, m] = nowTime().split(":").map(Number); return h * 60 + m; })();
+    const companerosRetrasados = [];
+    data.orders.filter(o => o.fecha === todayStr() && o.workerIds.length > 1).forEach(o => {
+        o.stops.forEach(s => {
+            o.workerIds.forEach(widA => {
+                const fichaA = s.porTrabajador && s.porTrabajador[widA];
+                if (!fichaA || !fichaA.horaFin)
+                    return; // A no ha cerrado esta parada, no aplica
+                const yaEmpezoOtra = o.stops.some(s2 => s2.clienteId !== s.clienteId && s2.porTrabajador && s2.porTrabajador[widA] && s2.porTrabajador[widA].horaInicio);
+                if (!yaEmpezoOtra)
+                    return;
+                const [hh, mm] = fichaA.horaFin.split(":").map(Number);
+                const finAmin = hh * 60 + mm;
+                if (horaAhoraMin - finAmin < 15)
+                    return;
+                o.workerIds.forEach(widB => {
+                    if (widB === widA)
+                        return;
+                    const fichaB = s.porTrabajador && s.porTrabajador[widB];
+                    if (fichaB && fichaB.horaFin)
+                        return; // B también la cerró, no hay problema
+                    companerosRetrasados.push({ order: o, stop: s, widA, widB, finA: fichaA.horaFin });
+                });
+            });
+        });
+    });
+    const resolverIncidencia = (id) => {
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            next.incidenciasFichaje = (next.incidenciasFichaje || []).filter(i => i.id !== id);
+            return next;
+        });
+    };
     const aprobarHoras = (orderId) => {
         const next = structuredClone(data);
         const order = next.orders.find(o => o.id === orderId);
@@ -15011,7 +15047,8 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
         const order = data.orders.find(o => o.id === printStop.orderId);
         const stop = order === null || order === void 0 ? void 0 : order.stops.find(s => s.clienteId === printStop.clienteId);
         const cliente = getClient(printStop.clienteId);
-        const crew = order === null || order === void 0 ? void 0 : order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+        const workerIdsDeEstaParadaPrint = stop ? Object.keys(stop.porTrabajador || {}).filter(wid => { var _a; return (_a = stop.porTrabajador[wid]) === null || _a === void 0 ? void 0 : _a.horaInicio; }) : [];
+        const crew = (workerIdsDeEstaParadaPrint.length > 0 ? workerIdsDeEstaParadaPrint : (order === null || order === void 0 ? void 0 : order.workerIds) || []).map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setPrintStop(null) }, "\u2190 Volver"),
             React.createElement("div", { className: "gj-print-area gj-card", style: { background: "#fff", padding: 20 } },
@@ -15072,6 +15109,27 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
             React.createElement("div", { className: "gj-stat" },
                 React.createElement("div", { className: "n" }, fmtHM(horasPersonaHoy)),
                 React.createElement("div", { className: "l" }, "Horas-persona invertidas hoy"))),
+        adminRole === "admin1" && (data.incidenciasFichaje || []).length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("h3", { className: "gj-h3" }, "Incidencias de fichaje"),
+            (data.incidenciasFichaje || []).slice().reverse().map(inc => (React.createElement("div", { className: "gj-card", key: inc.id, style: { background: "var(--warn-bg)" } },
+                React.createElement("div", { className: "gj-row" },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 600, fontSize: 13 } }, inc.workerNombre),
+                        React.createElement("div", { style: { fontSize: 12.5, marginTop: 2 } },
+                            "Intent\u00F3 iniciar \"", inc.clienteNuevo, "\" sin haber cerrado \"", inc.clienteSinCerrar, "\""),
+                        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, fechaEs(inc.fecha), " \u00B7 ", inc.hora)),
+                    React.createElement("button", { className: "gj-btn ghost", onClick: () => resolverIncidencia(inc.id) }, "Marcar visto"))))))),
+        adminRole === "admin1" && companerosRetrasados.length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("h3", { className: "gj-h3" }, "Compa\u00F1eros de ruta retrasados"),
+            companerosRetrasados.map((cr, i) => {
+                var _a, _b, _c;
+                const cli = getClient(cr.stop.clienteId);
+                return React.createElement("div", { className: "gj-card", key: i, style: { background: "var(--warn-bg)" } },
+                    React.createElement("div", { style: { fontWeight: 600, fontSize: 13 } }, (_a = cli === null || cli === void 0 ? void 0 : cli.nombre) !== null && _a !== void 0 ? _a : "?"),
+                    React.createElement("div", { style: { fontSize: 12.5, marginTop: 2 } },
+                        (_b = getWorker(cr.widA)) === null || _b === void 0 ? void 0 : _b.nombre, " cerr\u00F3 a las ", cr.finA, " y ya empez\u00F3 otra parada \u2014 ",
+                        (_c = getWorker(cr.widB)) === null || _c === void 0 ? void 0 : _c.nombre, " todav\u00EDa no ha cerrado esta."));
+            }))),
         adminMode && horasPendientes.length > 0 && (React.createElement(React.Fragment, null,
             React.createElement("h3", { className: "gj-h3" }, "Horas pendientes de aprobar"),
             horasPendientes.map(o => {
@@ -15139,7 +15197,11 @@ function PanelView({ data, persist, getClient, getWorker, adminMode, adminRole }
             const cliente = getClient(stop.clienteId);
             if (!cliente)
                 return null; // el cliente se borr\u00F3 desde entonces; no hay a qui\u00E9n avisar
-            const crew = order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+            // Quién trabajó de verdad en ESTA parada concreta (no toda la cuadrilla de la ruta, que
+            // puede repartirse entre varias casas a la vez y dar la falsa impresión de estar en dos
+            // sitios al mismo tiempo).
+            const workerIdsDeEstaParada = Object.keys(stop.porTrabajador || {}).filter(wid => { var _a; return (_a = stop.porTrabajador[wid]) === null || _a === void 0 ? void 0 : _a.horaInicio; });
+            const crew = (workerIdsDeEstaParada.length > 0 ? workerIdsDeEstaParada : order.workerIds).map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
             const dur = duracionStopHoras(stop, order);
             const esDeHoy = order.fecha === todayStr();
             const laboresTxt = (stop.labores && stop.labores.length > 0) ? ` Trabajos realizados: ${stop.labores.join(", ")}.` : "";
@@ -17434,6 +17496,35 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         persist(next);
     };
     const iniciarParada = async (orderId, clienteId) => {
+        // Si este trabajador tiene CUALQUIER OTRA parada todavía abierta (en progreso, sin marcar
+        // Hecho), NO se le deja iniciar esta otra. No hay cierre automático ni opción de saltárselo:
+        // tiene que volver a la parada anterior y marcarla Hecho (o, si de verdad la deja a medias,
+        // usar el flujo de pausa de Almacén/Taller) antes de poder abrir una nueva. Así se acostumbran
+        // a abrir y cerrar cada parada como algo rutinario, y el desplazamiento entre una casa y la
+        // siguiente se sigue calculando bien siempre.
+        const orderActual = data.orders.find(o => o.id === orderId);
+        const otraAbierta = orderActual && (orderActual.stops || []).find(s2 => {
+            if (s2.clienteId === clienteId)
+                return false;
+            const mia2 = s2.porTrabajador && s2.porTrabajador[workerId];
+            return mia2 && mia2.estado === "en_progreso" && mia2.tramos && mia2.tramos.length > 0 && !mia2.tramos[mia2.tramos.length - 1].horaFin;
+        });
+        if (otraAbierta) {
+            const cliAnterior = getClient(otraAbierta.clienteId);
+            const cliNuevo = getClient(clienteId);
+            alert(`Todavía tienes "${(cliAnterior === null || cliAnterior === void 0 ? void 0 : cliAnterior.nombre) || "la parada anterior"}" sin cerrar (sin marcar Hecho).\n\nVuelve a esa parada y pulsa "Hecho" antes de iniciar esta otra.`);
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                next.incidenciasFichaje = next.incidenciasFichaje || [];
+                next.incidenciasFichaje.push({
+                    id: uid("inc"), tipo: "intento_sin_cerrar", fecha: todayStr(), hora: nowTime(), orderId, workerId,
+                    workerNombre: (worker === null || worker === void 0 ? void 0 : worker.nombre) || "", clienteSinCerrar: (cliAnterior === null || cliAnterior === void 0 ? void 0 : cliAnterior.nombre) || "",
+                    clienteNuevo: (cliNuevo === null || cliNuevo === void 0 ? void 0 : cliNuevo.nombre) || "", resuelta: false,
+                });
+                return next;
+            });
+            return;
+        }
         const coord = await getPosicionActual();
         const hora = nowTime();
         persistConReintento(base => {
@@ -19545,7 +19636,10 @@ function ExportarView({ data, getClient, getWorker }) {
                 horaInicio: s.horaInicio,
                 horaFin: s.horaFin,
                 horas: duracionStopHoras(s, o),
-                cuadrilla: o.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", "),
+                cuadrilla: (() => {
+                    const widsParada = Object.keys(s.porTrabajador || {}).filter(wid => { var _a; return (_a = s.porTrabajador[wid]) === null || _a === void 0 ? void 0 : _a.horaInicio; });
+                    return (widsParada.length > 0 ? widsParada : o.workerIds).map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+                })(),
                 resultado: s.resultado === "no_hecho" ? "No hecho" : "Hecho",
                 observaciones: s.observaciones || "",
                 nota: s.notaTrabajador || "",
@@ -23513,7 +23607,8 @@ function CalendarioView({ data, persist, getClient, getWorker, adminMode, adminR
         const order = data.orders.find(o => o.id === printVisita.orderId);
         const stop = order === null || order === void 0 ? void 0 : order.stops.find(s => s.clienteId === printVisita.clienteId);
         const cliente = getClient(printVisita.clienteId);
-        const crew = order === null || order === void 0 ? void 0 : order.workerIds.map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
+        const workerIdsDeEstaParadaPrint = stop ? Object.keys(stop.porTrabajador || {}).filter(wid => { var _a; return (_a = stop.porTrabajador[wid]) === null || _a === void 0 ? void 0 : _a.horaInicio; }) : [];
+        const crew = (workerIdsDeEstaParadaPrint.length > 0 ? workerIdsDeEstaParadaPrint : (order === null || order === void 0 ? void 0 : order.workerIds) || []).map(id => { var _a; return (_a = getWorker(id)) === null || _a === void 0 ? void 0 : _a.nombre; }).filter(Boolean).join(", ");
         return (React.createElement("div", null,
             React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setPrintVisita(null) }, "\u2190 Volver"),
             React.createElement("div", { className: "gj-print-area gj-card", style: { background: "#fff", padding: 20 } },
