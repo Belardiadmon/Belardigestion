@@ -177,6 +177,21 @@ window.gjSyncManualAhora = async (STORAGE_KEY) => {
   if (remoto && gjRemoteChangeCallback) gjRemoteChangeCallback(remoto);
   return remoto;
 };
+// Si el último intento de guardar falló por falta de conexión (no por choque con otro móvil — eso
+// ya se resuelve solo), lo que hay en este móvil, aunque sea de hace rato, se queda guardado en el
+// propio teléfono (localStorage) y se reintenta subir solo en cuanto vuelva la cobertura — sin que
+// el administrador ni el trabajador tengan que acordarse de nada ni volver a guardarlo a mano.
+window.gjReintentarSubidaPendiente = async (STORAGE_KEY) => {
+  if (window.gjSyncStatus && window.gjSyncStatus.estado === "error") {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) await window.storage.set(STORAGE_KEY, raw, true);
+  }
+};
+if (typeof window !== "undefined") {
+  window.addEventListener("online", () => {
+    if (window.__GJ_MAIN_KEY__) window.gjReintentarSubidaPendiente(window.__GJ_MAIN_KEY__);
+  });
+}
 </script>
 <script>
 (() => {
@@ -14475,6 +14490,8 @@ function App() {
         const intervalo = setInterval(() => {
             if (window.gjSyncManualAhora)
                 window.gjSyncManualAhora(STORAGE_KEY);
+            if (window.gjReintentarSubidaPendiente)
+                window.gjReintentarSubidaPendiente(STORAGE_KEY);
         }, 25000);
         return () => clearInterval(intervalo);
     }, []);
@@ -16163,7 +16180,7 @@ function SugerenciasRutasView({ data, persist, getClient, getWorker }) {
                 React.createElement("div", { style: { fontWeight: 600, fontSize: 12.5 } }, "No caben en la jornada de hoy (quedan para otro d\u00EDa):"),
                 React.createElement("div", { style: { fontSize: 12.5 } }, resultado.noAsignados.map(x => x.cliente.nombre).join(", "))))))));
 }
-function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlock }) {
+function RutasView({ data, persist, persistConReintento, getClient, getWorker, adminMode, requestUnlock }) {
     const [fecha, setFecha] = useState(todayStr());
     const [selWorkers, setSelWorkers] = useState([]);
     const [selClients, setSelClients] = useState([]);
@@ -16193,15 +16210,18 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const [materialActNombre, setMaterialActNombre] = useState("");
     const [materialActCantidadNueva, setMaterialActCantidadNueva] = useState("");
     const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         order.porTrabajadorJornada = order.porTrabajadorJornada || {};
         order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: entrada || null, salidaHora: salida || null, validadoPorAdmin: true };
-        persist(next);
+            return next;
+        });
         setEditingJornada(null);
     };
     const añadirMaterialParadaAdmin = (orderId, clienteId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.materialesUsados = stop.materialesUsados || [];
@@ -16224,12 +16244,14 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                 return;
             stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant });
         }
-        persist(next);
+            return next;
+        });
         setMaterialAdminStockId(""); setMaterialAdminCantidadBolsa("");
         setMaterialAdminProveedor(""); setMaterialAdminNombre(""); setMaterialAdminCantidadNueva("");
     };
     const eliminarMaterialParadaAdmin = (orderId, clienteId, lineaId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         const linea = (stop.materialesUsados || []).find(m => m.id === lineaId);
@@ -16242,10 +16264,12 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                 next.almacenGeneral.push({ id: linea.stockId, proveedor: linea.proveedor, material: linea.material, cantidad: linea.cantidad });
         }
         stop.materialesUsados = (stop.materialesUsados || []).filter(m => m.id !== lineaId);
-        persist(next);
+            return next;
+        });
     };
     const añadirMaterialActividadAdmin = (orderId, actividadId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
         if (!act)
@@ -16270,12 +16294,14 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                 return;
             act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false });
         }
-        persist(next);
+            return next;
+        });
         setMaterialActStockId(""); setMaterialActCantidadBolsa("");
         setMaterialActProveedor(""); setMaterialActNombre(""); setMaterialActCantidadNueva("");
     };
     const eliminarMaterialActividadAdmin = (orderId, actividadId, lineaId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
         if (!act)
@@ -16290,18 +16316,22 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                 next.almacenGeneral.push({ id: linea.stockId, proveedor: linea.proveedor, material: linea.material, cantidad: linea.cantidad });
         }
         act.materialesImputados = (act.materialesImputados || []).filter(m => m.id !== lineaId);
-        persist(next);
+            return next;
+        });
     };
     const guardarAlmuerzoManual = (orderId, workerId, inicio, fin) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
         order.porTrabajadorAlmuerzo[workerId] = { ...(order.porTrabajadorAlmuerzo[workerId] || {}), inicio: inicio || null, fin: fin || null, validadoPorAdmin: true };
-        persist(next);
+            return next;
+        });
         setEditingAlmuerzo(null);
     };
     const guardarActExtraManual = (orderId, actividadId, inicio, fin) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
         if (act) {
@@ -16309,11 +16339,13 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
             act.horaFin = fin || null;
             act.validadoPorAdmin = true;
         }
-        persist(next);
+            return next;
+        });
         setEditingActExtra(null);
     };
     const guardarFichajeManual = (orderId, clienteId, workerId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop.porTrabajador = stop.porTrabajador || {};
@@ -16343,13 +16375,15 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
             stop.horaInicio = stop.horaInicio || horaInicio;
             stop.estado = "en_progreso";
         }
-        persist(next);
+            return next;
+        });
         setEditingFichaje(null);
         setFichajeInicio("");
         setFichajeFin("");
     };
     const toggleCrewMember = (orderId, workerId) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         if (order.workerIds.includes(workerId)) {
             if (order.workerIds.length <= 1)
@@ -16359,7 +16393,8 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
         else {
             order.workerIds = [...order.workerIds, workerId];
         }
-        persist(next);
+            return next;
+        });
     };
     const toggleWorker = (id) => {
         setSelWorkers(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -16370,16 +16405,18 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const crear = () => {
         if (selWorkers.length === 0 || selClients.length === 0)
             return;
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         next.orders.push({
             id: uid("ord"), fecha, workerIds: selWorkers, jornadaFinalizada: false, vehiculo: selVehiculo,
-            tiempoCargaMin: 0, tiempoAlmuerzoMin: data.settings.almuerzoEstandarMin || 15, horasAprobadas: false,
+            tiempoCargaMin: 0, tiempoAlmuerzoMin: next.settings.almuerzoEstandarMin || 15, horasAprobadas: false,
             stops: selClients.map(cid => ({
                 clienteId: cid, estado: "pendiente", resultado: null, horaInicio: null, horaFin: null,
                 notificado: false, observaciones: obsDraft[cid] || "", notaTrabajador: "", materiales: "", labores: [],
             })),
         });
-        persist(next);
+            return next;
+        });
         setSelWorkers([]);
         setSelClients([]);
         setObsDraft({});
@@ -16388,9 +16425,11 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const eliminar = (id) => {
         if (!confirm("¿Eliminar esta ruta?"))
             return;
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         next.orders = next.orders.filter(o => o.id !== id);
-        persist(next);
+            return next;
+        });
     };
     const [editingStops, setEditingStops] = useState(null); // orderId cuya ruta se está ampliando
     const [nuevosClientesRuta, setNuevosClientesRuta] = useState([]);
@@ -16398,7 +16437,8 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
     const añadirClientesARuta = (orderId) => {
         if (nuevosClientesRuta.length === 0)
             return;
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         nuevosClientesRuta.forEach(cid => {
             if (order.stops.some(s => s.clienteId === cid))
@@ -16408,48 +16448,76 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                 notificado: false, observaciones: "", notaTrabajador: "", materiales: "", labores: [],
             });
         });
-        persist(next);
+            return next;
+        });
         setNuevosClientesRuta([]);
         setEditingStops(null);
     };
+    const quitarParadaDeRuta = (orderId, clienteId) => {
+        const order = data.orders.find(o => o.id === orderId);
+        const stop = order === null || order === void 0 ? void 0 : order.stops.find(s => s.clienteId === clienteId);
+        const cli = getClient(clienteId);
+        const yaTrabajada = stop && (stop.estado === "completado" || stop.estado === "en_progreso" || Object.values(stop.porTrabajador || {}).some(f => f && (f.horaInicio || f.estado === "completado")));
+        const mensaje = yaTrabajada
+            ? `Esta parada (${(cli === null || cli === void 0 ? void 0 : cli.nombre) || ""}) ya tiene fichajes de algún trabajador. Si la quitas de la ruta, ese fichaje se borra con ella y no se puede deshacer.\n\n¿Seguro que quieres quitarla?`
+            : `¿Quitar "${(cli === null || cli === void 0 ? void 0 : cli.nombre) || ""}" de esta ruta?`;
+        if (!confirm(mensaje))
+            return;
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            order.stops = order.stops.filter(s => s.clienteId !== clienteId);
+            return next;
+        });
+    };
     const actualizarExcepcionHorario = (orderId, workerId, campo, valor) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         order.porTrabajadorJornada = order.porTrabajadorJornada || {};
         order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), [campo]: valor };
-        persist(next);
+            return next;
+        });
     };
     const [fotoGrandeRutas, setFotoGrandeRutas] = useState(null);
     const quitarFotoStopAdmin = (orderId, clienteId, campo, idx) => {
         if (!confirm("¿Eliminar esta foto? No se puede deshacer."))
             return;
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const stop = order.stops.find(s => s.clienteId === clienteId);
         stop[campo] = (stop[campo] || []).filter((_, i) => i !== idx);
-        persist(next);
+            return next;
+        });
     };
     const quitarFotoAlbaranAdmin = (orderId, actividadId) => {
         if (!confirm("¿Eliminar esta foto de albarán? No se puede deshacer."))
             return;
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
         if (act)
             act.fotoAlbaran = null;
-        persist(next);
+            return next;
+        });
     };
     const cambiarVehiculo = (orderId, vehiculo) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         order.vehiculo = vehiculo;
-        persist(next);
+            return next;
+        });
     };
     const guardarObs = (orderId, clienteId, texto) => {
-        const next = structuredClone(data);
+        persistConReintento(base => {
+            const next = structuredClone(base);
         const order = next.orders.find(o => o.id === orderId);
         order.stops.find(s => s.clienteId === clienteId).observaciones = texto;
-        persist(next);
+            return next;
+        });
         setEditingObs(null);
     };
     const rutasDelDia = data.orders.filter(o => o.fecha === fecha);
@@ -16601,7 +16669,10 @@ function RutasView({ data, persist, getClient, getWorker, adminMode, requestUnlo
                                 ". ", cli === null || cli === void 0 ? void 0 :
                                 cli.nombre,
                                 (cli === null || cli === void 0 ? void 0 : cli.referenciaObra) ? ` — ${cli.referenciaObra}` : ""),
-                            React.createElement("span", { className: "gj-badge " + (s.resultado === "no_hecho" ? "no_hecho" : s.estado) }, s.resultado === "no_hecho" ? "no hecho" : s.estado.replace("_", " "))),
+                            React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 4 } },
+                                React.createElement("span", { className: "gj-badge " + (s.resultado === "no_hecho" ? "no_hecho" : s.estado) }, s.resultado === "no_hecho" ? "no hecho" : s.estado.replace("_", " ")),
+                                adminMode && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px" }, title: "Quitar esta parada de la ruta", onClick: () => quitarParadaDeRuta(o.id, s.clienteId) },
+                                    React.createElement(Trash2, { size: 12, color: "var(--warn)" })))),
                         adminMode && o.workerIds.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, o.workerIds.map(wid => {
                             const w = getWorker(wid);
                             const ficha = s.porTrabajador && s.porTrabajador[wid];
@@ -16959,77 +17030,79 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             }
         }
         const coordInicio = await getPosicionActual();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        order.actividadesExtra = order.actividadesExtra || [];
-        const nombreTrabajador = worker ? worker.nombre : "";
-        const horaAhora = nowTime();
-        // Si este trabajador tenía un mantenimiento en curso con un tramo abierto, se pausa (se le
-        // cierra ese tramo) al empezar esta otra labor. Al volver, "Reanudar" abre un tramo nuevo, así
-        // el tiempo del almacén/repostaje queda fuera del mantenimiento y se cuenta como desplazamiento.
-        (order.stops || []).forEach(s => {
-            const mia = s.porTrabajador && s.porTrabajador[workerId];
-            if (mia && mia.estado === "en_progreso" && mia.tramos && mia.tramos.length > 0) {
-                const ultimo = mia.tramos[mia.tramos.length - 1];
-                if (!ultimo.horaFin) {
-                    ultimo.horaFin = horaAhora;
-                }
-            }
-        });
-        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
-        if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
-            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: horaAhora };
-        }
-        if (!order.entradaMananaHora) {
-            order.entradaMananaHora = horaAhora;
-        }
         const idActividadNueva = uid("ext");
-        order.actividadesExtra.push({
-            id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio, coordFin: null, trabajador: nombreTrabajador, workerId,
-            tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
-            maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
-            obraId: esRecogidaMaterial ? (materialObraId || null) : null,
-            fotoAlbaran: esRecogidaMaterial ? materialFoto : null,
-            materialesImputados: esRecogidaMaterial ? materialesListaFinal.map(m => ({ ...m, bloqueado: false })) : [],
-        });
-        if (esRecogidaMaterial) {
-            next.almacenGeneral = next.almacenGeneral || [];
-            materialesListaFinal.forEach(m => {
-                if (m.origen === "stock" && m.stockId) {
-                    // Se ha usado material que ya estaba en la bolsa general: se descuenta.
-                    const item = next.almacenGeneral.find(s => s.id === m.stockId);
-                    if (item) {
-                        item.cantidad = Math.max(0, item.cantidad - m.cantidad);
-                        if (item.cantidad === 0) {
-                            next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
-                        }
-                    }
-                }
-                else if (m.cantidadRecogida && m.cantidadRecogida > m.cantidad) {
-                    // Ha sobrado material de lo recogido en el albarán: el sobrante va a la bolsa general
-                    // para poder imputarlo a otra obra más adelante.
-                    const sobrante = m.cantidadRecogida - m.cantidad;
-                    const existente = next.almacenGeneral.find(s => s.proveedor === m.proveedor && s.material === m.material);
-                    if (existente) {
-                        existente.cantidad += sobrante;
-                    }
-                    else {
-                        next.almacenGeneral.push({ id: uid("stk"), proveedor: m.proveedor, material: m.material, cantidad: sobrante });
+        await persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            order.actividadesExtra = order.actividadesExtra || [];
+            const nombreTrabajador = worker ? worker.nombre : "";
+            const horaAhora = nowTime();
+            // Si este trabajador tenía un mantenimiento en curso con un tramo abierto, se pausa (se le
+            // cierra ese tramo) al empezar esta otra labor. Al volver, "Reanudar" abre un tramo nuevo, así
+            // el tiempo del almacén/repostaje queda fuera del mantenimiento y se cuenta como desplazamiento.
+            (order.stops || []).forEach(s => {
+                const mia = s.porTrabajador && s.porTrabajador[workerId];
+                if (mia && mia.estado === "en_progreso" && mia.tramos && mia.tramos.length > 0) {
+                    const ultimo = mia.tramos[mia.tramos.length - 1];
+                    if (!ultimo.horaFin) {
+                        ultimo.horaFin = horaAhora;
                     }
                 }
             });
-        }
-        if (esTallerAlmacen && extraTipoTaller === "dejar" && extraMaquinaId) {
-            const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
-            if (maq)
-                maq.enTaller = { lugar, categoria, fecha: todayStr(), trabajador: nombreTrabajador };
-        }
-        if (esTallerAlmacen && extraTipoTaller === "recogida" && extraMaquinaId) {
-            const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
-            if (maq)
-                maq.enTaller = null;
-        }
-        persist(next);
+            order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+            if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
+                order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: horaAhora };
+            }
+            if (!order.entradaMananaHora) {
+                order.entradaMananaHora = horaAhora;
+            }
+            order.actividadesExtra.push({
+                id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio, coordFin: null, trabajador: nombreTrabajador, workerId,
+                tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
+                maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
+                obraId: esRecogidaMaterial ? (materialObraId || null) : null,
+                fotoAlbaran: esRecogidaMaterial ? materialFoto : null,
+                materialesImputados: esRecogidaMaterial ? materialesListaFinal.map(m => ({ ...m, bloqueado: false })) : [],
+            });
+            if (esRecogidaMaterial) {
+                next.almacenGeneral = next.almacenGeneral || [];
+                materialesListaFinal.forEach(m => {
+                    if (m.origen === "stock" && m.stockId) {
+                        // Se ha usado material que ya estaba en la bolsa general: se descuenta.
+                        const item = next.almacenGeneral.find(s => s.id === m.stockId);
+                        if (item) {
+                            item.cantidad = Math.max(0, item.cantidad - m.cantidad);
+                            if (item.cantidad === 0) {
+                                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+                            }
+                        }
+                    }
+                    else if (m.cantidadRecogida && m.cantidadRecogida > m.cantidad) {
+                        // Ha sobrado material de lo recogido en el albarán: el sobrante va a la bolsa general
+                        // para poder imputarlo a otra obra más adelante.
+                        const sobrante = m.cantidadRecogida - m.cantidad;
+                        const existente = next.almacenGeneral.find(s => s.proveedor === m.proveedor && s.material === m.material);
+                        if (existente) {
+                            existente.cantidad += sobrante;
+                        }
+                        else {
+                            next.almacenGeneral.push({ id: uid("stk"), proveedor: m.proveedor, material: m.material, cantidad: sobrante });
+                        }
+                    }
+                });
+            }
+            if (esTallerAlmacen && extraTipoTaller === "dejar" && extraMaquinaId) {
+                const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
+                if (maq)
+                    maq.enTaller = { lugar, categoria, fecha: todayStr(), trabajador: nombreTrabajador };
+            }
+            if (esTallerAlmacen && extraTipoTaller === "recogida" && extraMaquinaId) {
+                const maq = next.maquinaria.find(m => m.id === extraMaquinaId);
+                if (maq)
+                    maq.enTaller = null;
+            }
+            return next;
+        });
         if (esRecogidaMaterial) {
             // Dejamos la ventana abierta: el trabajador va a seguir cargando materiales y la foto
             // del albarán mientras dura la recogida, en vez de tener que volver a abrir todo el panel.
@@ -17053,14 +17126,17 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     };
     const finalizarActividadExtra = async (orderId, actividadId) => {
         const coordFin = await getPosicionActual();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
-        if (act) {
-            act.horaFin = nowTime();
-            act.coordFin = coordFin;
-        }
-        persist(next);
+        const hora = nowTime();
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+            if (act) {
+                act.horaFin = hora;
+                act.coordFin = coordFin;
+            }
+            return next;
+        });
     };
     const añadirOpcionListaFichaje = (categoria) => {
         if (!extraNuevoLugar.trim())
@@ -17125,31 +17201,33 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             nuevaLinea = { id: uid("mat"), proveedor: materialProveedor, material: materialNombre, cantidad: usada, origen: "nuevo", cantidadRecogida: recogida };
         }
         if (almacenEnCursoId) {
-            const next = structuredClone(data);
-            const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
-            const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
-            if (act) {
-                act.materialesImputados = [...(act.materialesImputados || []), { ...nuevaLinea, bloqueado: false }];
-                if (nuevaLinea.origen === "stock" && nuevaLinea.stockId) {
-                    next.almacenGeneral = next.almacenGeneral || [];
-                    const item = next.almacenGeneral.find(s => s.id === nuevaLinea.stockId);
-                    if (item) {
-                        item.cantidad = Math.max(0, item.cantidad - nuevaLinea.cantidad);
-                        if (item.cantidad === 0)
-                            next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
+                const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+                if (act) {
+                    act.materialesImputados = [...(act.materialesImputados || []), { ...nuevaLinea, bloqueado: false }];
+                    if (nuevaLinea.origen === "stock" && nuevaLinea.stockId) {
+                        next.almacenGeneral = next.almacenGeneral || [];
+                        const item = next.almacenGeneral.find(s => s.id === nuevaLinea.stockId);
+                        if (item) {
+                            item.cantidad = Math.max(0, item.cantidad - nuevaLinea.cantidad);
+                            if (item.cantidad === 0)
+                                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+                        }
+                    }
+                    else if (nuevaLinea.cantidadRecogida && nuevaLinea.cantidadRecogida > nuevaLinea.cantidad) {
+                        next.almacenGeneral = next.almacenGeneral || [];
+                        const sobrante = nuevaLinea.cantidadRecogida - nuevaLinea.cantidad;
+                        const existente = next.almacenGeneral.find(s => s.proveedor === nuevaLinea.proveedor && s.material === nuevaLinea.material);
+                        if (existente)
+                            existente.cantidad += sobrante;
+                        else
+                            next.almacenGeneral.push({ id: uid("stk"), proveedor: nuevaLinea.proveedor, material: nuevaLinea.material, cantidad: sobrante });
                     }
                 }
-                else if (nuevaLinea.cantidadRecogida && nuevaLinea.cantidadRecogida > nuevaLinea.cantidad) {
-                    next.almacenGeneral = next.almacenGeneral || [];
-                    const sobrante = nuevaLinea.cantidadRecogida - nuevaLinea.cantidad;
-                    const existente = next.almacenGeneral.find(s => s.proveedor === nuevaLinea.proveedor && s.material === nuevaLinea.material);
-                    if (existente)
-                        existente.cantidad += sobrante;
-                    else
-                        next.almacenGeneral.push({ id: uid("stk"), proveedor: nuevaLinea.proveedor, material: nuevaLinea.material, cantidad: sobrante });
-                }
-            }
-            persist(next);
+                return next;
+            });
         }
         else {
             setMaterialesLista([...materialesLista, nuevaLinea]);
@@ -17167,12 +17245,14 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         const dataUrl = await leerFotoBase64(archivos[0]);
         setMaterialFoto(dataUrl);
         if (almacenEnCursoId) {
-            const next = structuredClone(data);
-            const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
-            const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
-            if (act)
-                act.fotoAlbaran = dataUrl;
-            persist(next);
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
+                const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+                if (act)
+                    act.fotoAlbaran = dataUrl;
+                return next;
+            });
         }
     };
     const finalizarRecogidaMaterial = () => {
@@ -17197,18 +17277,25 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         if (archivos.length === 0)
             return;
         const nuevas = await Promise.all(archivos.map(async (f) => ({ name: f.name, dataUrl: await leerFotoBase64(f) })));
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop[campo] = [...(stop[campo] || []), ...nuevas.filter(x => x.dataUrl)];
-        persist(next);
+        const nuevasValidas = nuevas.filter(x => x.dataUrl);
+        if (nuevasValidas.length === 0)
+            return;
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop[campo] = [...(stop[campo] || []), ...nuevasValidas];
+            return next;
+        });
     };
     const quitarFotoStop = (orderId, clienteId, campo, idx) => {
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop[campo] = (stop[campo] || []).filter((_, i) => i !== idx);
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop[campo] = (stop[campo] || []).filter((_, i) => i !== idx);
+            return next;
+        });
     };
     const guardarRiegoPoda = (clienteId) => {
         const sel = riegoPodaSel[clienteId];
