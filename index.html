@@ -16900,6 +16900,11 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const workerId = (deviceWorkerId && deviceWorkerId !== "__admin__") ? deviceWorkerId : "";
     const worker = workerId ? getWorker(workerId) : null;
     const [notaAbierta, setNotaAbierta] = useState(null);
+    const [flujoCierre, setFlujoCierre] = useState(null); // { orderId, clienteId, tipo, pasos, idx, respuestas }
+    const [fcTransicion, setFcTransicion] = useState(false); // true mientras se muestra el icono "pensando"
+    const fcGpsRef = useRef(null);
+    const fcCoordRef = useRef(undefined);
+    const [fcObsTexto, setFcObsTexto] = useState("");
     const [materialParadaAbierta, setMaterialParadaAbierta] = useState(null); // key = orderId+clienteId
     const [materialParadaOrigen, setMaterialParadaOrigen] = useState("bolsa"); // "bolsa" | "nuevo"
     const [materialParadaStockId, setMaterialParadaStockId] = useState("");
@@ -17394,70 +17399,101 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         setRiegoPodaAbierto(null);
         setRiegoPodaSel(sel2 => ({ ...sel2, [clienteId]: {} }));
     };
-    const marcarNoHecho = async (orderId, clienteId) => {
+    const marcarNoHecho = async (orderId, clienteId, opts) => {
+        opts = opts || {};
         var _a;
         const orderChk2 = data.orders.find(o => o.id === orderId);
         const stopChk2 = orderChk2 === null || orderChk2 === void 0 ? void 0 : orderChk2.stops.find(s => s.clienteId === clienteId);
         const miFichaChk2 = stopChk2 === null || stopChk2 === void 0 ? void 0 : stopChk2.porTrabajador && stopChk2.porTrabajador[workerId];
-        if (!(miFichaChk2 === null || miFichaChk2 === void 0 ? void 0 : miFichaChk2.horaInicio)) {
+        if (!opts.saltarComprobacionInicio && !(miFichaChk2 === null || miFichaChk2 === void 0 ? void 0 : miFichaChk2.horaInicio)) {
             if (!confirm("No has pulsado \"Iniciar\" en esta parada, as\u00ED que no hay hora de inicio guardada. Si contin\u00faas, se guardar\u00e1 como que has empezado y terminado ahora mismo.\n\n\u00bfQuieres continuar igualmente?"))
                 return;
         }
-        const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        const cliente = next.clients.find(c => c.id === clienteId);
-        const aviso = avisoUbicacionCliente(coord, cliente);
-        stop.porTrabajador = stop.porTrabajador || {};
-        const miFichaNo = { ...(stop.porTrabajador[workerId] || {}) };
-        miFichaNo.tramos = miFichaNo.tramos || [];
-        const ultimoTramoN = miFichaNo.tramos[miFichaNo.tramos.length - 1];
-        if (ultimoTramoN && !ultimoTramoN.horaFin) {
-            ultimoTramoN.horaFin = hora;
-            ultimoTramoN.coordFin = coord;
-        }
-        miFichaNo.estado = "completado";
-        miFichaNo.resultado = "no_hecho";
-        miFichaNo.horaFin = hora;
-        miFichaNo.coordFin = coord;
-        miFichaNo.notaTrabajador = notaTexto;
-        miFichaNo.avisoUbicacionFin = aviso;
-        stop.porTrabajador[workerId] = miFichaNo;
-        // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
-        // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
-        if (!stop.horaFin || hora > stop.horaFin) {
-            stop.horaFin = hora;
-            stop.coordFin = coord;
-            stop.resultado = "no_hecho";
-            stop.avisoUbicacionFin = aviso;
-        }
-        stop.estado = "completado";
-        stop.notaTrabajador = notaTexto;
-        stop.crewSize = order.workerIds.length;
-        next.pendientes = next.pendientes || [];
-        next.pendientes.push({
-            id: uid("pnd"), clienteId, descripcion: notaTexto || "No se pudo completar el mantenimiento",
-            origen: "trabajador", autor: ((_a = getWorker(workerId)) === null || _a === void 0 ? void 0 : _a.nombre) || "Trabajador", fecha: today, resuelto: false,
+        const notaGuardada = notaTexto;
+        const coordInicial = opts.coordPrevio !== undefined ? opts.coordPrevio : null;
+        persistConReintento(base => {
+            var _a;
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const avisoInicial = coordInicial ? avisoUbicacionCliente(coordInicial, cliente) : false;
+            stop.porTrabajador = stop.porTrabajador || {};
+            const miFichaNo = { ...(stop.porTrabajador[workerId] || {}) };
+            miFichaNo.tramos = miFichaNo.tramos || [];
+            const ultimoTramoN = miFichaNo.tramos[miFichaNo.tramos.length - 1];
+            if (ultimoTramoN && !ultimoTramoN.horaFin) {
+                ultimoTramoN.horaFin = hora;
+                ultimoTramoN.coordFin = coordInicial;
+            }
+            miFichaNo.estado = "completado";
+            miFichaNo.resultado = "no_hecho";
+            miFichaNo.horaFin = hora;
+            miFichaNo.coordFin = coordInicial;
+            miFichaNo.notaTrabajador = notaGuardada;
+            miFichaNo.avisoUbicacionFin = avisoInicial;
+            stop.porTrabajador[workerId] = miFichaNo;
+            // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
+            // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
+            if (!stop.horaFin || hora > stop.horaFin) {
+                stop.horaFin = hora;
+                stop.coordFin = coordInicial;
+                stop.resultado = "no_hecho";
+                stop.avisoUbicacionFin = avisoInicial;
+            }
+            stop.estado = "completado";
+            stop.notaTrabajador = notaGuardada;
+            stop.crewSize = order.workerIds.length;
+            if (opts.parteRellenado !== undefined)
+                stop.parteRellenado = opts.parteRellenado;
+            if (opts.riegoVerificado !== undefined)
+                stop.riegoVerificado = opts.riegoVerificado;
+            next.pendientes = next.pendientes || [];
+            next.pendientes.push({
+                id: uid("pnd"), clienteId, descripcion: notaGuardada || "No se pudo completar el mantenimiento",
+                origen: "trabajador", autor: ((_a = getWorker(workerId)) === null || _a === void 0 ? void 0 : _a.nombre) || "Trabajador", fecha: today, resuelto: false,
+            });
+            return next;
         });
-        persist(next);
+        if (coordInicial)
+            return; // ya teníamos ubicación resuelta del propio flujo de preguntas; no hace falta más
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.horaFin === hora) {
+                mia.coordFin = coord;
+                mia.avisoUbicacionFin = aviso;
+                if (mia.tramos && mia.tramos.length > 0) {
+                    const ultimo = mia.tramos[mia.tramos.length - 1];
+                    if (ultimo.horaFin === hora)
+                        ultimo.coordFin = coord;
+                }
+            }
+            if (stop.horaFin === hora) {
+                stop.coordFin = coord;
+                stop.avisoUbicacionFin = aviso;
+            }
+            return next;
+        });
         setNotaAbierta(null);
         setNotaTexto("");
     };
     const finalizarJornada = async (orderId) => {
-        const coord = await getPosicionActual();
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
-            const aviso = avisoUbicacionPunto(coord, next.settings.naveLat, next.settings.naveLng);
             order.porTrabajadorJornada = order.porTrabajadorJornada || {};
-            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), salidaHora: hora, salidaCoord: coord, avisoUbicacionSalida: aviso };
+            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), salidaHora: hora, salidaCoord: null, avisoUbicacionSalida: false };
             // Resumen de la ruta: la salida se amplía si alguien sigue trabajando y se va más tarde.
             if (!order.salidaJornadaHora || hora > order.salidaJornadaHora) {
                 order.salidaJornadaHora = hora;
-                order.salidaJornadaCoord = coord;
+                order.salidaJornadaCoord = null;
             }
             // La jornada de la ruta se da por finalizada solo cuando TODOS los asignados han fichado su salida.
             order.jornadaFinalizada = order.workerIds.every(wid => { var _a; return !!((_a = order.porTrabajadorJornada[wid]) === null || _a === void 0 ? void 0 : _a.salidaHora); });
@@ -17468,32 +17504,76 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             }
             return next;
         });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const aviso = avisoUbicacionPunto(coord, next.settings.naveLat, next.settings.naveLng);
+            if (order.porTrabajadorJornada && order.porTrabajadorJornada[workerId] && order.porTrabajadorJornada[workerId].salidaHora === hora) {
+                order.porTrabajadorJornada[workerId].salidaCoord = coord;
+                order.porTrabajadorJornada[workerId].avisoUbicacionSalida = aviso;
+            }
+            if (order.salidaJornadaHora === hora) {
+                order.salidaJornadaCoord = coord;
+            }
+            return next;
+        });
     };
     const iniciarPrimeraParada = async (orderId, clienteId) => {
-        const coord = await getPosicionActual();
         const hora = nowTime();
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        const cliente = next.clients.find(c => c.id === clienteId);
-        const aviso = avisoUbicacionCliente(coord, cliente);
-        stop.porTrabajador = stop.porTrabajador || {};
-        stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
-        if (stop.estado === "pendiente") {
-            stop.estado = "en_progreso";
-            stop.horaInicio = hora;
-            stop.coordInicio = coord;
-            stop.avisoUbicacionInicio = aviso;
-        }
-        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
-        if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
-            order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: hora, entradaCoord: coord };
-        }
-        if (!order.entradaMananaHora) {
-            order.entradaMananaHora = hora;
-            order.entradaMananaCoord = coord;
-        }
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.porTrabajador = stop.porTrabajador || {};
+            stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: null, avisoUbicacionInicio: false, tramos: [{ horaInicio: hora, coordInicio: null, horaFin: null, coordFin: null }] };
+            if (stop.estado === "pendiente") {
+                stop.estado = "en_progreso";
+                stop.horaInicio = hora;
+                stop.coordInicio = null;
+                stop.avisoUbicacionInicio = false;
+            }
+            order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+            if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
+                order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: hora, entradaCoord: null };
+            }
+            if (!order.entradaMananaHora) {
+                order.entradaMananaHora = hora;
+                order.entradaMananaCoord = null;
+            }
+            return next;
+        });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.horaInicio === hora) {
+                mia.coordInicio = coord;
+                mia.avisoUbicacionInicio = aviso;
+                if (mia.tramos && mia.tramos.length > 0)
+                    mia.tramos[mia.tramos.length - 1].coordInicio = coord;
+            }
+            if (stop.horaInicio === hora) {
+                stop.coordInicio = coord;
+                stop.avisoUbicacionInicio = aviso;
+            }
+            if (order.porTrabajadorJornada && order.porTrabajadorJornada[workerId] && order.porTrabajadorJornada[workerId].entradaHora === hora) {
+                order.porTrabajadorJornada[workerId].entradaCoord = coord;
+            }
+            if (order.entradaMananaHora === hora) {
+                order.entradaMananaCoord = coord;
+            }
+            return next;
+        });
+    };
+    const aplicarUbicacionEnSegundoPlano = (patchConUbicacion) => {
+        getPosicionActual().then(coord => {
+            if (!coord)
+                return; // sin ubicación disponible; el fichaje ya guardado antes se queda tal cual
+            persistConReintento(base => patchConUbicacion(base, coord));
+        });
     };
     const iniciarParada = async (orderId, clienteId) => {
         // Si este trabajador tiene CUALQUIER OTRA parada todavía abierta (en progreso, sin marcar
@@ -17525,19 +17605,38 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             });
             return;
         }
-        const coord = await getPosicionActual();
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             const stop = order.stops.find(s => s.clienteId === clienteId);
-            const cliente = next.clients.find(c => c.id === clienteId);
-            const aviso = avisoUbicacionCliente(coord, cliente);
             stop.porTrabajador = stop.porTrabajador || {};
-            stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: coord, avisoUbicacionInicio: aviso, tramos: [{ horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }] };
+            stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: null, avisoUbicacionInicio: false, tramos: [{ horaInicio: hora, coordInicio: null, horaFin: null, coordFin: null }] };
             if (stop.estado === "pendiente") {
                 stop.estado = "en_progreso";
                 stop.horaInicio = hora;
+                stop.coordInicio = null;
+                stop.avisoUbicacionInicio = false;
+            }
+            return next;
+        });
+        // La ubicación nunca bloquea ni se le avisa al trabajador: se busca en segundo plano y, si
+        // llega a tiempo (antes de que cierre la app o cambie de pantalla), se añade sola a este mismo
+        // fichaje ya guardado. Si no llega, el fichaje se queda igual de válido, solo sin ubicación.
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.horaInicio === hora) {
+                mia.coordInicio = coord;
+                mia.avisoUbicacionInicio = aviso;
+                if (mia.tramos && mia.tramos.length > 0)
+                    mia.tramos[mia.tramos.length - 1].coordInicio = coord;
+            }
+            if (stop.horaInicio === hora) {
                 stop.coordInicio = coord;
                 stop.avisoUbicacionInicio = aviso;
             }
@@ -17545,7 +17644,6 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         });
     };
     const reanudarParada = async (orderId, clienteId) => {
-        const coord = await getPosicionActual();
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -17553,52 +17651,72 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             const stop = order.stops.find(s => s.clienteId === clienteId);
             stop.porTrabajador = stop.porTrabajador || {};
             const mia = stop.porTrabajador[workerId] || { estado: "en_progreso", tramos: [] };
-            mia.tramos = [...(mia.tramos || []), { horaInicio: hora, coordInicio: coord, horaFin: null, coordFin: null }];
+            mia.tramos = [...(mia.tramos || []), { horaInicio: hora, coordInicio: null, horaFin: null, coordFin: null }];
             mia.estado = "en_progreso";
             stop.porTrabajador[workerId] = mia;
             return next;
         });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.tramos && mia.tramos.length > 0) {
+                const ultimo = mia.tramos[mia.tramos.length - 1];
+                if (ultimo.horaInicio === hora)
+                    ultimo.coordInicio = coord;
+            }
+            return next;
+        });
     };
-    const marcarHecho = async (orderId, clienteId) => {
+    const marcarHecho = async (orderId, clienteId, opts) => {
+        opts = opts || {};
         const orderChk = data.orders.find(o => o.id === orderId);
         const stopChk = orderChk === null || orderChk === void 0 ? void 0 : orderChk.stops.find(s => s.clienteId === clienteId);
         const miFichaChk = stopChk === null || stopChk === void 0 ? void 0 : stopChk.porTrabajador && stopChk.porTrabajador[workerId];
-        if (!(miFichaChk === null || miFichaChk === void 0 ? void 0 : miFichaChk.horaInicio)) {
+        if (!opts.saltarComprobacionInicio && !(miFichaChk === null || miFichaChk === void 0 ? void 0 : miFichaChk.horaInicio)) {
             if (!confirm("No has pulsado \"Iniciar\" en esta parada, as\u00ED que no hay hora de inicio guardada. Si contin\u00faas, se guardar\u00e1 como que has empezado y terminado ahora mismo.\n\n\u00bfQuieres marcarlo como hecho igualmente?"))
                 return;
         }
-        const coord = await getPosicionActual();
         const hora = nowTime();
+        const coordInicial = opts.coordPrevio !== undefined ? opts.coordPrevio : null;
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             const stop = order.stops.find(s => s.clienteId === clienteId);
             const cliente = next.clients.find(c => c.id === clienteId);
-            const aviso = avisoUbicacionCliente(coord, cliente);
+            const avisoInicial = coordInicial ? avisoUbicacionCliente(coordInicial, cliente) : false;
             stop.porTrabajador = stop.porTrabajador || {};
             const miFichaHecho = { ...(stop.porTrabajador[workerId] || {}) };
             miFichaHecho.tramos = miFichaHecho.tramos || [];
             const ultimoTramoH = miFichaHecho.tramos[miFichaHecho.tramos.length - 1];
             if (ultimoTramoH && !ultimoTramoH.horaFin) {
                 ultimoTramoH.horaFin = hora;
-                ultimoTramoH.coordFin = coord;
+                ultimoTramoH.coordFin = coordInicial;
             }
             miFichaHecho.estado = "completado";
             miFichaHecho.resultado = "hecho";
             miFichaHecho.horaFin = hora;
-            miFichaHecho.coordFin = coord;
-            miFichaHecho.avisoUbicacionFin = aviso;
+            miFichaHecho.coordFin = coordInicial;
+            miFichaHecho.avisoUbicacionFin = avisoInicial;
             stop.porTrabajador[workerId] = miFichaHecho;
             // Resumen de la parada para la ruta: se marca completada con el fichaje del primero que termina,
             // y el fin se va ampliando si algún compañero sigue trabajando y termina más tarde.
             if (!stop.horaFin || hora > stop.horaFin) {
                 stop.horaFin = hora;
-                stop.coordFin = coord;
+                stop.coordFin = coordInicial;
                 stop.resultado = "hecho";
-                stop.avisoUbicacionFin = aviso;
+                stop.avisoUbicacionFin = avisoInicial;
             }
             stop.estado = "completado";
             stop.crewSize = order.workerIds.length;
+            if (opts.parteRellenado !== undefined)
+                stop.parteRellenado = opts.parteRellenado;
+            if (opts.riegoVerificado !== undefined)
+                stop.riegoVerificado = opts.riegoVerificado;
+            if (opts.observacion) {
+                stop.observaciones = stop.observaciones ? stop.observaciones + " / " + opts.observacion : opts.observacion;
+            }
             if (cliente && cliente.esMantenimiento) {
                 next.historialDuracionVisitas = next.historialDuracionVisitas || {};
                 next.historialDuracionVisitas[clienteId] = next.historialDuracionVisitas[clienteId] || [];
@@ -17606,6 +17724,105 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             }
             return next;
         });
+        if (coordInicial)
+            return; // ya teníamos ubicación resuelta del propio flujo de preguntas; no hace falta más
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            const cliente = next.clients.find(c => c.id === clienteId);
+            const aviso = avisoUbicacionCliente(coord, cliente);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.horaFin === hora) {
+                mia.coordFin = coord;
+                mia.avisoUbicacionFin = aviso;
+                if (mia.tramos && mia.tramos.length > 0) {
+                    const ultimo = mia.tramos[mia.tramos.length - 1];
+                    if (ultimo.horaFin === hora)
+                        ultimo.coordFin = coord;
+                }
+            }
+            if (stop.horaFin === hora) {
+                stop.coordFin = coord;
+                stop.avisoUbicacionFin = aviso;
+            }
+            return next;
+        });
+    };
+    // Al marcar "Hecho" o confirmar "No hecho", en vez de guardar al instante, se abre un pequeño
+    // repaso de 3-4 preguntas. Sirve de doble control de calidad Y, de paso, le da tiempo real al GPS
+    // para localizar sin que el trabajador vea ni sepa nada de ubicaciones — el ritmo de las preguntas
+    // es el propio "tiempo de espera" del GPS, no una cuenta atrás inventada.
+    const abrirFlujoCierre = (orderId, clienteId, tipo, notaPrevia) => {
+        if (tipo !== "hecho") {
+            // "No hecho" siempre necesita un motivo escrito — ese motivo ES el "parte" para este caso
+            // (lo que se le explica al cliente de por qué no se ha podido completar el mantenimiento).
+            if (!notaPrevia || !notaPrevia.trim()) {
+                alert("Tienes que indicar por qu\u00e9 no se ha podido hacer, antes de confirmarlo.");
+                return;
+            }
+        }
+        fcGpsRef.current = getPosicionActual();
+        fcCoordRef.current = undefined;
+        setFcObsTexto(notaPrevia || "");
+        const pasos = tipo === "hecho" ? ["parte", "obs", "riego", "fotos"] : ["riego", "fotos"];
+        setFlujoCierre({ orderId, clienteId, tipo, pasos, idx: 0, respuestas: { obs: notaPrevia || "" } });
+    };
+    const avanzarFlujoCierre = async (respuestaParcial) => {
+        if (!flujoCierre)
+            return;
+        const nuevasRespuestas = { ...flujoCierre.respuestas, ...respuestaParcial };
+        const pasoActual = flujoCierre.pasos[flujoCierre.idx];
+        if (pasoActual === "parte") {
+            // La pregunta sirve para ganar el tiempo del GPS, pero la respuesta no vale por sí sola:
+            // se comprueba contra lo que de verdad hay marcado en las labores. Si dice "no", o dice
+            // "sí" pero no hay nada marcado, se corta aquí y se manda a rellenarlo — no se avanza.
+            const { orderId, clienteId } = flujoCierre;
+            const orderChk = data.orders.find(o => o.id === orderId);
+            const stopChk = orderChk === null || orderChk === void 0 ? void 0 : orderChk.stops.find(s => s.clienteId === clienteId);
+            const hayLabores = !!(stopChk && stopChk.labores && stopChk.labores.length > 0);
+            if (respuestaParcial.parte === "no" || !hayLabores) {
+                setFlujoCierre(null);
+                alert(respuestaParcial.parte === "si"
+                    ? "No hay ninguna labor marcada todav\u00EDa. Indica qu\u00e9 has hecho antes de poder cerrarla."
+                    : "Indica qu\u00e9 has hecho antes de poder cerrarla.");
+                setLaboresAbiertas(orderId + clienteId);
+                return;
+            }
+        }
+        const esUltimo = flujoCierre.idx === flujoCierre.pasos.length - 1;
+        if (esUltimo) {
+            const { orderId, clienteId, tipo } = flujoCierre;
+            const coordFinal = fcCoordRef.current;
+            setFlujoCierre(null);
+            const opts = {
+                saltarComprobacionInicio: true,
+                parteRellenado: tipo === "hecho" ? true : undefined,
+                riegoVerificado: nuevasRespuestas.riego === "si",
+                observacion: nuevasRespuestas.obs || "",
+                coordPrevio: coordFinal,
+            };
+            if (tipo === "hecho")
+                marcarHecho(orderId, clienteId, opts);
+            else
+                marcarNoHecho(orderId, clienteId, opts);
+            return;
+        }
+        const siguienteIdx = flujoCierre.idx + 1;
+        const siguientePaso = flujoCierre.pasos[siguienteIdx];
+        setFcTransicion(true);
+        if (siguientePaso === "fotos") {
+            // Este es el hueco real: se espera a que llegue el GPS, como máximo 18 segundos.
+            fcCoordRef.current = await Promise.race([
+                fcGpsRef.current,
+                new Promise(resolve => setTimeout(() => resolve(null), 18000)),
+            ]);
+        }
+        else {
+            await new Promise(resolve => setTimeout(resolve, 900)); // pausa breve de transición
+        }
+        setFcTransicion(false);
+        setFlujoCierre(f => f ? { ...f, idx: siguienteIdx, respuestas: nuevasRespuestas } : f);
     };
     const updateTiempoOrden = (orderId, campo, valor) => {
         const next = structuredClone(data);
@@ -17614,30 +17831,54 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         persist(next);
     };
     const empezarAlmuerzo = async (orderId) => {
-        const coord = await getPosicionActual();
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
-            order.porTrabajadorAlmuerzo[workerId] = { inicio: hora, inicioCoord: coord, fin: null, finCoord: null, avisoTiempo: false, avisoUbicacion: false };
+            order.porTrabajadorAlmuerzo[workerId] = { inicio: hora, inicioCoord: null, fin: null, finCoord: null, avisoTiempo: false, avisoUbicacion: false };
+            return next;
+        });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const mio = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
+            if (mio && mio.inicio === hora) {
+                mio.inicioCoord = coord;
+            }
             return next;
         });
     };
     const terminarAlmuerzo = async (orderId) => {
-        const coord = await getPosicionActual();
         const hora = nowTime();
+        const idHistorial = uid("alm");
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
             const mio = order.porTrabajadorAlmuerzo[workerId] || {};
             mio.fin = hora;
-            mio.finCoord = coord;
+            mio.finCoord = null;
             const minutosReales = diffHours(mio.inicio, mio.fin) * 60;
             const limite = (order.tiempoAlmuerzoMin || next.settings.almuerzoEstandarMin || 15) + 20;
             mio.avisoTiempo = minutosReales > limite;
             mio.avisoUbicacion = false;
+            order.porTrabajadorAlmuerzo[workerId] = mio;
+            next.historialAlmuerzos = next.historialAlmuerzos || [];
+            next.historialAlmuerzos.push({
+                id: idHistorial, workerId, fecha: order.fecha, orderId: order.id,
+                horaInicio: mio.inicio, horaFin: mio.fin, minutos: Math.round(minutosReales),
+                avisoTiempo: mio.avisoTiempo, avisoUbicacion: mio.avisoUbicacion,
+            });
+            return next;
+        });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const mio = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
+            if (!mio || mio.fin !== hora)
+                return next;
+            mio.finCoord = coord;
             const clientesRuta = order.stops.map(s => next.clients.find(c => c.id === s.clienteId)).filter(c => c && c.lat && c.lng);
             if (clientesRuta.length > 0) {
                 const coordsAComprobar = [mio.inicioCoord, mio.finCoord].filter(Boolean);
@@ -17647,17 +17888,13 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 });
                 mio.avisoUbicacion = fueraDeRango;
             }
-            order.porTrabajadorAlmuerzo[workerId] = mio;
-            next.historialAlmuerzos = next.historialAlmuerzos || [];
-            next.historialAlmuerzos.push({
-                id: uid("alm"), workerId, fecha: order.fecha, orderId: order.id,
-                horaInicio: mio.inicio, horaFin: mio.fin, minutos: Math.round(minutosReales),
-                avisoTiempo: mio.avisoTiempo, avisoUbicacion: mio.avisoUbicacion,
-            });
+            const hist = (next.historialAlmuerzos || []).find(h => h.id === idHistorial);
+            if (hist)
+                hist.avisoUbicacion = mio.avisoUbicacion;
             return next;
         });
     };
-    return (React.createElement("div", null,
+    return (React.createElement(React.Fragment, null, React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Fichar"),
         deviceWorkerId === "__admin__" ? (React.createElement("div", { className: "gj-card gj-empty" },
             "Este dispositivo est\u00E1 configurado como \"solo administraci\u00F3n\" y no puede fichar.",
@@ -17973,7 +18210,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                                 miPausado && React.createElement("button", { className: "gj-btn accent", onClick: () => reanudarParada(o.id, s.clienteId) },
                                                     React.createElement(Play, { size: 13 }),
                                                     " Reanudar"),
-                                                React.createElement("button", { className: "gj-btn primary", onClick: () => marcarHecho(o.id, s.clienteId) },
+                                                React.createElement("button", { className: "gj-btn primary", onClick: () => abrirFlujoCierre(o.id, s.clienteId, "hecho") },
                                                     React.createElement(CheckCircle2, { size: 13 }),
                                                     " Hecho"),
                                                 React.createElement("button", { className: "gj-btn danger", onClick: () => { setNotaAbierta(key); setNotaTexto(""); } },
@@ -17987,7 +18224,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                     React.createElement("textarea", { className: "gj-input", rows: 2, placeholder: "\u00BFQu\u00E9 ha pasado o qu\u00E9 falta?", value: notaTexto, onChange: e => setNotaTexto(e.target.value) }),
                                     React.createElement("div", { className: "gj-row", style: { marginTop: 4, gap: 6 } },
                                         React.createElement("button", { className: "gj-btn block", onClick: () => setNotaAbierta(null) }, "Cancelar"),
-                                        React.createElement("button", { className: "gj-btn danger block", onClick: () => marcarNoHecho(o.id, s.clienteId) }, "Confirmar no hecho")))))));
+                                        React.createElement("button", { className: "gj-btn danger block", onClick: () => abrirFlujoCierre(o.id, s.clienteId, "no_hecho", notaTexto) }, "Confirmar no hecho")))))));
                     }),
                     (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, o.actividadesExtra.map(a => {
                         const maq = a.maquinaId ? (data.maquinaria || []).find(m => m.id === a.maquinaId) : null;
@@ -18144,7 +18381,38 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     (miJornada === null || miJornada === void 0 ? void 0 : miJornada.salidaHora) ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Tu jornada ha finalizado \u2713")) : (React.createElement(React.Fragment, null,
                         (miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 8 } }, miAlmuerzoAbierto ? "\u26A0\uFE0F Todav\u00EDa tienes el almuerzo sin cerrar. Pulsa \"Terminar almuerzo\" antes de finalizar, para que quede registrado el tiempo real." : meFaltaFicharAlgo ? "\u26A0\uFE0F Tienes mantenimientos que el equipo ya dio por hechos pero que t\u00FA todav\u00EDa no has fichado. Debes fichar tu paso por ellos antes de finalizar." : "\u26A0\uFE0F Termina o marca como no hecho el mantenimiento que tienes en curso antes de finalizar.")),
                         React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada")))));
-            })))));
+            }))))),
+        flujoCierre && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+            React.createElement("div", { className: "gj-card", style: { maxWidth: 360, width: "100%", textAlign: "center" } },
+                fcTransicion ? (React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontSize: 40 } }, "\uD83E\uDD14"),
+                    React.createElement("div", { style: { marginTop: 10, color: "var(--ink-soft)" } }, "Un momento..."))) : (() => {
+                    const paso = flujoCierre.pasos[flujoCierre.idx];
+                    if (paso === "parte") {
+                        return React.createElement(React.Fragment, null,
+                            React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 14 } }, "\u00BFHas rellenado el parte de trabajo (labores realizadas)?"),
+                            React.createElement("div", { style: { display: "flex", gap: 8 } },
+                                React.createElement("button", { className: "gj-btn primary", style: { flex: 1 }, onClick: () => avanzarFlujoCierre({ parte: "si" }) }, "S\u00ED"),
+                                React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: () => avanzarFlujoCierre({ parte: "no" }) }, "No")));
+                    }
+                    if (paso === "obs") {
+                        return React.createElement(React.Fragment, null,
+                            React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, "\u00BFAlguna observaci\u00F3n?"),
+                            React.createElement("textarea", { className: "gj-input", rows: 3, placeholder: "Escribe aqu\u00ED si hay algo que anotar...", value: fcObsTexto, onChange: e => setFcObsTexto(e.target.value) }),
+                            React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, onClick: () => avanzarFlujoCierre({ obs: fcObsTexto }) }, "Siguiente"));
+                    }
+                    if (paso === "riego") {
+                        return React.createElement(React.Fragment, null,
+                            React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 14 } }, "\u00BFVerificaste la programaci\u00F3n del riego?"),
+                            React.createElement("div", { style: { display: "flex", gap: 8 } },
+                                React.createElement("button", { className: "gj-btn primary", style: { flex: 1 }, onClick: () => avanzarFlujoCierre({ riego: "si" }) }, "S\u00ED"),
+                                React.createElement("button", { className: "gj-btn ghost", style: { flex: 1 }, onClick: () => avanzarFlujoCierre({ riego: "no" }) }, "No")));
+                    }
+                    return React.createElement(React.Fragment, null,
+                        React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, "\u00BFQuieres adjuntar fotograf\u00EDas? (opcional)"),
+                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", multiple: true, onChange: e => subirFotoStop(flujoCierre.orderId, flujoCierre.clienteId, "fotosDespues", e.target.files) }),
+                        React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 14 }, onClick: () => avanzarFlujoCierre({}) }, "Finalizar"));
+                })())));
 }
 function MaquinariaEnTalleresView({ data }) {
     const maquinasFuera = (data.maquinaria || []).filter(m => m.enTaller).sort((a, b) => (a.numero || 0) - (b.numero || 0));
