@@ -12961,6 +12961,7 @@ const Mail = gjMakeIcon("✉");
 const Sprout = gjMakeIcon("🌱");
 const PackageIcon = gjMakeIcon("📦");
 const Scissors = gjMakeIcon("✂️");
+const AlertTriangleIcon = gjMakeIcon("⚠️");
 const ChevronLeft = gjMakeIcon("‹");
 const ChevronRight = gjMakeIcon("›");
 const Trash2 = gjMakeIcon("🗑");
@@ -13660,6 +13661,65 @@ function festivoAfectaObras(data, dateStr) {
     return data.clients.filter(c => c.esObra && c.fechaInicioPlan && c.diasEstimados > 0)
         .filter(c => calcularDiasObra(c, data.festivos || {}).includes(dateStr));
 }
+// Catálogo de faltas según el Convenio Colectivo Estatal de Jardinería 2025-2030 (BOE 30/01/2026,
+// artículos 22 a 26). La enumeración del propio convenio es meramente enunciativa, así que siempre
+// se puede usar un motivo de texto libre además de estos.
+const CATALOGO_FALTAS_CONVENIO = {
+    leve: {
+        etiqueta: "Leve", articuloFaltas: "Art. 22", sancion: "Amonestación por escrito, o suspensión de empleo y sueldo de 1 o 2 días.",
+        prescribe: "10 días desde que la empresa tuvo conocimiento",
+        items: [
+            "Hasta tres faltas de puntualidad en un mes, o faltar un día al mes sin motivo justificado",
+            "No avisar antes de faltar, o no justificarlo en las 24 horas siguientes",
+            "Abandono breve del puesto sin causa justificada (sin perjuicio para el trabajo)",
+            "Negligencia leve en el trabajo o en el cuidado del material (sin causar perjuicio de consideración)",
+            "No comunicar un cambio de residencia u otra circunstancia con incidencia laboral",
+            "Falta de aseo o limpieza personal",
+            "Faltas de respeto o discusiones con compañeros/as (sin mayor escándalo)",
+            "Estar en el centro de trabajo sin autorización fuera de la jornada",
+            "No seguir alguna norma de prevención de riesgos sin que suponga riesgo grave",
+            "Usar el teléfono u otros medios de la empresa para asuntos particulares sin autorización",
+        ],
+    },
+    grave: {
+        etiqueta: "Grave", articuloFaltas: "Art. 23", sancion: "Suspensión de empleo y sueldo de 3 a 10 días.",
+        prescribe: "20 días desde que la empresa tuvo conocimiento",
+        items: [
+            "Más de tres faltas de puntualidad en un mes, sin causa justificada",
+            "Faltar dos días al trabajo en un mes, sin justificar",
+            "Negligencia o imprudencia grave en el trabajo o en el cuidado de material/máquinas",
+            "Incumplir normas de prevención de riesgos con riesgo grave, o negarse a usar los medios de seguridad",
+            "Desobedecer a un superior en materia de trabajo (sin que la orden sea vejatoria o peligrosa)",
+            "Alterar o falsificar datos personales o laborales propios o de un compañero/a",
+            "Hacer trabajos particulares en el centro, o usar herramientas de la empresa para uso propio, sin permiso",
+            "Dar datos reservados de la empresa o de compañeros/as sin autorización",
+            "Ocultar un hecho o falta que pueda causar perjuicio grave a la empresa, compañeros/as o terceros",
+            "Dejar entrar al centro de trabajo a personas no autorizadas",
+            "Reincidir en una falta leve dentro del mismo trimestre, habiendo sido ya sancionado por escrito",
+            "Consumo de alcohol o estupefacientes que repercuta negativamente en el trabajo",
+        ],
+    },
+    muy_grave: {
+        etiqueta: "Muy grave", articuloFaltas: "Art. 24", sancion: "Suspensión de empleo y sueldo de 11 a 60 días, o despido.",
+        prescribe: "60 días desde que la empresa tuvo conocimiento (6 meses como máximo desde que se cometió)",
+        items: [
+            "Más de diez faltas de puntualidad no justificadas en tres meses (o veinte en seis meses)",
+            "Faltar al trabajo más de dos días al mes sin justificar",
+            "Fraude, deslealtad, abuso de confianza, hurto o robo",
+            "Inutilizar, destrozar o causar desperfectos en material, herramientas, vehículos o instalaciones",
+            "Malos tratos de palabra u obra, o faltas graves de respeto a superiores, compañeros/as o subordinados/as",
+            "Incumplir normas de prevención de riesgos causando un accidente grave o daños graves",
+            "Bajar el rendimiento de forma voluntaria y reiterada",
+            "Desobediencia continuada o persistente",
+            "Actos en el trabajo que puedan ser constitutivos de delito",
+            "Difundir, maliciosamente o por negligencia grave, noticias falsas sobre la empresa",
+            "Abandonar el puesto sin justificar, con perjuicio evidente para la empresa o riesgo de accidente",
+            "Imprudencia o negligencia grave con riesgo de accidente o avería grave",
+            "Acoso sexual o por razón de sexo",
+            "Reincidir en una falta grave dentro del mismo semestre, habiendo sido ya sancionado por escrito",
+        ],
+    },
+};
 const LABORES_ESTANDAR = [
     "Limpieza y preparación", "Siega", "Recorte de bordes", "Escarificado", "Abonado",
     "Sustitución de aparatos", "Revisión de riego", "Poda completa", "Poda parcial", "Poda pendiente", "Tratamiento herbicidas",
@@ -14438,6 +14498,7 @@ const GROUPS = [
             { id: "epis", label: "EPIs y ropa", icon: Shirt },
             { id: "documentacion", label: "Documentaci\u00F3n", icon: FolderIcon },
             { id: "bolsa-materiales", label: "Almac\u00E9n", icon: PackageIcon },
+            { id: "sanciones", label: "Avisos y sanciones", icon: AlertTriangleIcon },
             { id: "horas", label: "Horas", icon: Clock },
             { id: "clientes", label: "Clientes", icon: Users },
             { id: "equipo", label: "Equipo", icon: HardHat },
@@ -14833,6 +14894,8 @@ function App() {
                     React.createElement(DocumentacionView, { ...props })),
                 view === "bolsa-materiales" && React.createElement(AdminGate, { ...props },
                     React.createElement(BolsaMaterialesView, { ...props })),
+                view === "sanciones" && React.createElement(AdminGate, { ...props },
+                    React.createElement(SancionesView, { ...props })),
                 view === "pendientes" && React.createElement(PendientesView, { ...props }),
                 view === "riego" && React.createElement(RiegoView, { ...props }),
                 view === "podas" && React.createElement(PodasView, { ...props }),
@@ -16035,7 +16098,7 @@ function EquipoView({ data, persist }) {
     const [editing, setEditing] = useState(null);
     const [nuevoVehiculo, setNuevoVehiculo] = useState("");
     const [editandoVehiculo, setEditandoVehiculo] = useState(null);
-    const blank = { id: "", nombre: "", telefono: "", activo: true, categoriaProfesional: "", tipoContrato: "completo", contratoInicio: "", contratoFin: "" };
+    const blank = { id: "", nombre: "", apellidos: "", dni: "", telefono: "", activo: true, categoriaProfesional: "", tipoContrato: "completo", contratoInicio: "", contratoFin: "" };
     const save = (form) => {
         const next = structuredClone(data);
         if (form.id) {
@@ -16092,6 +16155,12 @@ function EquipoView({ data, persist }) {
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Nombre"),
                 React.createElement("input", { className: "gj-input", value: editing.nombre, onChange: e => setEditing({ ...editing, nombre: e.target.value }), placeholder: "Nombre del trabajador" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Apellidos"),
+                React.createElement("input", { className: "gj-input", value: editing.apellidos || "", onChange: e => setEditing({ ...editing, apellidos: e.target.value }), placeholder: "Apellidos del trabajador" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "DNI"),
+                React.createElement("input", { className: "gj-input", value: editing.dni || "", onChange: e => setEditing({ ...editing, dni: e.target.value }), placeholder: "12345678A" })),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tel\u00E9fono (con prefijo, para WhatsApp)"),
                 React.createElement("input", { className: "gj-input", value: editing.telefono, onChange: e => setEditing({ ...editing, telefono: e.target.value }), placeholder: "34600111222" })),
@@ -19226,6 +19295,173 @@ function BolsaMaterialesView({ data, persist, getWorker }) {
             })),
         fotoGrande && React.createElement("div", { style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoGrande(null) },
             React.createElement("img", { src: fotoGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } })))));
+}
+function SancionesView({ data, persist, getWorker, adminRole }) {
+    const [printSancion, setPrintSancion] = useState(null); // la sanción (objeto) a imprimir, o null
+    const [apellidosDoc, setApellidosDoc] = useState("");
+    const [dniDoc, setDniDoc] = useState("");
+    const [notificaDoc, setNotificaDoc] = useState("");
+    const abrirDocumento = (s) => {
+        const w = getWorker(s.workerId);
+        setApellidosDoc((w === null || w === void 0 ? void 0 : w.apellidos) || "");
+        setDniDoc((w === null || w === void 0 ? void 0 : w.dni) || "");
+        setNotificaDoc(s.creadoPor || "");
+        setPrintSancion(s);
+    };
+    const guardarDatosEnFicha = () => {
+        const next = structuredClone(data);
+        const w = next.workers.find(x => x.id === printSancion.workerId);
+        if (w) {
+            w.apellidos = apellidosDoc.trim();
+            w.dni = dniDoc.trim();
+            persist(next);
+        }
+    };
+    const [workerIdForm, setWorkerIdForm] = useState("");
+    const [gravedad, setGravedad] = useState("leve");
+    const [motivoCatalogo, setMotivoCatalogo] = useState("");
+    const [motivoLibre, setMotivoLibre] = useState("");
+    const [fecha, setFecha] = useState(todayStr());
+    const [nota, setNota] = useState("");
+    const [workerExpandido, setWorkerExpandido] = useState(null);
+    const trabajadoresActivos = data.workers.filter(w => w.activo);
+    const sanciones = data.sanciones || [];
+    const diasDesde = (f) => {
+        const d1 = new Date(f + "T00:00:00");
+        const d2 = new Date(todayStr() + "T00:00:00");
+        return Math.round((d2 - d1) / 86400000);
+    };
+    const contarReincidencias = (workerId, grav, dias) => sanciones.filter(s => s.workerId === workerId && s.gravedad === grav && diasDesde(s.fecha) <= dias).length;
+    const añadirSancion = () => {
+        if (!workerIdForm) {
+            alert("Elige un trabajador.");
+            return;
+        }
+        const motivoFinal = motivoCatalogo || motivoLibre.trim();
+        if (!motivoFinal) {
+            alert("Indica el motivo (elige uno del listado o escríbelo).");
+            return;
+        }
+        const next = structuredClone(data);
+        next.sanciones = next.sanciones || [];
+        next.sanciones.push({
+            id: uid("san"), workerId: workerIdForm, fecha, gravedad, motivo: motivoFinal, nota: nota.trim(),
+            creadoPor: adminRole === "admin1" ? "Rafa" : adminRole === "admin2" ? "Gonzalo" : "Administración",
+            avisoEnviado: false,
+        });
+        persist(next);
+        setMotivoCatalogo(""); setMotivoLibre(""); setNota("");
+    };
+    const marcarAvisoEnviado = (id) => {
+        const next = structuredClone(data);
+        const s = (next.sanciones || []).find(x => x.id === id);
+        if (s)
+            s.avisoEnviado = true;
+        persist(next);
+    };
+    const eliminarSancion = (id) => {
+        if (!confirm("¿Eliminar este registro? No se puede deshacer."))
+            return;
+        const next = structuredClone(data);
+        next.sanciones = (next.sanciones || []).filter(s => s.id !== id);
+        persist(next);
+    };
+    const mensajeAviso = (s, w) => `Jardinería Belardi: te informamos de una incidencia registrada a tu nombre el ${fechaEs(s.fecha)} (${CATALOGO_FALTAS_CONVENIO[s.gravedad].etiqueta}): ${s.motivo}. Si tienes dudas, habla con la empresa.`;
+    if (printSancion) {
+        const s = printSancion;
+        const w = getWorker(s.workerId);
+        const info = CATALOGO_FALTAS_CONVENIO[s.gravedad];
+        return (React.createElement("div", null,
+            React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: () => setPrintSancion(null) }, "\u2190 Volver"),
+            React.createElement("div", { className: "gj-card gj-no-print", style: { marginBottom: 10 } },
+                React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 } }, "Datos para el documento"),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Apellidos"),
+                    React.createElement("input", { className: "gj-input", value: apellidosDoc, onChange: e => setApellidosDoc(e.target.value), placeholder: "Apellidos del trabajador" })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "DNI"),
+                    React.createElement("input", { className: "gj-input", value: dniDoc, onChange: e => setDniDoc(e.target.value), placeholder: "12345678A" })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Notifica en nombre de la empresa"),
+                    React.createElement("input", { className: "gj-input", value: notificaDoc, onChange: e => setNotificaDoc(e.target.value), placeholder: "Nombre de quien notifica" })),
+                React.createElement("button", { className: "gj-btn ghost block", onClick: guardarDatosEnFicha }, "Guardar apellidos y DNI en la ficha del trabajador")),
+            React.createElement("div", { className: "gj-print-area gj-card", style: { background: "#fff", padding: 20, fontSize: 13, lineHeight: 1.7 } },
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 20 } },
+                    React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Jardiner\u00EDa Belardi", style: { height: 54, maxWidth: 150, objectFit: "contain" } }),
+                    React.createElement("div", { style: { textAlign: "right", fontSize: 11.5, color: "var(--ink-soft)" } },
+                        React.createElement("div", null, "Fecha del documento: ", fechaEs(todayStr())))),
+                React.createElement("h2", { style: { textAlign: "center", fontFamily: "var(--font-display)", letterSpacing: 1, marginBottom: 4 } }, s.gravedad === "leve" ? "COMUNICACI\u00D3N DE AVISO / AMONESTACI\u00D3N" : "COMUNICACI\u00D3N DE SANCI\u00D3N DISCIPLINARIA"),
+                React.createElement("div", { style: { textAlign: "center", fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 20 } }, "Conforme al Convenio Colectivo Estatal de Jardiner\u00EDa 2025-2030"),
+                React.createElement("p", null,
+                    "D./D\u00F1a. ", React.createElement("b", null, (w === null || w === void 0 ? void 0 : w.nombre) || "", " ", apellidosDoc),
+                    ", con DNI ", React.createElement("b", null, dniDoc || "\u2014"),
+                    (w === null || w === void 0 ? void 0 : w.categoriaProfesional) ? `, con categoría profesional de ${w.categoriaProfesional}` : "",
+                    ", en su condici\u00F3n de persona trabajadora de Jardiner\u00EDa Belardi Lorezaintza."),
+                React.createElement("p", null, "Por medio del presente escrito se le comunica que, con fecha ", React.createElement("b", null, fechaEs(s.fecha)), ", se ha constatado un hecho calificado como ",
+                    React.createElement("b", null, info.etiqueta.toLowerCase(), " (", info.articuloFaltas, " del Convenio Colectivo Estatal de Jardiner\u00EDa)"), ", consistente en:"),
+                React.createElement("p", { style: { background: "var(--pend-bg)", padding: "8px 10px", borderRadius: 4 } }, s.motivo),
+                s.nota && React.createElement("p", null, React.createElement("b", null, "Observaciones adicionales: "), s.nota),
+                React.createElement("p", null, "De acuerdo con el art\u00EDculo 26 del citado convenio, la sanci\u00F3n que corresponde a esta calificaci\u00F3n es: ", React.createElement("b", null, info.sancion)),
+                React.createElement("p", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, "Esta falta prescribe a los ", info.prescribe, ", y en todo caso a los seis meses desde que se cometi\u00F3 (art. 25 del convenio)."),
+                React.createElement("p", { style: { marginTop: 20, fontSize: 11.5, color: "var(--ink-soft)" } }, "La firma de la persona trabajadora al pie de este documento acredita \u00FAnicamente la recepci\u00F3n del mismo, no necesariamente su conformidad con el contenido."),
+                React.createElement("p", { style: { marginTop: 10, fontSize: 12.5 } }, "Notifica en nombre de la empresa: ", React.createElement("b", null, notificaDoc || "\u2014")),
+                React.createElement("div", { style: { display: "flex", justifyContent: "space-between", marginTop: 50, fontSize: 12 } },
+                    React.createElement("div", { style: { textAlign: "center", width: "45%" } },
+                        React.createElement("div", { style: { borderTop: "1px solid var(--ink)", paddingTop: 6 } }, "Firma y sello \u2014 Jardiner\u00EDa Belardi")),
+                    React.createElement("div", { style: { textAlign: "center", width: "45%" } },
+                        React.createElement("div", { style: { borderTop: "1px solid var(--ink)", paddingTop: 6 } }, "Recib\u00ED \u2014 ", (w === null || w === void 0 ? void 0 : w.nombre) || "")))),
+            React.createElement("button", { className: "gj-btn primary block gj-no-print", style: { marginTop: 10 }, onClick: () => window.print() },
+                React.createElement(Printer, { size: 14 }),
+                " Imprimir / PDF")));
+    }
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Avisos y sanciones"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Seg\u00FAn el Convenio Colectivo Estatal de Jardiner\u00EDa 2025-2030. El WhatsApp es solo un aviso informativo al trabajador \u2014 el convenio (art. 51) proh\u00EDbe comunicar la sanci\u00F3n formal por WhatsApp o correo; para imponer una sanci\u00F3n de verdad (amonestaci\u00F3n, suspensi\u00F3n...) hace falta comunicarlo por escrito y de forma fehaciente."),
+        React.createElement("div", { className: "gj-card", style: { marginBottom: 12 } },
+            React.createElement("div", { style: { fontWeight: 600, fontSize: 13, marginBottom: 6 } }, "Registrar incidencia"),
+            React.createElement("select", { className: "gj-select", style: { marginBottom: 6 }, value: workerIdForm, onChange: e => setWorkerIdForm(e.target.value) },
+                React.createElement("option", { value: "" }, "Trabajador..."),
+                trabajadoresActivos.map(w => React.createElement("option", { key: w.id, value: w.id }, w.nombre))),
+            React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 6 } },
+                ["leve", "grave", "muy_grave"].map(g => React.createElement("button", { key: g, className: "gj-btn " + (gravedad === g ? "primary" : "ghost"), style: { flex: 1, fontSize: 12 }, onClick: () => { setGravedad(g); setMotivoCatalogo(""); } }, CATALOGO_FALTAS_CONVENIO[g].etiqueta))),
+            React.createElement("select", { className: "gj-select", style: { marginBottom: 6 }, value: motivoCatalogo, onChange: e => setMotivoCatalogo(e.target.value) },
+                React.createElement("option", { value: "" }, "Elige un motivo del convenio (" + CATALOGO_FALTAS_CONVENIO[gravedad].articuloFaltas + ")..."),
+                CATALOGO_FALTAS_CONVENIO[gravedad].items.map((it, i) => React.createElement("option", { key: i, value: it }, it))),
+            React.createElement("input", { className: "gj-input", style: { marginBottom: 6 }, placeholder: "...o escribe el motivo con tus palabras", value: motivoLibre, onChange: e => { setMotivoLibre(e.target.value); setMotivoCatalogo(""); } }),
+            React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 6 } },
+                React.createElement("input", { className: "gj-input", type: "date", style: { flex: 1 }, value: fecha, onChange: e => setFecha(e.target.value) })),
+            React.createElement("input", { className: "gj-input", style: { marginBottom: 6 }, placeholder: "Nota adicional (opcional)", value: nota, onChange: e => setNota(e.target.value) }),
+            workerIdForm && gravedad === "leve" && contarReincidencias(workerIdForm, "leve", 90) >= 1 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Ya tiene ", contarReincidencias(workerIdForm, "leve", 90), " falta(s) leve(s) en los \u00FAltimos 3 meses \u2014 una nueva reincidencia se podr\u00EDa considerar falta grave (art. 23.11).")),
+            workerIdForm && gravedad === "grave" && contarReincidencias(workerIdForm, "grave", 182) >= 1 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Ya tiene ", contarReincidencias(workerIdForm, "grave", 182), " falta(s) grave(s) en los \u00FAltimos 6 meses \u2014 una nueva reincidencia se podr\u00EDa considerar falta muy grave (art. 24.14).")),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginBottom: 6 } }, "Sanci\u00F3n prevista: ", CATALOGO_FALTAS_CONVENIO[gravedad].sancion),
+            React.createElement("button", { className: "gj-btn primary block", onClick: añadirSancion }, "Registrar")),
+        React.createElement("h3", { className: "gj-h3" }, "Historial por trabajador"),
+        trabajadoresActivos.map(w => {
+            const suyas = sanciones.filter(s => s.workerId === w.id).sort((a, b) => b.fecha.localeCompare(a.fecha));
+            if (suyas.length === 0)
+                return null;
+            const leves3m = suyas.filter(s => s.gravedad === "leve" && diasDesde(s.fecha) <= 90).length;
+            const graves6m = suyas.filter(s => s.gravedad === "grave" && diasDesde(s.fecha) <= 182).length;
+            const abierto = workerExpandido === w.id;
+            return React.createElement("div", { className: "gj-card", key: w.id },
+                React.createElement("div", { className: "gj-row", style: { cursor: "pointer" }, onClick: () => setWorkerExpandido(abierto ? null : w.id) },
+                    React.createElement("div", null,
+                        React.createElement("div", { style: { fontWeight: 600 } }, w.nombre),
+                        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, suyas.length, " registro(s) \u2014 ", leves3m, " leve(s)/3m \u00B7 ", graves6m, " grave(s)/6m")),
+                    React.createElement(ChevronRight, { size: 16, style: { transform: abierto ? "rotate(90deg)" : "none" } })),
+                abierto && suyas.map(s => React.createElement("div", { key: s.id, style: { borderTop: "1px solid var(--line-soft)", marginTop: 6, paddingTop: 6 } },
+                    React.createElement("div", { className: "gj-row" },
+                        React.createElement("span", { className: "gj-badge " + (s.gravedad === "muy_grave" ? "no_hecho" : s.gravedad === "grave" ? "en_progreso" : "pendiente") }, CATALOGO_FALTAS_CONVENIO[s.gravedad].etiqueta),
+                        React.createElement("span", { style: { fontSize: 11.5, color: "var(--ink-soft)" } }, fechaEs(s.fecha))),
+                    React.createElement("div", { style: { fontSize: 12.5, marginTop: 3 } }, s.motivo),
+                    s.nota && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, s.nota),
+                    React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", marginTop: 2 } }, "Registrado por ", s.creadoPor),
+                    React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 4, flexWrap: "wrap" } },
+                        React.createElement("a", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 11.5 }, href: waLink(w.telefono, mensajeAviso(s, w)), target: "_blank", rel: "noreferrer", onClick: () => marcarAvisoEnviado(s.id) }, s.avisoEnviado ? "Reenviar aviso WhatsApp" : "Enviar aviso por WhatsApp"),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 11.5 }, onClick: () => abrirDocumento(s) }, "Generar documento"),
+                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 11.5 }, onClick: () => eliminarSancion(s.id) }, "Eliminar")))));
+        }),
+        sanciones.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay ninguna incidencia registrada todav\u00EDa.")));
 }
 function DocumentacionView({ data, persist, getWorker }) {
     const [seccionesCerradas, setSeccionesCerradas] = useState({});
