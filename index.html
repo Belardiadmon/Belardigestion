@@ -23535,6 +23535,7 @@ function CalendarioObrasView({ data, persist, adminRole, requestUnlock, adminMod
     const now = new Date();
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth());
+    const [diaSeleccionado, setDiaSeleccionado] = useState(null);
     const coloresObra = ["#2F4D34", "#C97A2B", "#6B8F3C", "#8E5B9F", "#3E6E8E", "#B4452B"];
     const obras = data.clients.filter(c => c.esObra && c.fechaInicioPlan && c.diasEstimados > 0);
     const mapa = {};
@@ -23575,9 +23576,16 @@ function CalendarioObrasView({ data, persist, adminRole, requestUnlock, adminMod
             React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "Entra como administrador para gestionar festivos."),
             React.createElement("button", { className: "gj-btn ghost", onClick: requestUnlock },
                 React.createElement(Lock, { size: 13 })))),
-        obras.length > 0 && (React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0", fontSize: 11.5 } }, obras.map((o, idx) => (React.createElement("span", { key: o.id, style: { display: "flex", alignItems: "center", gap: 4 } },
-            React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: coloresObra[idx % coloresObra.length], display: "inline-block" } }),
-            o.nombre))))),
+        obras.length > 0 && (React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 8, margin: "10px 0", fontSize: 11.5 } }, obras.map((o, idx) => {
+            const resaltada = diaSeleccionado && (mapa[diaSeleccionado] || []).some(e => e.nombre === o.nombre);
+            const atenuada = diaSeleccionado && !resaltada;
+            return React.createElement("span", { key: o.id, style: { display: "flex", alignItems: "center", gap: 4, opacity: atenuada ? 0.35 : 1, fontWeight: resaltada ? 700 : 400, background: resaltada ? "var(--pend-bg)" : "transparent", borderRadius: 4, padding: resaltada ? "2px 5px" : 0 } },
+                React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: coloresObra[idx % coloresObra.length], display: "inline-block" } }),
+                o.nombre);
+        }))),
+        diaSeleccionado && (mapa[diaSeleccionado] || []).length > 0 && (React.createElement("div", { className: "gj-card", style: { marginBottom: 10, fontSize: 12.5 } },
+            React.createElement("b", null, fechaEs(diaSeleccionado), ": "),
+            (mapa[diaSeleccionado] || []).map(e => e.nombre).join(", "))),
         React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4 } },
             DIAS_SEMANA.map(dl => React.createElement("div", { key: dl, style: { textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--ink-soft)" } }, dl)),
             Array.from({ length: (new Date(year, month, 1).getDay() + 6) % 7 }, (_, i) => React.createElement("div", { key: "off" + i })),
@@ -23595,13 +23603,17 @@ function CalendarioObrasView({ data, persist, adminRole, requestUnlock, adminMod
                     background = "linear-gradient(135deg, " + entradas.map((e, i) => `${e.color} ${i * pct}%, ${e.color} ${(i + 1) * pct}%`).join(", ") + ")";
                 }
                 const esBlanco = entradas.length > 0 || festivo;
-                return (React.createElement("div", { key: d, title: festivo ? (festivo.nombre || festivo.tipo) : entradas.map(e => e.nombre).join(", "), style: {
+                const seleccionado = diaSeleccionado === dateStr;
+                return (React.createElement("div", { key: d, title: festivo ? (festivo.nombre || festivo.tipo) : entradas.map(e => e.nombre).join(", "),
+                    onClick: entradas.length > 0 ? () => setDiaSeleccionado(seleccionado ? null : dateStr) : undefined,
+                    style: {
                         aspectRatio: "1", borderRadius: 4, border: "1px solid var(--line-soft)",
                         display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11,
                         background, color: esBlanco ? "#fff" : "var(--ink)",
                         fontWeight: dateStr === todayKey ? 700 : 400,
-                        boxShadow: dateStr === todayKey ? "0 0 0 1.5px var(--accent) inset" : "none",
+                        boxShadow: seleccionado ? "0 0 0 2.5px var(--accent) inset" : (dateStr === todayKey ? "0 0 0 1.5px var(--accent) inset" : "none"),
                         textShadow: esBlanco && !festivo ? "0 1px 1px rgba(0,0,0,.3)" : "none",
+                        cursor: entradas.length > 0 ? "pointer" : "default",
                     } }, d));
             }))));
 }
@@ -23954,8 +23966,8 @@ function CalendarioView({ data, persist, getClient, getWorker, adminMode, adminR
                 React.createElement("button", { className: "gj-btn ghost", onClick: requestUnlock },
                     React.createElement(Lock, { size: 13 }))))),
         adminMode && React.createElement(FestivoForm, { data: data, persist: persist, adminRole: adminRole }),
-        React.createElement("div", { className: "gj-table-wrap" },
-            React.createElement("table", { className: "gj-table" },
+        React.createElement("div", { className: "gj-table-wrap", style: { maxHeight: "70vh", overflowY: "auto" } },
+            React.createElement("table", { className: "gj-table", style: { borderCollapse: "separate", borderSpacing: 0 } },
                 React.createElement("thead", null,
                     React.createElement("tr", null,
                         React.createElement("th", { style: { position: "sticky", left: 0, top: 0, background: "var(--bg)", zIndex: 3 } }, "Cliente"),
