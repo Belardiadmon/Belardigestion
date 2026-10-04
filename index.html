@@ -17894,7 +17894,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             return next;
         });
     };
-    return (React.createElement(React.Fragment, null, React.createElement("div", null,
+    const contenidoPrincipalFichar = (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Fichar"),
         deviceWorkerId === "__admin__" ? (React.createElement("div", { className: "gj-card gj-empty" },
             "Este dispositivo est\u00E1 configurado como \"solo administraci\u00F3n\" y no puede fichar.",
@@ -18381,8 +18381,8 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     (miJornada === null || miJornada === void 0 ? void 0 : miJornada.salidaHora) ? (React.createElement("div", { style: { marginTop: 10, fontSize: 12.5, color: "var(--good)", fontWeight: 600 } }, "Tu jornada ha finalizado \u2713")) : (React.createElement(React.Fragment, null,
                         (miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 8 } }, miAlmuerzoAbierto ? "\u26A0\uFE0F Todav\u00EDa tienes el almuerzo sin cerrar. Pulsa \"Terminar almuerzo\" antes de finalizar, para que quede registrado el tiempo real." : meFaltaFicharAlgo ? "\u26A0\uFE0F Tienes mantenimientos que el equipo ya dio por hechos pero que t\u00FA todav\u00EDa no has fichado. Debes fichar tu paso por ellos antes de finalizar." : "\u26A0\uFE0F Termina o marca como no hecho el mantenimiento que tienes en curso antes de finalizar.")),
                         React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: miTrabajoPendiente || meFaltaFicharAlgo || miAlmuerzoAbierto, onClick: () => finalizarJornada(o.id) }, "Finalizar jornada")))));
-            }))))),
-        flujoCierre && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+            })))));
+    const modalFlujoCierre = flujoCierre && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
             React.createElement("div", { className: "gj-card", style: { maxWidth: 360, width: "100%", textAlign: "center" } },
                 fcTransicion ? (React.createElement(React.Fragment, null,
                     React.createElement("div", { style: { fontSize: 40 } }, "\uD83E\uDD14"),
@@ -18412,7 +18412,8 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                         React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, "\u00BFQuieres adjuntar fotograf\u00EDas? (opcional)"),
                         React.createElement("input", { type: "file", accept: "image/*", capture: "environment", multiple: true, onChange: e => subirFotoStop(flujoCierre.orderId, flujoCierre.clienteId, "fotosDespues", e.target.files) }),
                         React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 14 }, onClick: () => avanzarFlujoCierre({}) }, "Finalizar"));
-                })())));
+                })()));
+    return React.createElement(React.Fragment, null, contenidoPrincipalFichar, modalFlujoCierre);
 }
 function MaquinariaEnTalleresView({ data }) {
     const maquinasFuera = (data.maquinaria || []).filter(m => m.enTaller).sort((a, b) => (a.numero || 0) - (b.numero || 0));
