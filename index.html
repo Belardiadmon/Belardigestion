@@ -19802,6 +19802,7 @@ function ResumenDiarioView({ data, getWorker, getClient }) {
     const filas = trabajadores.map(w => {
         let horasMantenimiento = 0, horasObra = 0, horasAlmuerzo = 0, horasDesplazamiento = 0, horasOtras = 0;
         let entrada = null, salida = null;
+        const tramosFichados = []; // { horaInicio, horaFin } de TODO lo fichado ese día, para detectar solapes reales
         ordersDelDia.filter(o => o.workerIds.includes(w.id)).forEach(o => {
             const j = o.porTrabajadorJornada && o.porTrabajadorJornada[w.id];
             if (j === null || j === void 0 ? void 0 : j.entradaHora) {
@@ -19821,18 +19822,39 @@ function ResumenDiarioView({ data, getWorker, getClient }) {
                     horasObra += dur;
                 else
                     horasMantenimiento += dur;
+                const pt = s.porTrabajador && s.porTrabajador[w.id];
+                (pt && pt.tramos && pt.tramos.length > 0 ? pt.tramos : (pt ? [pt] : [])).forEach(t => {
+                    if (t.horaInicio && t.horaFin)
+                        tramosFichados.push({ horaInicio: t.horaInicio, horaFin: t.horaFin });
+                });
             });
             const miAlm = o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[w.id];
             if ((miAlm === null || miAlm === void 0 ? void 0 : miAlm.inicio) && (miAlm === null || miAlm === void 0 ? void 0 : miAlm.fin)) {
                 horasAlmuerzo += diffHours(miAlm.inicio, miAlm.fin);
+                tramosFichados.push({ horaInicio: miAlm.inicio, horaFin: miAlm.fin });
             }
             horasDesplazamiento += desplazamientoHorasOrden(o, w.id);
-            (o.actividadesExtra || []).filter(a => a.workerId === w.id && a.horaFin).forEach(a => { horasOtras += duracionActividadHoras(a, o); });
+            (o.actividadesExtra || []).filter(a => a.workerId === w.id && a.horaFin).forEach(a => {
+                horasOtras += duracionActividadHoras(a, o);
+                tramosFichados.push({ horaInicio: a.horaInicio, horaFin: a.horaFin });
+            });
         });
+        // Se detectan solapes reales entre cualquiera de los tramos fichados (p. ej. fichajes antiguos
+        // de antes de los arreglos de solapes, o un dato corregido a mano que se cruza con otro). Si
+        // los hay, la suma de las partes de arriba puede estar contando dos veces ese hueco — se avisa
+        // en vez de dar una cifra que no puede ser real.
+        tramosFichados.sort((a, b) => a.horaInicio.localeCompare(b.horaInicio));
+        let haySolape = false;
+        for (let i = 1; i < tramosFichados.length; i++) {
+            if (tramosFichados[i].horaInicio < tramosFichados[i - 1].horaFin) {
+                haySolape = true;
+                break;
+            }
+        }
         const totalPartes = horasMantenimiento + horasObra + horasAlmuerzo + horasDesplazamiento + horasOtras;
         const totalJornada = (entrada && salida) ? diffHours(entrada, salida) : null;
         const diferencia = totalJornada !== null ? totalJornada - totalPartes : null;
-        return { worker: w, entrada, salida, horasMantenimiento, horasObra, horasAlmuerzo, horasDesplazamiento, horasOtras, totalPartes, totalJornada, diferencia };
+        return { worker: w, entrada, salida, horasMantenimiento, horasObra, horasAlmuerzo, horasDesplazamiento, horasOtras, totalPartes, totalJornada, diferencia, haySolape };
     });
     return (React.createElement("div", null,
         React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Para cada trabajador que ficho algo ese d\u00EDa: el desglose de d\u00F3nde se fue su tiempo, y el total, para comprobar que las partes cuadran con la jornada completa (entrada\u2013salida)."),
@@ -19863,7 +19885,8 @@ function ResumenDiarioView({ data, getWorker, getClient }) {
             f.diferencia !== null && Math.abs(f.diferencia) > (1 / 60) && (React.createElement("div", { style: { fontSize: 12.5, color: "var(--warn)", fontWeight: 600, marginTop: 4 } },
                 "\u26A0\uFE0F Descuadre de ",
                 fmtHM(Math.abs(f.diferencia)),
-                " sin explicar entre la jornada y la suma de las partes.")))))));
+                " sin explicar entre la jornada y la suma de las partes.")),
+            f.haySolape && (React.createElement("div", { style: { fontSize: 12.5, color: "var(--warn)", fontWeight: 600, marginTop: 4 } }, "\u26A0\uFE0F Hay fichajes que se solapan en el tiempo (dos cosas a la vez) \u2014 la suma de arriba puede estar contando ese hueco dos veces. Revisa los horarios de ese d\u00EDa en Rutas.")))))));
 }
 function HorasView({ data, persist, getWorker, getClient, adminMode }) {
     var _a;
