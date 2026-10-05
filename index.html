@@ -15113,23 +15113,29 @@ function PanelView({ data, persist, persistConReintento, getClient, getWorker, a
         setEditandoHorasPend(null);
     };
     const notificar = (orderId, clienteId, canal) => {
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.notificado = true;
-        stop.notificadoCanal = canal;
-        stop.notificadoFecha = todayStr();
-        stop.notificadoHora = nowTime();
-        persist(next);
+        const hora = nowTime();
+        const fecha = todayStr();
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.notificado = true;
+            stop.notificadoCanal = canal;
+            stop.notificadoFecha = fecha;
+            stop.notificadoHora = hora;
+            return next;
+        });
     };
     const noEnviarAviso = (orderId, clienteId) => {
         if (!confirm("Esto quita este mantenimiento de la lista de pendientes de avisar, sin mandarle ningún mensaje al cliente. ¿Continuar?"))
             return;
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.noEnviarAviso = true;
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.noEnviarAviso = true;
+            return next;
+        });
     };
     if (printStop) {
         const order = data.orders.find(o => o.id === printStop.orderId);
@@ -17889,8 +17895,13 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         fcGpsRef.current = getPosicionActual();
         fcCoordRef.current = undefined;
         setFcObsTexto(notaPrevia || "");
-        const pasos = tipo === "hecho" ? ["parte", "obs", "riego", "fotos"] : ["riego", "fotos"];
-        setFlujoCierre({ orderId, clienteId, tipo, pasos, idx: 0, respuestas: { obs: notaPrevia || "" } });
+        const cliente = getClient(clienteId);
+        const esObra = !!(cliente && cliente.esObra);
+        // En mantenimientos, el "parte" son las labores marcadas (Siega, Poda...). En obras no existe
+        // ese listado — puede ser solo mano de obra, sin nada que marcar — así que ahí el "parte" es
+        // directamente la observación escrita, sin pasar por la pregunta de labores.
+        const pasos = tipo === "hecho" ? (esObra ? ["obs", "riego", "fotos"] : ["parte", "obs", "riego", "fotos"]) : ["riego", "fotos"];
+        setFlujoCierre({ orderId, clienteId, tipo, pasos, idx: 0, esObra, respuestas: { obs: notaPrevia || "" } });
     };
     const avanzarFlujoCierre = async (respuestaParcial) => {
         if (!flujoCierre)
@@ -17913,6 +17924,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 setLaboresAbiertas(orderId + clienteId);
                 return;
             }
+        }
+        if (pasoActual === "obs" && flujoCierre.esObra && !(respuestaParcial.obs || "").trim()) {
+            // En obras, la observación hace de "parte" — aquí sí hace falta que haya algo escrito,
+            // porque no hay ningún otro sitio donde quede constancia de qué se ha hecho.
+            alert("Indica qu\u00e9 se ha hecho en la obra (aunque sea solo mano de obra, sin materiales) antes de continuar.");
+            return;
         }
         const esUltimo = flujoCierre.idx === flujoCierre.pasos.length - 1;
         if (esUltimo) {
@@ -18398,7 +18415,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                     React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "\u00BFPara qu\u00E9 obra son estos materiales?"),
                                     React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => setMaterialObraId(e.target.value) },
                                         React.createElement("option", { value: "" }, "Selecciona la obra..."),
-                                        data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre))),
+                                        data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre + (c.referenciaObra ? " — " + c.referenciaObra : "")))),
                                     React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "Materiales"),
                                     React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 8 } },
                                         React.createElement("button", { className: "gj-btn" + (materialOrigen === "nuevo" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => { setMaterialOrigen("nuevo"); setMaterialStockId(""); setMaterialCantidadUsada(""); } }, "Material nuevo"),
@@ -18521,8 +18538,9 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     }
                     if (paso === "obs") {
                         return React.createElement(React.Fragment, null,
-                            React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, "\u00BFAlguna observaci\u00F3n?"),
-                            React.createElement("textarea", { className: "gj-input", rows: 3, placeholder: "Escribe aqu\u00ED si hay algo que anotar...", value: fcObsTexto, onChange: e => setFcObsTexto(e.target.value) }),
+                            React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, flujoCierre.esObra ? "\u00BFQu\u00E9 se ha hecho en la obra?" : "\u00BFAlguna observaci\u00F3n?"),
+                            flujoCierre.esObra && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: -6, marginBottom: 8 } }, "Describe el trabajo realizado (puede ser solo mano de obra, sin materiales)."),
+                            React.createElement("textarea", { className: "gj-input", rows: 3, placeholder: flujoCierre.esObra ? "Ej: colocación de césped artificial en la zona trasera..." : "Escribe aqu\u00ED si hay algo que anotar...", value: fcObsTexto, onChange: e => setFcObsTexto(e.target.value) }),
                             React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, onClick: () => avanzarFlujoCierre({ obs: fcObsTexto }) }, "Siguiente"));
                     }
                     if (paso === "riego") {
@@ -18943,7 +18961,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                     React.createElement("option", { value: "" }, "General / sin cliente concreto"),
                     data.clients.map(c => React.createElement("option", { key: c.id, value: c.id },
                         c.nombre,
-                        c.esObra ? " (obra)" : "")))),
+                        c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "\u00BFQu\u00E9 hay que hacer?"),
                 React.createElement("textarea", { className: "gj-input", rows: 2, value: descripcion, onChange: e => setDescripcion(e.target.value), placeholder: "Ej: podar el seto de la entrada, el cliente lo pidi\u00F3 por tel\u00E9fono" })),
@@ -18975,7 +18993,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                         React.createElement("label", { className: "gj-label" }, "Cliente (opcional)"),
                         React.createElement("select", { className: "gj-select", value: editClienteId, onChange: e => setEditClienteId(e.target.value) },
                             React.createElement("option", { value: "" }, "General / sin cliente concreto"),
-                            data.clients.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre, c.esObra ? " (obra)" : "")))),
+                            data.clients.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre, c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "\u00BFQu\u00E9 hay que hacer?"),
                         React.createElement("textarea", { className: "gj-input", rows: 2, value: editDescripcion, onChange: e => setEditDescripcion(e.target.value) })),
@@ -20422,7 +20440,7 @@ function ExportarView({ data, getClient, getWorker }) {
                 React.createElement("label", { className: "gj-label" }, "Cliente"),
                 React.createElement("select", { className: "gj-select", value: clienteId, onChange: e => setClienteId(e.target.value) }, data.clients.map(c => React.createElement("option", { key: c.id, value: c.id },
                     c.nombre,
-                    c.esObra ? " (obra)" : "")))),
+                    c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
             React.createElement("div", { style: { display: "flex", gap: 6 } },
                 React.createElement("button", { className: "gj-btn", style: { flex: 1, justifyContent: "center" }, onClick: exportarCliente, disabled: filasCliente.length === 0 },
                     React.createElement(Download, { size: 14 }),
@@ -24272,7 +24290,7 @@ function CalendarioView({ data, persist, getClient, getWorker, adminMode, adminR
                     React.createElement("td", { style: { fontWeight: 600, position: "sticky", left: 0, background: "var(--surface)" } },
                         c.zona ? `[${c.zona}] ` : "",
                         c.nombre,
-                        c.esObra ? " (obra)" : ""),
+                        c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : ""),
                     days.map(d => {
                         const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
                         const key = c.id + "|" + dateStr;
