@@ -58,6 +58,15 @@ window.gjOnRemoteChange = (cb) => { gjRemoteChangeCallback = cb; };
 window.gjSyncManualAhora = null; // se rellena más abajo
 
 const GJ_LAST_SYNC_KEY = "gj_last_synced_updated_at_v1";
+// La marca de "cuál es la última versión que yo mismo guardé o leí" se lleva aquí, en memoria, como
+// fuente principal — localStorage es solo un respaldo para recordarla entre una visita y otra, pero
+// si el móvil anda justo de espacio (demasiadas fotos acumuladas) y esa escritura concreta falla en
+// silencio, NO debe hacer que la app se crea en conflicto consigo misma la próxima vez que guarde.
+let gjUltimaSyncEnMemoria = (() => { try { return localStorage.getItem(GJ_LAST_SYNC_KEY); } catch (e) { return null; } })();
+function gjMarcarUltimaSync(valor) {
+  gjUltimaSyncEnMemoria = valor;
+  try { localStorage.setItem(GJ_LAST_SYNC_KEY, valor); } catch (e) { /* sin espacio local; la memoria ya la tiene guardada igualmente */ }
+}
 async function gjSincronizarConSupabase(STORAGE_KEY) {
   const client = gjGetSupabaseClient();
   if (!client) { window.gjSyncStatus.estado = "local"; return null; }
@@ -72,7 +81,7 @@ async function gjSincronizarConSupabase(STORAGE_KEY) {
       // última que este dispositivo sabe que existe. Así, si este móvil tiene un cambio reciente
       // que todavía no ha llegado a subirse (por ejemplo, por un fallo de red momentáneo), no se
       // pierde al recargar la página.
-      const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
+      const ultimaConocida = gjUltimaSyncEnMemoria;
       const remotoEsMasNuevo = !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
       if (!remotoEsMasNuevo) return null;
       // Guardar una copia local es solo una comodidad (para abrir más rápido/sin conexión la próxima
@@ -80,8 +89,8 @@ async function gjSincronizarConSupabase(STORAGE_KEY) {
       // de traer bien del servidor — por eso esto nunca bloquea el resultado.
       try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data));
-        if (data.updated_at) localStorage.setItem(GJ_LAST_SYNC_KEY, data.updated_at);
       } catch (e) { /* sin espacio local; seguimos igualmente con los datos ya descargados */ }
+      if (data.updated_at) gjMarcarUltimaSync(data.updated_at);
       return data.data;
     }
     return null;
@@ -116,7 +125,7 @@ window.storage = {
         try {
           const parsed = JSON.parse(value);
           const ahoraISO = new Date().toISOString();
-          const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
+          const ultimaConocida = gjUltimaSyncEnMemoria;
           // Subida protegida contra carreras: si este móvil ya conoce una versión anterior, la
           // actualización solo se aplica si el servidor SIGUE teniendo exactamente esa versión en
           // ese instante (comprobación y escritura en una sola operación atómica de base de datos,
@@ -141,7 +150,7 @@ window.storage = {
             const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
             if (error) throw error;
           }
-          localStorage.setItem(GJ_LAST_SYNC_KEY, ahoraISO);
+          gjMarcarUltimaSync(ahoraISO);
           window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
         } catch (e) {
           window.gjSyncStatus = { estado: "error", ultimoError: (e && e.message) || String(e), ultimaSync: window.gjSyncStatus.ultimaSync };
