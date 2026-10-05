@@ -14545,15 +14545,18 @@ function App() {
         window.gjOnRemoteChange((nuevoData) => setData(nuevoData));
         if (window.gjIniciarRealtimeSupabase)
             window.gjIniciarRealtimeSupabase(STORAGE_KEY);
-        // Además del tiempo real, comprobamos cada 25s si hay una versión más nueva en el servidor.
-        // Es un respaldo por si el tiempo real no llega a activarse (p. ej. si no está habilitado
-        // en el proyecto de Supabase): así el dispositivo nunca se queda desactualizado del todo.
+        // Además del tiempo real, comprobamos cada 2 minutos si hay una versión más nueva en el
+        // servidor. Es un respaldo por si el tiempo real no llega a activarse (p. ej. si no está
+        // habilitado en el proyecto de Supabase): así el dispositivo nunca se queda desactualizado
+        // del todo. (Antes eran 25s; se ha alargado a 2 min para reducir el consumo de egress del
+        // plan gratuito de Supabase — con varios móviles consultando a la vez, cada comprobación
+        // descarga los datos completos de la empresa, incluidas las fotos.)
         const intervalo = setInterval(() => {
             if (window.gjSyncManualAhora)
                 window.gjSyncManualAhora(STORAGE_KEY);
             if (window.gjReintentarSubidaPendiente)
                 window.gjReintentarSubidaPendiente(STORAGE_KEY);
-        }, 25000);
+        }, 120000);
         return () => clearInterval(intervalo);
     }, []);
     useEffect(() => {
