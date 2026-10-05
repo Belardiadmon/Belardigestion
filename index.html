@@ -156,11 +156,13 @@ window.storage = {
   },
 };
 
+let gjRealtimeChannelActual = null; // referencia al canal en marcha, para poder cortarlo cuando el móvil está en segundo plano
 function gjIniciarRealtimeSupabase(STORAGE_KEY) {
   const client = gjGetSupabaseClient();
   if (!client) return;
+  if (gjRealtimeChannelActual) return; // ya hay uno en marcha, no se duplica
   try {
-    client
+    gjRealtimeChannelActual = client
       .channel("gj_app_data_changes")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "gj_app_data", filter: "id=eq.1" }, async (payload) => {
         if (payload && payload.new && payload.new.data && Array.isArray(payload.new.data.workers) && payload.new.data.workers.length > 0) {
@@ -171,6 +173,17 @@ function gjIniciarRealtimeSupabase(STORAGE_KEY) {
       })
       .subscribe();
   } catch (e) { /* si falla el realtime, la app sigue funcionando con sincronización manual en cada guardado */ }
+}
+// Corta la conexión de tiempo real (p. ej. cuando el móvil pasa a segundo plano), para no mantener
+// gasto de egress mientras nadie está mirando la pantalla. gjIniciarRealtimeSupabase la vuelve a
+// abrir sin problema al llamarla de nuevo.
+function gjDetenerRealtimeSupabase() {
+  if (!gjRealtimeChannelActual) return;
+  try {
+    const client = gjGetSupabaseClient();
+    if (client) client.removeChannel(gjRealtimeChannelActual);
+  } catch (e) { /* no pasa nada si falla al cerrarlo; se sobrescribirá al reabrir */ }
+  gjRealtimeChannelActual = null;
 }
 window.gjSyncManualAhora = async (STORAGE_KEY) => {
   const remoto = await gjSincronizarConSupabase(STORAGE_KEY);
@@ -14545,18 +14558,15 @@ function App() {
         window.gjOnRemoteChange((nuevoData) => setData(nuevoData));
         if (window.gjIniciarRealtimeSupabase)
             window.gjIniciarRealtimeSupabase(STORAGE_KEY);
-        // Además del tiempo real, comprobamos cada 2 minutos si hay una versión más nueva en el
-        // servidor. Es un respaldo por si el tiempo real no llega a activarse (p. ej. si no está
-        // habilitado en el proyecto de Supabase): así el dispositivo nunca se queda desactualizado
-        // del todo. (Antes eran 25s; se ha alargado a 2 min para reducir el consumo de egress del
-        // plan gratuito de Supabase — con varios móviles consultando a la vez, cada comprobación
-        // descarga los datos completos de la empresa, incluidas las fotos.)
+        // Además del tiempo real, comprobamos cada 25s si hay una versión más nueva en el servidor.
+        // Es un respaldo por si el tiempo real no llega a activarse (p. ej. si no está habilitado
+        // en el proyecto de Supabase): así el dispositivo nunca se queda desactualizado del todo.
         const intervalo = setInterval(() => {
             if (window.gjSyncManualAhora)
                 window.gjSyncManualAhora(STORAGE_KEY);
             if (window.gjReintentarSubidaPendiente)
                 window.gjReintentarSubidaPendiente(STORAGE_KEY);
-        }, 120000);
+        }, 25000);
         return () => clearInterval(intervalo);
     }, []);
     useEffect(() => {
