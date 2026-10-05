@@ -75,8 +75,13 @@ async function gjSincronizarConSupabase(STORAGE_KEY) {
       const ultimaConocida = localStorage.getItem(GJ_LAST_SYNC_KEY);
       const remotoEsMasNuevo = !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
       if (!remotoEsMasNuevo) return null;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data));
-      if (data.updated_at) localStorage.setItem(GJ_LAST_SYNC_KEY, data.updated_at);
+      // Guardar una copia local es solo una comodidad (para abrir más rápido/sin conexión la próxima
+      // vez); si el móvil no tiene sitio para ello, NO debe impedir usar los datos que sí se acaban
+      // de traer bien del servidor — por eso esto nunca bloquea el resultado.
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data));
+        if (data.updated_at) localStorage.setItem(GJ_LAST_SYNC_KEY, data.updated_at);
+      } catch (e) { /* sin espacio local; seguimos igualmente con los datos ya descargados */ }
       return data.data;
     }
     return null;
@@ -99,7 +104,12 @@ window.storage = {
     return v !== null ? { key, value: v } : null;
   },
   async set(key, value, shared) {
-    localStorage.setItem(key, value);
+    // Igual que al leer: guardar en el móvil es solo una comodidad. Si no cabe (demasiadas fotos
+    // acumuladas para el límite del navegador), NO debe impedir que el guardado real —en Supabase—
+    // siga adelante con normalidad.
+    try {
+      localStorage.setItem(key, value);
+    } catch (e) { /* sin espacio local; seguimos e intentamos subirlo a Supabase igualmente */ }
     if (key === window.__GJ_MAIN_KEY__) {
       const client = gjGetSupabaseClient();
       if (client) {
@@ -166,7 +176,9 @@ function gjIniciarRealtimeSupabase(STORAGE_KEY) {
       .channel("gj_app_data_changes")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "gj_app_data", filter: "id=eq.1" }, async (payload) => {
         if (payload && payload.new && payload.new.data && Array.isArray(payload.new.data.workers) && payload.new.data.workers.length > 0) {
-          localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.new.data));
+          try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.new.data));
+          } catch (e) { /* sin espacio local; seguimos igualmente, lo importante es actualizar la pantalla */ }
           window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
           if (gjRemoteChangeCallback) gjRemoteChangeCallback(payload.new.data);
         }
