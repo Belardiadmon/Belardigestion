@@ -16771,25 +16771,25 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                 React.createElement("span", null, "Corregir: "),
                                 React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "2px 4px" }, value: (j === null || j === void 0 ? void 0 : j.entradaHora) || "", onChange: e => actualizarExcepcionHorario(o.id, wid, "entradaHora", e.target.value) }),
                                 React.createElement("span", null, "\u2013"),
-                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "2px 4px" }, value: (j === null || j === void 0 ? void 0 : j.salidaHora) || "", onChange: e => actualizarExcepcionHorario(o.id, wid, "salidaHora", e.target.value) })),
+                                React.createElement("input", { className: "gj-input", type: "time", style: { width: 100, padding: "2px 4px" }, value: (j === null || j === void 0 ? void 0 : j.salidaHora) || "", onChange: e => actualizarExcepcionHorario(o.id, wid, "salidaHora", e.target.value) }))),
                             (() => {
                                 const alm = (o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[wid]) || null;
-                                if (!alm || !alm.inicio)
-                                    return null;
+                                const hayAlmuerzo = !!(alm && alm.inicio);
                                 return React.createElement("div", { style: { marginTop: 3 } },
                                     "\uD83C\uDF7D\uFE0F Almuerzo: ",
-                                    alm.inicioCoord ? React.createElement("a", { href: mapsLinkCoord(alm.inicioCoord), target: "_blank", rel: "noreferrer" }, alm.inicio) : alm.inicio,
-                                    " \u2013 ",
-                                    alm.fin ? (alm.finCoord ? React.createElement("a", { href: mapsLinkCoord(alm.finCoord), target: "_blank", rel: "noreferrer" }, alm.fin) : alm.fin) : "en curso",
-                                    (alm.avisoTiempo || alm.avisoUbicacion) && React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F"),
-                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingAlmuerzo(o.id + wid); setFichajeInicio(alm.inicio || ""); setFichajeFin(alm.fin || ""); } },
-                                        React.createElement(Pencil, { size: 10 })),
-                                    editingAlmuerzo === o.id + wid && (React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
+                                    hayAlmuerzo ? (alm.inicioCoord ? React.createElement("a", { href: mapsLinkCoord(alm.inicioCoord), target: "_blank", rel: "noreferrer" }, alm.inicio) : alm.inicio) : "sin fichar",
+                                    hayAlmuerzo && " \u2013 ",
+                                    hayAlmuerzo && (alm.fin ? (alm.finCoord ? React.createElement("a", { href: mapsLinkCoord(alm.finCoord), target: "_blank", rel: "noreferrer" }, alm.fin) : alm.fin) : "en curso"),
+                                    hayAlmuerzo && (alm.avisoTiempo || alm.avisoUbicacion) && React.createElement("span", { style: { color: "var(--warn)", fontWeight: 600 } }, " \u26A0\uFE0F"),
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingAlmuerzo(o.id + wid); setFichajeInicio((alm === null || alm === void 0 ? void 0 : alm.inicio) || ""); setFichajeFin((alm === null || alm === void 0 ? void 0 : alm.fin) || ""); } },
+                                        hayAlmuerzo ? React.createElement(Pencil, { size: 10 }) : React.createElement(Plus, { size: 10 })),
+                                    !hayAlmuerzo && editingAlmuerzo !== o.id + wid && React.createElement("span", { style: { fontSize: 11, color: "var(--ink-soft)" } }, " (a\u00F1adir a mano)"),
+                                    editingAlmuerzo === o.id + wid && React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
                                         React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value) }),
                                         React.createElement("span", null, "\u2013"),
                                         React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeFin, onChange: e => setFichajeFin(e.target.value) }),
-                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarAlmuerzoManual(o.id, wid, fichajeInicio, fichajeFin) }, "Guardar"))));
-                            })())));
+                                        React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarAlmuerzoManual(o.id, wid, fichajeInicio, fichajeFin) }, "Guardar")));
+                            })()));
                     }))),
                 o.stops.map((s, i) => {
                     const cli = getClient(s.clienteId);
