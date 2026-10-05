@@ -16972,6 +16972,8 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const [flujoCierre, setFlujoCierre] = useState(null); // { orderId, clienteId, tipo, pasos, idx, respuestas }
     const [fcTransicion, setFcTransicion] = useState(false); // true mientras se muestra el icono "pensando"
     const fcGpsRef = useRef(null);
+    const enviandoActividadRef = useRef(false); // evita que varios toques seguidos en "Iniciar" (mientras se espera al GPS) creen varias actividades duplicadas
+    const finalizandoActividadRef = useRef(false); // lo mismo, para "Finalizar"
     const fcCoordRef = useRef(undefined);
     const [fcObsTexto, setFcObsTexto] = useState("");
     const [materialParadaAbierta, setMaterialParadaAbierta] = useState(null); // key = orderId+clienteId
@@ -17142,11 +17144,18 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const iniciarActividadExtra = async (orderId, categoria, lugar) => {
         if (!categoria || !lugar)
             return;
+        if (enviandoActividadRef.current)
+            return; // ya hay un "Iniciar" en marcha (p. ej. esperando al GPS); se ignoran los toques repetidos
+        enviandoActividadRef.current = true;
         const esTallerAlmacen = categoria === "talleres" || categoria === "almacenes";
-        if (esTallerAlmacen && !extraTipoTaller)
+        if (esTallerAlmacen && !extraTipoTaller) {
+            enviandoActividadRef.current = false;
             return;
-        if (esTallerAlmacen && extraTipoTaller !== "consumibles" && !extraMaquinaId)
+        }
+        if (esTallerAlmacen && extraTipoTaller !== "consumibles" && !extraMaquinaId) {
+            enviandoActividadRef.current = false;
             return;
+        }
         const esRecogidaMaterial = categoria === "almacenes" && extraTipoTaller === "consumibles";
         // Si se han rellenado los campos de un material pero no se ha pulsado "Añadir a la lista" antes
         // de pulsar "Iniciar", se añade igualmente aquí, para no perder esa línea por un paso olvidado.
@@ -17165,14 +17174,13 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 }
             }
         }
-        const coordInicio = await getPosicionActual();
         const idActividadNueva = uid("ext");
+        const horaAhora = nowTime();
         await persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             order.actividadesExtra = order.actividadesExtra || [];
             const nombreTrabajador = worker ? worker.nombre : "";
-            const horaAhora = nowTime();
             // Si este trabajador tenía un mantenimiento en curso con un tramo abierto, se pausa (se le
             // cierra ese tramo) al empezar esta otra labor. Al volver, "Reanudar" abre un tramo nuevo, así
             // el tiempo del almacén/repostaje queda fuera del mantenimiento y se cuenta como desplazamiento.
@@ -17193,7 +17201,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 order.entradaMananaHora = horaAhora;
             }
             order.actividadesExtra.push({
-                id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio, coordFin: null, trabajador: nombreTrabajador, workerId,
+                id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio: null, coordFin: null, trabajador: nombreTrabajador, workerId,
                 tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
                 maquinaId: esTallerAlmacen && extraTipoTaller !== "consumibles" ? extraMaquinaId : null,
                 obraId: esRecogidaMaterial ? (materialObraId || null) : null,
@@ -17239,6 +17247,15 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             }
             return next;
         });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const act = order && (order.actividadesExtra || []).find(a => a.id === idActividadNueva);
+            if (act && act.horaInicio === horaAhora) {
+                act.coordInicio = coord;
+            }
+            return next;
+        });
         if (esRecogidaMaterial) {
             // Dejamos la ventana abierta: el trabajador va a seguir cargando materiales y la foto
             // del albarán mientras dura la recogida, en vez de tener que volver a abrir todo el panel.
@@ -17259,9 +17276,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             setMaterialStockId("");
             setMaterialCantidadUsada("");
         }
+        enviandoActividadRef.current = false;
     };
     const finalizarActividadExtra = async (orderId, actividadId) => {
-        const coordFin = await getPosicionActual();
+        if (finalizandoActividadRef.current)
+            return;
+        finalizandoActividadRef.current = true;
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -17269,10 +17289,20 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
             if (act) {
                 act.horaFin = hora;
-                act.coordFin = coordFin;
+                act.coordFin = null;
             }
             return next;
         });
+        aplicarUbicacionEnSegundoPlano((base, coord) => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const act = order && (order.actividadesExtra || []).find(a => a.id === actividadId);
+            if (act && act.horaFin === hora) {
+                act.coordFin = coord;
+            }
+            return next;
+        });
+        finalizandoActividadRef.current = false;
     };
     const añadirOpcionListaFichaje = (categoria) => {
         if (!extraNuevoLugar.trim())
