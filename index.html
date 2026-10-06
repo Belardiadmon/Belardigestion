@@ -146,7 +146,20 @@ window.storage = {
             return null;
           }
           if (!ultimaConocida) {
-            // Primera subida de este móvil (o nunca sincronizó antes): no hay nada que comparar todavía.
+            // Primera subida de este móvil (o nunca sincronizó antes): no hay nada que comparar
+            // todavía con la marca local — pero ANTES de escribir, se comprueba igualmente si el
+            // servidor ya tiene datos reales guardados. Si los tiene, nunca se sobrescriben a
+            // ciegas: se avisa y se pide sincronizar primero, aunque este móvil no supiera nada de
+            // esa versión. Solo si el servidor está realmente vacío (primera vez de verdad) se crea.
+            const { data: filaActual } = await client.from("gj_app_data").select("data").eq("id", 1).maybeSingle();
+            const yaHayDatosReales = !!(filaActual && filaActual.data && Array.isArray(filaActual.data.workers) && filaActual.data.workers.length > 0);
+            if (yaHayDatosReales) {
+              const remoto = await gjSincronizarConSupabase(key);
+              if (remoto && gjRemoteChangeCallback)
+                gjRemoteChangeCallback(remoto);
+              window.gjSyncStatus = { estado: "conflicto", ultimoError: "Este m\u00F3vil no ten\u00EDa sincronizados los datos reales que ya hab\u00EDa en el servidor; por seguridad no se han sobrescrito. Vuelve a intentarlo ahora que ya los tienes.", ultimaSync: window.gjSyncStatus.ultimaSync };
+              return null;
+            }
             const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
             if (error) throw error;
           }
@@ -14495,12 +14508,15 @@ async function loadData() {
             return JSON.parse(res.value);
     }
     catch (e) { /* no existe todavía */ }
-    // IMPORTANTE: si hay una conexión a Supabase configurada pero la lectura ha fallado
-    // (sin internet, error del servidor, permisos, etc.), NUNCA generamos datos de ejemplo
-    // ni los subimos automáticamente: eso podría sobrescribir datos reales ya guardados.
-    // En su lugar se muestra un error claro para revisar la conexión, sin tocar nada.
-    if (gjGetSupabaseClient() && window.gjSyncStatus && window.gjSyncStatus.estado === "error") {
-        throw new Error("No se ha podido conectar con la base de datos. Por seguridad no se han creado datos de ejemplo, para no sobrescribir los datos reales. Comprueba tu conexión a internet e inténtalo de nuevo. (" + (window.gjSyncStatus.ultimoError || "sin detalle") + ")");
+    // IMPORTANTE, sin excepciones: si esta aplicación tiene Supabase configurado, JAMÁS se crean
+    // datos de ejemplo ni se suben solos — da igual el motivo exacto por el que no hayamos podido
+    // leer algo (error de red, de permisos, una respuesta vacía inesperada, lo que sea). Un fallo de
+    // diseño anterior solo comprobaba un aviso de error concreto, y había casos en los que la lectura
+    // podía fallar en silencio sin marcarlo, dejando pasar la creación de datos de ejemplo por error
+    // — eso llegó a sobrescribir datos reales de la empresa. Ahora, mientras haya un cliente de
+    // Supabase configurado, esta función SIEMPRE avisa en vez de crear nada por su cuenta.
+    if (gjGetSupabaseClient()) {
+        throw new Error("No se ha podido conectar con la base de datos. Por seguridad no se han creado datos de ejemplo, para no sobrescribir los datos reales. Comprueba tu conexión a internet e inténtalo de nuevo. (" + ((window.gjSyncStatus && window.gjSyncStatus.ultimoError) || "sin detalle") + ")");
     }
     // Solo se llega aquí si de verdad no hay ningún dato todavía: primera instalación real
     // sin Supabase configurado, o tabla recién creada y aún vacía. En ese caso sí es seguro
