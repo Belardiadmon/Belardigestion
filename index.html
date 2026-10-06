@@ -67,7 +67,7 @@ function gjMarcarUltimaSync(valor) {
   gjUltimaSyncEnMemoria = valor;
   try { localStorage.setItem(GJ_LAST_SYNC_KEY, valor); } catch (e) { /* sin espacio local; la memoria ya la tiene guardada igualmente */ }
 }
-async function gjSincronizarConSupabase(STORAGE_KEY) {
+async function gjSincronizarConSupabase(STORAGE_KEY, forzar) {
   const client = gjGetSupabaseClient();
   if (!client) { window.gjSyncStatus.estado = "local"; return null; }
   try {
@@ -80,9 +80,12 @@ async function gjSincronizarConSupabase(STORAGE_KEY) {
       // Solo sobrescribimos lo local si el servidor tiene una versión realmente más nueva que la
       // última que este dispositivo sabe que existe. Así, si este móvil tiene un cambio reciente
       // que todavía no ha llegado a subirse (por ejemplo, por un fallo de red momentáneo), no se
-      // pierde al recargar la página.
+      // pierde al recargar la página. Con forzar=true (la carga inicial de la app) esta comparación
+      // se salta: siempre se acepta lo que haya en el servidor, aunque su fecha sea "más antigua"
+      // que la última que este móvil recuerda — algo que puede pasar de forma legítima, por ejemplo
+      // justo después de restaurar una copia de seguridad de la base de datos a un momento anterior.
       const ultimaConocida = gjUltimaSyncEnMemoria;
-      const remotoEsMasNuevo = !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
+      const remotoEsMasNuevo = forzar || !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
       if (!remotoEsMasNuevo) return null;
       // Guardar una copia local es solo una comodidad (para abrir más rápido/sin conexión la próxima
       // vez); si el móvil no tiene sitio para ello, NO debe impedir usar los datos que sí se acaban
@@ -105,7 +108,7 @@ window.storage = {
     if (key === window.__GJ_MAIN_KEY__) {
       const client = gjGetSupabaseClient();
       if (client) {
-        const remoto = await gjSincronizarConSupabase(key);
+        const remoto = await gjSincronizarConSupabase(key, true);
         if (remoto) return { key, value: JSON.stringify(remoto) };
       }
     }
