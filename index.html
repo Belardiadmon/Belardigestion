@@ -16419,6 +16419,23 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
     const [materialAdminProveedor, setMaterialAdminProveedor] = useState("");
     const [materialAdminNombre, setMaterialAdminNombre] = useState("");
     const [materialAdminCantidadNueva, setMaterialAdminCantidadNueva] = useState("");
+    const [materialAdminFoto, setMaterialAdminFoto] = useState(null);
+    const [ocrEnCursoRutas, setOcrEnCursoRutas] = useState(null); // "parada" | "act" | null
+    const [ocrResultadoRutas, setOcrResultadoRutas] = useState(null); // { origen: "parada"|"act", texto } o { origen, error }
+    const leerAlbaranOCRRutas = async (origen, fotoDataUrl) => {
+        if (!fotoDataUrl)
+            return;
+        setOcrResultadoRutas(null);
+        setOcrEnCursoRutas(origen);
+        try {
+            const texto = await gjLeerTextoOCR(fotoDataUrl);
+            setOcrResultadoRutas({ origen, texto });
+        }
+        catch (e) {
+            setOcrResultadoRutas({ origen, error: (e && e.message) || "No se ha podido leer la foto." });
+        }
+        setOcrEnCursoRutas(null);
+    };
     const [materialActAbierta, setMaterialActAbierta] = useState(null); // actividadId
     const [materialActOrigen, setMaterialActOrigen] = useState("bolsa");
     const [materialActStockId, setMaterialActStockId] = useState("");
@@ -16426,6 +16443,7 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
     const [materialActProveedor, setMaterialActProveedor] = useState("");
     const [materialActNombre, setMaterialActNombre] = useState("");
     const [materialActCantidadNueva, setMaterialActCantidadNueva] = useState("");
+    const [materialActFoto, setMaterialActFoto] = useState(null);
     const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -16459,10 +16477,11 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
             const cant = Number(materialAdminCantidadNueva);
             if (!materialAdminNombre.trim() || !cant || cant <= 0)
                 return;
-            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant });
+            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant, fotoAlbaran: materialAdminFoto || null });
         }
             return next;
         });
+        setMaterialAdminFoto(null);
         setMaterialAdminStockId(""); setMaterialAdminCantidadBolsa("");
         setMaterialAdminProveedor(""); setMaterialAdminNombre(""); setMaterialAdminCantidadNueva("");
     };
@@ -16509,8 +16528,9 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
             const cant = Number(materialActCantidadNueva);
             if (!materialActNombre.trim() || !cant || cant <= 0)
                 return;
-            act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false });
+            act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false, fotoAlbaran: materialActFoto || null });
         }
+            setMaterialActFoto(null);
             return next;
         });
         setMaterialActStockId(""); setMaterialActCantidadBolsa("");
@@ -16978,7 +16998,11 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                     React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadBolsa, onChange: e => setMaterialAdminCantidadBolsa(e.target.value) }))) : (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
                                     React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Proveedor", value: materialAdminProveedor, onChange: e => setMaterialAdminProveedor(e.target.value) }),
                                     React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Material", list: "dl-materiales-belardi", value: materialAdminNombre, onChange: e => setMaterialAdminNombre(e.target.value) }),
-                                    React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadNueva, onChange: e => setMaterialAdminCantidadNueva(e.target.value) }))),
+                                    React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadNueva, onChange: e => setMaterialAdminCantidadNueva(e.target.value) }),
+                                    React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { fontSize: 10.5, maxWidth: 130 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialAdminFoto(await leerFotoBase64(f)); } }),
+                                    materialAdminFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, disabled: ocrEnCursoRutas === "parada", onClick: () => leerAlbaranOCRRutas("parada", materialAdminFoto) }, ocrEnCursoRutas === "parada" ? "Leyendo..." : "Leer texto"))),
+                                ocrResultadoRutas && ocrResultadoRutas.origen === "parada" && React.createElement("div", { className: "gj-card", style: { marginTop: 4, padding: 6, fontSize: 10.5, maxHeight: 140, overflowY: "auto", whiteSpace: "pre-wrap" } },
+                                    ocrResultadoRutas.error ? React.createElement("span", { style: { color: "var(--warn)" } }, ocrResultadoRutas.error) : (ocrResultadoRutas.texto || "(no se ha reconocido texto)")),
                                 React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 4 } },
                                     React.createElement("button", { className: "gj-btn primary", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => añadirMaterialParadaAdmin(o.id, s.clienteId) }, "A\u00F1adir"),
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => setMaterialAdminAbierta(null) }, "Cerrar"))))))));
@@ -17031,7 +17055,11 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                         React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadBolsa, onChange: e => setMaterialActCantidadBolsa(e.target.value) }))) : (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap" } },
                                         React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Proveedor", value: materialActProveedor, onChange: e => setMaterialActProveedor(e.target.value) }),
                                         React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Material", list: "dl-materiales-belardi", value: materialActNombre, onChange: e => setMaterialActNombre(e.target.value) }),
-                                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadNueva, onChange: e => setMaterialActCantidadNueva(e.target.value) }))),
+                                        React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadNueva, onChange: e => setMaterialActCantidadNueva(e.target.value) }),
+                                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { fontSize: 10, maxWidth: 120 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialActFoto(await leerFotoBase64(f)); } }),
+                                        materialActFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px", fontSize: 10 }, disabled: ocrEnCursoRutas === "act", onClick: () => leerAlbaranOCRRutas("act", materialActFoto) }, ocrEnCursoRutas === "act" ? "Leyendo..." : "Leer texto"))),
+                                    ocrResultadoRutas && ocrResultadoRutas.origen === "act" && React.createElement("div", { className: "gj-card", style: { marginTop: 3, padding: 5, fontSize: 10, maxHeight: 130, overflowY: "auto", whiteSpace: "pre-wrap" } },
+                                        ocrResultadoRutas.error ? React.createElement("span", { style: { color: "var(--warn)" } }, ocrResultadoRutas.error) : (ocrResultadoRutas.texto || "(no se ha reconocido texto)")),
                                     React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3 } },
                                         React.createElement("button", { className: "gj-btn primary", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => añadirMaterialActividadAdmin(o.id, a.id) }, "A\u00F1adir"),
                                         React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 11 }, onClick: () => setMaterialActAbierta(null) }, "Cerrar"))))))));
