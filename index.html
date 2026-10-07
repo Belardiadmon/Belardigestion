@@ -13010,6 +13010,8 @@ const Mail = gjMakeIcon("✉");
 const Sprout = gjMakeIcon("🌱");
 const PackageIcon = gjMakeIcon("📦");
 const Scissors = gjMakeIcon("✂️");
+const Sack = gjMakeIcon("🌾");
+const Rake = gjMakeIcon("🧹");
 const AlertTriangleIcon = gjMakeIcon("⚠️");
 const ChevronLeft = gjMakeIcon("‹");
 const ChevronRight = gjMakeIcon("›");
@@ -13213,10 +13215,45 @@ function cleanPhone(p) { return (p || "").replace(/[^\d]/g, ""); }
 function waLink(phone, text) { return `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(text)}`; }
 function mailLink(email, subject, body, cc) { return `mailto:${email}?${cc ? "cc=" + encodeURIComponent(cc) + "&" : ""}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`; }
 function leerFotoBase64(file) {
+    // Las fotos que hace un móvil moderno pueden pesar varios megas — guardarlas tal cual podía dejar
+    // la pantalla bloqueada unos segundos (parecía "congelada") y, además, llenaba mucho más rápido el
+    // espacio de cada móvil. Aquí se reduce el tamaño (máximo 1280px de lado largo) y se comprime como
+    // JPEG antes de guardarla — sigue siendo perfectamente legible para revisar un albarán o un antes/
+    // después, pero pesa una fracción de lo que pesaba la foto original.
+    const MAX_DIM = 1280;
+    const CALIDAD_JPEG = 0.72;
     return new Promise((resolve) => {
         const reader = new FileReader();
-        reader.onload = () => resolve(reader.result);
         reader.onerror = () => resolve(null);
+        reader.onload = () => {
+            const dataUrlOriginal = reader.result;
+            if (!file.type || !file.type.startsWith("image/")) {
+                resolve(dataUrlOriginal); // no es una imagen (p. ej. un PDF): se deja tal cual
+                return;
+            }
+            const img = new Image();
+            img.onerror = () => resolve(dataUrlOriginal); // si falla la compresión, mejor la original que nada
+            img.onload = () => {
+                try {
+                    let width = img.naturalWidth || img.width;
+                    let height = img.naturalHeight || img.height;
+                    if (width > MAX_DIM || height > MAX_DIM) {
+                        if (width > height) { height = Math.round(height * MAX_DIM / width); width = MAX_DIM; }
+                        else { width = Math.round(width * MAX_DIM / height); height = MAX_DIM; }
+                    }
+                    const canvas = document.createElement("canvas");
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext("2d");
+                    ctx.drawImage(img, 0, 0, width, height);
+                    resolve(canvas.toDataURL("image/jpeg", CALIDAD_JPEG));
+                }
+                catch (e) {
+                    resolve(dataUrlOriginal);
+                }
+            };
+            img.src = dataUrlOriginal;
+        };
         reader.readAsDataURL(file);
     });
 }
@@ -13675,6 +13712,20 @@ function fechaEs(iso) {
 function diasEnAnio(year) {
     return (new Date(year, 1, 29).getMonth() === 1) ? 366 : 365;
 }
+function festivoColor(tipo) {
+    if (tipo === "oficial")
+        return "#4ADE80"; // verde
+    if (tipo === "lluvia_nieve")
+        return "#93C5FD";
+    return "#BBF7D0"; // empresa / vacaciones comunes \u2014 verde claro
+}
+function festivoEtiqueta(tipo) {
+    if (tipo === "oficial")
+        return "Oficial";
+    if (tipo === "lluvia_nieve")
+        return "D\u00EDa de lluvia o nieve";
+    return "Empresa";
+}
 function horasObjetivoAnual(worker, year, horasBase) {
     const base = Number(horasBase) || 1700;
     if (!worker || worker.tipoContrato !== "discontinuo" && worker.tipoContrato !== "eventual") {
@@ -13864,6 +13915,16 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
     const a = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.sin(dLng / 2) ** 2;
     return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
+function radioAvisoUbicacionKm(cliente) {
+    // El margen permitido antes de avisar "ubicación no coincide" depende del tipo de propiedad: una
+    // comunidad de vecinos o una empresa pueden ocupar una parcela mucho más grande que un particular,
+    // así que necesitan un radio más amplio para no dar avisos falsos solo por estar en el otro
+    // extremo de la misma finca.
+    const tipo = (cliente === null || cliente === void 0 ? void 0 : cliente.tipoPropiedad) || "particular";
+    if (tipo === "particular")
+        return 0.05; // 50 m
+    return 0.075; // comunidad, empresa, oficinas y otro \u2014 75 m
+}
 function avisoUbicacionCliente(coord, cliente) {
     // Compara el punto fichado con la ubicación conocida del cliente. Usa el GPS exacto guardado a
     // mano (gpsLat/gpsLng) si existe, porque es más preciso; si no, la dirección geocodificada
@@ -13874,7 +13935,7 @@ function avisoUbicacionCliente(coord, cliente) {
     const lng = cliente.gpsLng || cliente.lng;
     if (!lat || !lng)
         return false;
-    return distanciaKm(coord.lat, coord.lng, lat, lng) > 0.15;
+    return distanciaKm(coord.lat, coord.lng, lat, lng) > radioAvisoUbicacionKm(cliente);
 }
 function avisoUbicacionPunto(coord, lat, lng) {
     if (!coord || !lat || !lng)
@@ -14566,6 +14627,8 @@ const GROUPS = [
             { id: "pendientes", label: "Pendientes", icon: ClipboardList },
             { id: "riego", label: "Riego", icon: Sprout },
             { id: "podas", label: "Podas", icon: Scissors },
+            { id: "abonados", label: "Abonados", icon: Sack },
+            { id: "escarificados", label: "Escarificados", icon: Rake },
             { id: "clima", label: "Clima", icon: CloudRain },
             { id: "talleres", label: "Talleres", icon: Hammer },
             { id: "mapa", label: "Mapa", icon: Map },
@@ -14604,9 +14667,14 @@ const GROUPS = [
 ];
 const TABS = GROUPS.flatMap(g => g.views);
 function App() {
-    const [data, setData] = useState(null);
+    const [data, setDataState] = useState(null);
     const dataRef = useRef(null);
-    useEffect(() => { dataRef.current = data; }, [data]);
+    // IMPORTANTE: dataRef se actualiza aquí, en el mismo instante en que se llama a setData — no con
+    // un useEffect aparte, que tarda un momento más en ejecutarse después de cada redibujado. Antes,
+    // si se guardaban dos cosas muy seguidas (como la foto de "antes" y, enseguida, la de "después"),
+    // el segundo guardado podía arrancar todavía con dataRef desactualizado (sin la primera foto) y
+    // acababa pisándola. Con la actualización síncrona aquí, eso ya no puede pasar.
+    const setData = (next) => { dataRef.current = next; setDataState(next); };
     const [loading, setLoading] = useState(true);
     const [saveError, setSaveError] = useState(false);
     const [view, setView] = useState("panel");
@@ -14799,7 +14867,8 @@ function App() {
           --accent:#C97A2B; --accent-ink:#FFF8EF; --good:#3F6B2A; --good-bg:#E4EEDA;
           --warn:#9B3E27; --warn-bg:#F5E1DA; --pend-bg:#EDEEE4;
           --highlight:#E0B22A; --highlight-ink:#3A2A02;
-          --sick:#6B4A9B; --permit:#2C7A8C;
+          --sick:#6B4A9B; --permit:#2563EB;
+          --cal-vacaciones:#DC2626; --cal-incompleto:#DB2777; --cal-extra:#78350F;
           --font-display:'Space Grotesk',sans-serif; --font-body:'IBM Plex Sans',sans-serif;
           background:var(--bg); color:var(--ink); font-family:var(--font-body);
           min-height:100%; padding-bottom:8px; font-size:14px; line-height:1.45;
@@ -14883,17 +14952,18 @@ function App() {
         }
         .gj-daycell.done{ background:var(--good); color:#fff; border-color:var(--good); font-weight:600; }
         .gj-daycell.latest{ background:var(--highlight); color:var(--highlight-ink); border-color:var(--highlight); font-weight:700; }
-        .gj-daycell.vacation{ background:var(--good); color:#fff; border-color:var(--good); font-weight:700; }
+        .gj-daycell.vacation{ background:var(--cal-vacaciones); color:#fff; border-color:var(--cal-vacaciones); font-weight:700; }
         .gj-daycell.baja{ background:var(--sick); color:#fff; border-color:var(--sick); font-weight:700; }
         .gj-daycell.permiso{ background:var(--permit); color:#fff; border-color:var(--permit); font-weight:700; }
-        .gj-daycell.short{ background:var(--warn); color:#fff; border-color:var(--warn); font-weight:700; }
-        .gj-daycell.long{ background:var(--accent); color:var(--accent-ink); border-color:var(--accent); font-weight:700; }
+        .gj-daycell.short{ background:var(--cal-incompleto); color:#fff; border-color:var(--cal-incompleto); font-weight:700; }
+        .gj-daycell.long{ background:var(--cal-extra); color:#fff; border-color:var(--cal-extra); font-weight:700; }
         .gj-daycell.over{ background:var(--highlight); color:var(--highlight-ink); border-color:var(--highlight); font-weight:700; }
         .gj-daycell.weekend{ background:var(--line-soft); color:var(--ink-soft); border-color:var(--line); }
         .gj-card.gj-collapsed > *:not(:first-child){ display:none !important; }
         .gj-seccion-header{ cursor:pointer; display:flex; align-items:center; justify-content:space-between; user-select:none; }
-        .gj-daycell.festivo-oficial{ background:#FCA5A5; color:#3f1f1f; border-color:#FCA5A5; font-weight:700; }
-        .gj-daycell.festivo-empresa{ background:#FDBA74; color:#3f1f1f; border-color:#FDBA74; font-weight:700; }
+        .gj-daycell.festivo-oficial{ background:#4ADE80; color:#0a3d1f; border-color:#4ADE80; font-weight:700; }
+        .gj-daycell.festivo-empresa{ background:#BBF7D0; color:#0a3d1f; border-color:#BBF7D0; font-weight:700; }
+        .gj-daycell.festivo-lluvia_nieve{ background:#93C5FD; color:#1e3a5f; border-color:#93C5FD; font-weight:700; }
         .gj-daycell.visita{ background:var(--good); color:#fff; border-color:var(--good); font-weight:700; }
         .gj-daycell.festivo-anexo{ background:var(--warn); color:#fff; border-color:var(--warn); font-weight:700; opacity:.85; }
         .gj-map{ height:420px; width:100%; border-radius:6px; overflow:hidden; border:1px solid var(--line); background:#e5e5e5; }
@@ -14978,6 +15048,8 @@ function App() {
                 view === "pendientes" && React.createElement(PendientesView, { ...props }),
                 view === "riego" && React.createElement(RiegoView, { ...props }),
                 view === "podas" && React.createElement(PodasView, { ...props }),
+                view === "abonados" && React.createElement(AbonadosView, { ...props }),
+                view === "escarificados" && React.createElement(EscarificadosView, { ...props }),
                 view === "clima" && React.createElement(ClimaView, { ...props }),
                 view === "talleres" && React.createElement(MaquinariaEnTalleresView, { ...props }),
                 view === "trabajador" && React.createElement(TrabajadorView, { ...props }),
@@ -15059,6 +15131,32 @@ function allStopsToday(data) {
     });
     return list;
 }
+function visitasPeriodicasProximas(data) {
+    // Clientes con periodicidad trimestral o más larga, con meses concretos marcados: se avisa desde
+    // 7 días antes del comienzo de ese mes, y durante todo el mes, hasta que el administrador lo marca
+    // como ya programado (o hasta que pase el mes, lo que ocurra antes).
+    const hoy = new Date();
+    const avisos = [];
+    (data.clients || []).filter(c => c.esMantenimiento && c.activo !== false && Array.isArray(c.mesesVisita) && c.mesesVisita.length > 0).forEach(c => {
+        c.mesesVisita.forEach(mes => {
+            [hoy.getFullYear(), hoy.getFullYear() + 1].forEach(anio => {
+                const clave = `${c.id}_${anio}_${mes}`;
+                if (data.visitasPeriodicasVistas && data.visitasPeriodicasVistas[clave])
+                    return;
+                const inicioMes = new Date(anio, mes - 1, 1);
+                const finMes = new Date(anio, mes, 0, 23, 59, 59);
+                const avisoDesde = new Date(inicioMes);
+                avisoDesde.setDate(avisoDesde.getDate() - 7);
+                if (hoy >= avisoDesde && hoy <= finMes) {
+                    avisos.push({ clave, cliente: c, mes, anio });
+                }
+            });
+        });
+    });
+    const NOMBRES_MES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+    avisos.forEach(a => { a.nombreMes = NOMBRES_MES[a.mes - 1]; });
+    return avisos;
+}
 function allStopsPendientesAviso(data) {
     // A diferencia de allStopsToday, esto mira TODOS los d\u00EDas (no solo hoy), para que un mantenimiento
     // completado que no se lleg\u00F3 a avisar al cliente no desaparezca nunca del Panel, aunque haya pasado
@@ -15081,6 +15179,15 @@ function PanelView({ data, persist, persistConReintento, getClient, getWorker, a
     const enProgreso = stops.filter(s => s.stop.estado === "en_progreso").length;
     const completados = stops.filter(s => s.stop.estado === "completado");
     const pendientesAviso = allStopsPendientesAviso(data);
+    const visitasProximas = visitasPeriodicasProximas(data);
+    const marcarVisitaProgramada = (clave) => {
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            next.visitasPeriodicasVistas = next.visitasPeriodicasVistas || {};
+            next.visitasPeriodicasVistas[clave] = true;
+            return next;
+        });
+    };
     const avisados = completados.filter(s => s.stop.notificado);
     const horasActividadesExtraHoy = data.orders.filter(o => o.fecha === todayStr()).reduce((acc, o) => acc + (o.actividadesExtra || []).reduce((s, a) => s + duracionActividadHoras(a, o), 0), 0);
     const horasPersonaHoy = completados.reduce((acc, s) => acc + diffHours(s.stop.horaInicio, s.stop.horaFin) * (s.stop.crewSize || s.order.workerIds.length), 0) + horasActividadesExtraHoy;
@@ -15339,6 +15446,12 @@ function PanelView({ data, persist, persistConReintento, getClient, getWorker, a
                         mio.avisoTiempo && React.createElement("span", { className: "gj-badge no_hecho" }, "Tiempo superado en m\u00E1s de 20 min"),
                         mio.avisoUbicacion && React.createElement("span", { className: "gj-badge no_hecho" }, "Ubicaci\u00F3n no coincide con ning\u00FAn cliente de la ruta"))));
             }))),
+        visitasProximas.length > 0 && (React.createElement(React.Fragment, null,
+            React.createElement("h3", { className: "gj-h3" }, "\uD83D\uDCC5 Visitas peri\u00F3dicas pr\u00F3ximas a programar"),
+            visitasProximas.map(a => (React.createElement("div", { key: a.clave, className: "gj-card", style: { marginBottom: 8 } },
+                React.createElement("div", { style: { fontWeight: 600 } }, a.cliente.nombre),
+                React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "Visita contratada para ", a.nombreMes, " de ", a.anio, " \u2014 periodicidad ", a.cliente.periodicidadMantenimiento),
+                React.createElement("button", { className: "gj-btn ghost", style: { marginTop: 6, fontSize: 11.5 }, onClick: () => marcarVisitaProgramada(a.clave) }, "Ya programada (no volver a avisar este a\u00F1o)")))))),
         React.createElement("h3", { className: "gj-h3" }, "Mantenimientos completados pendientes de avisar"),
         pendientesAviso.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "No hay mantenimientos pendientes de avisar."),
         pendientesAviso.map(({ order, stop }) => {
@@ -15560,11 +15673,63 @@ function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
                 React.createElement("button", { className: "gj-btn block", onClick: () => setEditando(false) }, "Cancelar"),
                 React.createElement("button", { className: "gj-btn primary block", onClick: guardar }, "Guardar"))))));
 }
+function CalendarioVisitasClienteView({ cliente, data, persist, onCerrar }) {
+    const añoInicial = (cliente.calendarioVisitas && cliente.calendarioVisitas.year) || new Date().getFullYear();
+    const [year, setYear] = useState(añoInicial);
+    const [mes, setMes] = useState(new Date().getMonth());
+    const [visitas, setVisitas] = useState((cliente.calendarioVisitas && cliente.calendarioVisitas.dates) || {});
+    const toggleDia = (dateStr) => {
+        if (data.festivos && data.festivos[dateStr])
+            return; // los festivos no se tocan aquí, vienen del calendario de empresa
+        setVisitas(v => { const n = { ...v }; if (n[dateStr])
+            delete n[dateStr];
+        else
+            n[dateStr] = true; return n; });
+    };
+    const guardar = () => {
+        const next = structuredClone(data);
+        const c = next.clients.find(x => x.id === cliente.id);
+        c.calendarioVisitas = { year, dates: visitas };
+        persist(next);
+        onCerrar();
+    };
+    const daysInMonth = new Date(year, mes + 1, 0).getDate();
+    const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
+    const prevMonth = () => { if (mes === 0) { setMes(11); setYear(y => y - 1); } else setMes(m => m - 1); };
+    const nextMonth = () => { if (mes === 11) { setMes(0); setYear(y => y + 1); } else setMes(m => m + 1); };
+    return (React.createElement("div", null,
+        React.createElement("button", { className: "gj-btn gj-no-print", style: { marginBottom: 10 }, onClick: onCerrar }, "\u2190 Volver a Clientes"),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("div", { className: "gj-h3" }, "Calendario de visitas \u2014 ", cliente.nombre),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Toca los d\u00EDas entre semana que quieras marcar como visita aproximada o fija de este cliente. Los festivos (en naranja) vienen del calendario de la empresa y no se pueden tocar aqu\u00ED."),
+            React.createElement("div", { className: "gj-row", style: { justifyContent: "center", gap: 14, marginBottom: 8 } },
+                React.createElement("button", { className: "gj-btn ghost", onClick: prevMonth }, React.createElement(ChevronLeft, { size: 16 })),
+                React.createElement("div", { style: { fontWeight: 700 } }, MESES[mes], " ", year),
+                React.createElement("button", { className: "gj-btn ghost", onClick: nextMonth }, React.createElement(ChevronRight, { size: 16 }))),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, maxWidth: 320, margin: "0 auto" } },
+                DIAS_SEMANA.map(dl => React.createElement("div", { key: dl, style: { textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--ink-soft)" } }, dl)),
+                Array.from({ length: (new Date(year, mes, 1).getDay() + 6) % 7 }, (_, i) => React.createElement("div", { key: "off" + i })),
+                days.map(d => {
+                    const dateStr = `${year}-${String(mes + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                    const esFestivo = data.festivos && data.festivos[dateStr];
+                    const marcado = !!visitas[dateStr];
+                    const cls = esFestivo ? "festivo-anexo" : marcado ? "visita" : "";
+                    return (React.createElement("div", { key: d, className: "gj-daycell" + (cls ? " " + cls : ""), style: { width: "100%", height: 30, borderRadius: 4, cursor: esFestivo ? "default" : "pointer" }, onClick: () => toggleDia(dateStr), title: esFestivo ? "Festivo (empresa)" : marcado ? "Visita marcada" : "" }, d));
+                })),
+            React.createElement("div", { style: { display: "flex", gap: 12, marginTop: 10, fontSize: 11.5, color: "var(--ink-soft)", justifyContent: "center" } },
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--good)", display: "inline-block" } }), " visita marcada"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--warn)", display: "inline-block" } }), " festivo empresa")),
+            React.createElement("div", { style: { fontSize: 12, marginTop: 8, textAlign: "center" } }, Object.keys(visitas).filter(d => d.startsWith(String(year))).length, " visitas marcadas en ", year),
+            React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 10 }, onClick: guardar }, "Guardar calendario"))));
+}
 function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteId }) {
     const [showImportes, setShowImportes] = useState(false);
     const [editing, setEditing] = useState(null);
     const [busqueda, setBusqueda] = useState("");
     const [clienteJardin, setClienteJardin] = useState(null);
+    const [clienteCalendario, setClienteCalendario] = useState(null);
     const [importando, setImportando] = useState(false);
     const [textoImport, setTextoImport] = useState("");
     const [resultadoImport, setResultadoImport] = useState(null);
@@ -15644,12 +15809,16 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
             React.createElement("div", { style: { display: "flex", gap: 2 }, onClick: e => e.stopPropagation() },
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => { setFocusClienteId(c.id); setView("mapa"); }, title: "Ver en el mapa de la app" },
                     React.createElement(Map, { size: 14, color: "var(--primary)" })),
+                c.esMantenimiento && React.createElement("button", { className: "gj-btn ghost", onClick: () => setClienteCalendario(c), title: "Calendario de visitas del a\u00F1o" }, "\uD83D\uDCC5"),
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => setEditing(c) },
                     React.createElement(Pencil, { size: 14 })),
                 React.createElement("button", { className: "gj-btn ghost", onClick: () => remove(c.id) },
                     React.createElement(Trash2, { size: 14, color: "var(--warn)" }))))));
     if (clienteJardin) {
         return React.createElement(FichaJardinCliente, { cliente: clienteJardin, data: data, persist: persist, onCerrar: () => setClienteJardin(null) });
+    }
+    if (clienteCalendario) {
+        return React.createElement(CalendarioVisitasClienteView, { cliente: clienteCalendario, data: data, persist: persist, onCerrar: () => setClienteCalendario(null) });
     }
     return (React.createElement("div", null,
         React.createElement("div", { className: "gj-row", style: { marginBottom: 10 } },
@@ -15764,6 +15933,15 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
             React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n"),
             React.createElement("input", { className: "gj-input", value: form.direccion, onChange: e => set("direccion", e.target.value), onBlur: comprobarDuplicado, placeholder: "Calle Mayor 3, Madrid" })),
         React.createElement("div", { className: "gj-field" },
+            React.createElement("label", { className: "gj-label" }, "Tipo de propiedad"),
+            React.createElement("select", { className: "gj-select", value: form.tipoPropiedad || "particular", onChange: e => set("tipoPropiedad", e.target.value) },
+                React.createElement("option", { value: "particular" }, "Particular"),
+                React.createElement("option", { value: "comunidad" }, "Comunidad de vecinos"),
+                React.createElement("option", { value: "empresa" }, "Empresa"),
+                React.createElement("option", { value: "oficinas" }, "Oficinas"),
+                React.createElement("option", { value: "otro" }, "Otro")),
+            React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 2 } }, "Ajusta el margen que se permite entre el fichaje y la ubicaci\u00F3n guardada, para que una comunidad grande no d\u00E9 falsos avisos de \"ubicaci\u00F3n no coincide\".")),
+        React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Zona geogr\u00E1fica (para organizar rutas por cercan\u00EDa)"),
             React.createElement("input", { className: "gj-input", list: "gj-zonas-sugeridas", value: form.zona || "", onChange: e => set("zona", e.target.value), placeholder: "Ej: Pozuelo, Majadahonda, Las Rozas..." }),
             React.createElement("datalist", { id: "gj-zonas-sugeridas" }, [...new Set((data.clients || []).map(c => c.zona).filter(Boolean))].sort().map(z => React.createElement("option", { key: z, value: z })))),
@@ -15827,6 +16005,25 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
             React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Cuota mensual (\u20AC)"),
                 React.createElement("input", { className: "gj-input", type: "number", value: form.cuotaMensual, onChange: e => set("cuotaMensual", e.target.value), placeholder: "100" })),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Periodicidad de las visitas"),
+                React.createElement("select", { className: "gj-select", value: form.periodicidadMantenimiento || "semanal", onChange: e => set("periodicidadMantenimiento", e.target.value) },
+                    React.createElement("option", { value: "semanal" }, "Semanal"),
+                    React.createElement("option", { value: "mensual" }, "Mensual"),
+                    React.createElement("option", { value: "trimestral" }, "Trimestral (cada 3 meses)"),
+                    React.createElement("option", { value: "cuatrimestral" }, "Cuatrimestral (cada 4 meses)"),
+                    React.createElement("option", { value: "semestral" }, "Semestral (cada 6 meses)"),
+                    React.createElement("option", { value: "anual" }, "Anual (1 vez al a\u00F1o)"))),
+            ["trimestral", "cuatrimestral", "semestral", "anual"].includes(form.periodicidadMantenimiento) && (React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "\u00BFEn qu\u00E9 meses est\u00E1 contratada la visita?"),
+                React.createElement("div", { className: "gj-checklist" },
+                    ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"].map((nombreMes, idx) => {
+                        const mesesSel = form.mesesVisita || [];
+                        const numeroMes = idx + 1;
+                        const activo = mesesSel.includes(numeroMes);
+                        return React.createElement("span", { key: numeroMes, className: "gj-chip" + (activo ? " selected" : ""), onClick: () => set("mesesVisita", activo ? mesesSel.filter(m => m !== numeroMes) : [...mesesSel, numeroMes].sort((a, b) => a - b)) }, nombreMes);
+                    })),
+                (!form.mesesVisita || form.mesesVisita.length === 0) && React.createElement("div", { style: { fontSize: 11, color: "var(--warn)", marginTop: 4 } }, "Marca al menos un mes para que aparezca el recordatorio en el Panel."))),
             React.createElement("label", { className: "gj-row", style: { cursor: "pointer" } },
                 React.createElement("div", null,
                     React.createElement("div", { style: { fontSize: 12.5, fontWeight: 600 } }, "Lo lleva una subcontrata (aut\u00F3nomo externo)"),
@@ -16443,6 +16640,21 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
     const [materialActNombre, setMaterialActNombre] = useState("");
     const [materialActCantidadNueva, setMaterialActCantidadNueva] = useState("");
     const [materialActFoto, setMaterialActFoto] = useState(null);
+    const reabrirJornada = (orderId, workerId, nombreTrabajador) => {
+        if (!confirm(`¿Confirmas que el tiempo que ${nombreTrabajador || "este trabajador"} vaya a fichar a partir de ahora debe contar en su jornada de hoy? Esto reabre su jornada (quita la hora de salida) para que pueda volver a fichar.`))
+            return;
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+            if (order.porTrabajadorJornada[workerId]) {
+                order.porTrabajadorJornada[workerId].salidaHora = null;
+                order.porTrabajadorJornada[workerId].salidaCoord = null;
+            }
+            order.jornadaFinalizada = false;
+            return next;
+        });
+    };
     const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -16896,6 +17108,7 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                 j.salidaHora)) : (j === null || j === void 0 ? void 0 : j.salidaHora) ? `salida ${j.salidaHora}` : "sin salida",
                             React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", marginLeft: 4 }, onClick: () => { setEditingJornada(o.id + wid); setFichajeInicio((j === null || j === void 0 ? void 0 : j.entradaHora) || ""); setFichajeFin((j === null || j === void 0 ? void 0 : j.salidaHora) || ""); } },
                                 React.createElement(Pencil, { size: 10 })),
+                            (j === null || j === void 0 ? void 0 : j.salidaHora) && React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 6px", marginLeft: 4, fontSize: 10.5 }, onClick: () => reabrirJornada(o.id, wid, w.nombre) }, "Reabrir jornada (trabajo nuevo)"),
                             editingJornada === o.id + wid && (React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3, alignItems: "center" } },
                                 React.createElement("input", { className: "gj-input", type: "time", style: { width: 95, padding: "2px 4px" }, value: fichajeInicio, onChange: e => setFichajeInicio(e.target.value) }),
                                 React.createElement("span", null, "\u2013"),
@@ -17031,8 +17244,8 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                     React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Proveedor", value: materialAdminProveedor, onChange: e => setMaterialAdminProveedor(e.target.value) }),
                                     React.createElement("input", { className: "gj-input", style: { flex: "1 1 90px", fontSize: 11.5, padding: "2px 4px" }, placeholder: "Material", list: "dl-materiales-belardi", value: materialAdminNombre, onChange: e => setMaterialAdminNombre(e.target.value) }),
                                     React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 60, fontSize: 11.5, padding: "2px 4px" }, placeholder: "Cant.", value: materialAdminCantidadNueva, onChange: e => setMaterialAdminCantidadNueva(e.target.value) }),
-                                    React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { fontSize: 10.5, maxWidth: 130 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialAdminFoto(await leerFotoBase64(f)); } }),
-                                    materialAdminFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5 }, disabled: ocrEnCursoRutas === "parada", onClick: () => leerAlbaranOCRRutas("parada", materialAdminFoto) }, ocrEnCursoRutas === "parada" ? "Leyendo..." : "Leer texto"))),
+                                    React.createElement("input", { type: "file", accept: "image/*", style: { fontSize: 10.5, maxWidth: 130 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialAdminFoto(await leerFotoBase64(f)); } }),
+                                    materialAdminFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 10.5, display: "flex", alignItems: "center", gap: 4 }, disabled: ocrEnCursoRutas === "parada", onClick: () => leerAlbaranOCRRutas("parada", materialAdminFoto) }, ocrEnCursoRutas === "parada" ? React.createElement(React.Fragment, null, React.createElement(Loader2, { size: 11, className: "gj-spin" }), "Leyendo\u2026") : "Leer texto"))),
                                 ocrResultadoRutas && ocrResultadoRutas.origen === "parada" && React.createElement("div", { className: "gj-card", style: { marginTop: 4, padding: 6, fontSize: 10.5, maxHeight: 140, overflowY: "auto", whiteSpace: "pre-wrap" } },
                                     ocrResultadoRutas.error ? React.createElement("span", { style: { color: "var(--warn)" } }, ocrResultadoRutas.error) : (ocrResultadoRutas.texto || "(no se ha reconocido texto)")),
                                 React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 4 } },
@@ -17088,8 +17301,8 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                         React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Proveedor", value: materialActProveedor, onChange: e => setMaterialActProveedor(e.target.value) }),
                                         React.createElement("input", { className: "gj-input", style: { flex: "1 1 80px", fontSize: 11, padding: "2px 4px" }, placeholder: "Material", list: "dl-materiales-belardi", value: materialActNombre, onChange: e => setMaterialActNombre(e.target.value) }),
                                         React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 55, fontSize: 11, padding: "2px 4px" }, placeholder: "Cant.", value: materialActCantidadNueva, onChange: e => setMaterialActCantidadNueva(e.target.value) }),
-                                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { fontSize: 10, maxWidth: 120 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialActFoto(await leerFotoBase64(f)); } }),
-                                        materialActFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px", fontSize: 10 }, disabled: ocrEnCursoRutas === "act", onClick: () => leerAlbaranOCRRutas("act", materialActFoto) }, ocrEnCursoRutas === "act" ? "Leyendo..." : "Leer texto"))),
+                                        React.createElement("input", { type: "file", accept: "image/*", style: { fontSize: 10, maxWidth: 120 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialActFoto(await leerFotoBase64(f)); } }),
+                                        materialActFoto && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px", fontSize: 10, display: "flex", alignItems: "center", gap: 4 }, disabled: ocrEnCursoRutas === "act", onClick: () => leerAlbaranOCRRutas("act", materialActFoto) }, ocrEnCursoRutas === "act" ? React.createElement(React.Fragment, null, React.createElement(Loader2, { size: 10, className: "gj-spin" }), "Leyendo\u2026") : "Leer texto"))),
                                     ocrResultadoRutas && ocrResultadoRutas.origen === "act" && React.createElement("div", { className: "gj-card", style: { marginTop: 3, padding: 5, fontSize: 10, maxHeight: 130, overflowY: "auto", whiteSpace: "pre-wrap" } },
                                         ocrResultadoRutas.error ? React.createElement("span", { style: { color: "var(--warn)" } }, ocrResultadoRutas.error) : (ocrResultadoRutas.texto || "(no se ha reconocido texto)")),
                                     React.createElement("div", { style: { display: "flex", gap: 4, marginTop: 3 } },
@@ -17132,18 +17345,32 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const [materialParadaNombre, setMaterialParadaNombre] = useState("");
     const [materialParadaCantidadNueva, setMaterialParadaCantidadNueva] = useState("");
     const [mostrarSolicitudVacaciones, setMostrarSolicitudVacaciones] = useState(false);
+    const [tipoPermisoSolicitud, setTipoPermisoSolicitud] = useState("vacaciones"); // vacaciones | examen
     const [vacFechaInicio, setVacFechaInicio] = useState("");
     const [vacFechaFin, setVacFechaFin] = useState("");
+    const [permisoFecha, setPermisoFecha] = useState("");
+    const [permisoHoraInicio, setPermisoHoraInicio] = useState("");
+    const [permisoHoraFin, setPermisoHoraFin] = useState("");
     const [vacNotas, setVacNotas] = useState("");
     const enviarSolicitudVacaciones = () => {
-        if (!vacFechaInicio || !vacFechaFin)
-            return;
         const next = structuredClone(data);
         next.solicitudesVacaciones = next.solicitudesVacaciones || [];
-        next.solicitudesVacaciones.push({ id: uid("sv"), workerId, fechaInicio: vacFechaInicio, fechaFin: vacFechaFin, notas: vacNotas.trim(), fechaSolicitud: todayStr(), estado: "pendiente" });
+        if (tipoPermisoSolicitud === "examen") {
+            if (!permisoFecha || !permisoHoraInicio || !permisoHoraFin)
+                return;
+            next.solicitudesVacaciones.push({ id: uid("sv"), workerId, tipo: "examen", fechaInicio: permisoFecha, fechaFin: permisoFecha, horaInicio: permisoHoraInicio, horaFin: permisoHoraFin, notas: vacNotas.trim(), fechaSolicitud: todayStr(), estado: "pendiente" });
+        }
+        else {
+            if (!vacFechaInicio || !vacFechaFin)
+                return;
+            next.solicitudesVacaciones.push({ id: uid("sv"), workerId, tipo: "vacaciones", fechaInicio: vacFechaInicio, fechaFin: vacFechaFin, notas: vacNotas.trim(), fechaSolicitud: todayStr(), estado: "pendiente" });
+        }
         persist(next);
         setVacFechaInicio("");
         setVacFechaFin("");
+        setPermisoFecha("");
+        setPermisoHoraInicio("");
+        setPermisoHoraFin("");
         setVacNotas("");
         setMostrarSolicitudVacaciones(false);
     };
@@ -17224,30 +17451,58 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         persist(next);
     };
     const añadirMaterialParada = (orderId, clienteId) => {
-        const next = structuredClone(data);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.materialesUsados = stop.materialesUsados || [];
+        // Las comprobaciones van antes de guardar, y SIEMPRE avisan con claridad si falta algo — antes
+        // se cortaban en silencio y parecía que el botón "Añadir" no hacía nada (la foto del albarán
+        // por sí sola no basta: hay que escribir también el nombre del material y la cantidad).
         if (materialParadaOrigen === "bolsa") {
             const cant = Number(materialParadaCantidadBolsa);
-            if (!materialParadaStockId || !cant || cant <= 0)
+            if (!materialParadaStockId) {
+                alert("Elige un material de la bolsa antes de añadir.");
                 return;
-            next.almacenGeneral = next.almacenGeneral || [];
-            const item = next.almacenGeneral.find(s => s.id === materialParadaStockId);
-            if (!item || cant > item.cantidad)
+            }
+            if (!cant || cant <= 0) {
+                alert("Escribe una cantidad mayor que 0.");
                 return;
-            item.cantidad -= cant;
-            stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
-            if (item.cantidad <= 0)
-                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+            }
+            const item = (data.almacenGeneral || []).find(s => s.id === materialParadaStockId);
+            if (!item || cant > item.cantidad) {
+                alert("No hay tanta cantidad disponible en la bolsa.");
+                return;
+            }
         }
         else {
-            const cant = Number(materialParadaCantidadNueva);
-            if (!materialParadaNombre.trim() || !cant || cant <= 0)
+            if (!materialParadaNombre.trim()) {
+                alert("Falta escribir el nombre del material (la foto del albar\u00E1n no rellena esto sola \u2014 hay que escribirlo tambi\u00E9n).");
                 return;
-            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialParadaProveedor.trim(), material: materialParadaNombre.trim(), cantidad: cant, fotoAlbaran: materialParadaFoto || null });
+            }
+            const cant = Number(materialParadaCantidadNueva);
+            if (!cant || cant <= 0) {
+                alert("Falta escribir la cantidad.");
+                return;
+            }
         }
-        persist(next);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.materialesUsados = stop.materialesUsados || [];
+            if (materialParadaOrigen === "bolsa") {
+                const cant = Number(materialParadaCantidadBolsa);
+                next.almacenGeneral = next.almacenGeneral || [];
+                const item = next.almacenGeneral.find(s => s.id === materialParadaStockId);
+                if (!item || cant > item.cantidad)
+                    return next;
+                item.cantidad -= cant;
+                stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
+                if (item.cantidad <= 0)
+                    next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+            }
+            else {
+                const cant = Number(materialParadaCantidadNueva);
+                stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialParadaProveedor.trim(), material: materialParadaNombre.trim(), cantidad: cant, fotoAlbaran: materialParadaFoto || null });
+            }
+            return next;
+        });
         setMaterialParadaStockId(""); setMaterialParadaCantidadBolsa("");
         setMaterialParadaProveedor(""); setMaterialParadaNombre(""); setMaterialParadaCantidadNueva(""); setMaterialParadaFoto(null);
     };
@@ -17766,6 +18021,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         });
     };
     const iniciarPrimeraParada = async (orderId, clienteId) => {
+        const orderChkJ = data.orders.find(o => o.id === orderId);
+        const miJornadaChk = orderChkJ && orderChkJ.porTrabajadorJornada && orderChkJ.porTrabajadorJornada[workerId];
+        if (miJornadaChk === null || miJornadaChk === void 0 ? void 0 : miJornadaChk.salidaHora) {
+            alert("Tu jornada ya est\u00E1 finalizada hoy. Si te han asignado trabajo nuevo, pide a un administrador que te reabra la jornada desde Rutas antes de empezar \u2014 as\u00ED este tiempo cuenta correctamente.");
+            return;
+        }
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -17823,6 +18084,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         });
     };
     const iniciarParada = async (orderId, clienteId) => {
+        const orderChkJ2 = data.orders.find(o => o.id === orderId);
+        const miJornadaChk2 = orderChkJ2 && orderChkJ2.porTrabajadorJornada && orderChkJ2.porTrabajadorJornada[workerId];
+        if (miJornadaChk2 === null || miJornadaChk2 === void 0 ? void 0 : miJornadaChk2.salidaHora) {
+            alert("Tu jornada ya est\u00E1 finalizada hoy. Si te han asignado trabajo nuevo, pide a un administrador que te reabra la jornada desde Rutas antes de empezar \u2014 as\u00ED este tiempo cuenta correctamente.");
+            return;
+        }
         // Si este trabajador tiene CUALQUIER OTRA parada todavía abierta (en progreso, sin marcar
         // Hecho), NO se le deja iniciar esta otra. No hay cierre automático ni opción de saltárselo:
         // tiene que volver a la parada anterior y marcarla Hecho (o, si de verdad la deja a medias,
@@ -17891,6 +18158,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         });
     };
     const reanudarParada = async (orderId, clienteId) => {
+        const orderChkJ3 = data.orders.find(o => o.id === orderId);
+        const miJornadaChk3 = orderChkJ3 && orderChkJ3.porTrabajadorJornada && orderChkJ3.porTrabajadorJornada[workerId];
+        if (miJornadaChk3 === null || miJornadaChk3 === void 0 ? void 0 : miJornadaChk3.salidaHora) {
+            alert("Tu jornada ya est\u00E1 finalizada hoy. Pide a un administrador que te la reabra desde Rutas antes de continuar.");
+            return;
+        }
         const hora = nowTime();
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -18093,6 +18366,17 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
+            // Igual que al ir a almacén/repostaje: si este trabajador tiene un tramo de trabajo
+            // abierto en alguna parada, se cierra aquí al empezar el almuerzo — si no, ese rato de
+            // almuerzo se seguiría contando como tiempo de trabajo Y, encima, como almuerzo aparte.
+            (order.stops || []).forEach(s => {
+                const mia = s.porTrabajador && s.porTrabajador[workerId];
+                if (mia && mia.estado === "en_progreso" && mia.tramos && mia.tramos.length > 0) {
+                    const ultimo = mia.tramos[mia.tramos.length - 1];
+                    if (!ultimo.horaFin)
+                        ultimo.horaFin = hora;
+                }
+            });
             order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
             order.porTrabajadorAlmuerzo[workerId] = { inicio: hora, inicioCoord: null, fin: null, finCoord: null, avisoTiempo: false, avisoUbicacion: false };
             return next;
@@ -18171,24 +18455,39 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     "\uD83C\uDFD6\uFE0F Solicitar vacaciones",
                     React.createElement("span", { style: { fontSize: 12 } }, mostrarSolicitudVacaciones ? "\u25B2" : "\u25BC")),
                 mostrarSolicitudVacaciones && (React.createElement("div", { style: { marginTop: 10 } },
-                    React.createElement("div", { className: "gj-grid2" },
+                    React.createElement("div", { className: "gj-field" },
+                        React.createElement("label", { className: "gj-label" }, "Tipo de solicitud"),
+                        React.createElement("div", { className: "gj-checklist" },
+                            React.createElement("span", { className: "gj-chip" + (tipoPermisoSolicitud === "vacaciones" ? " selected" : ""), onClick: () => setTipoPermisoSolicitud("vacaciones") }, "\uD83C\uDFD6\uFE0F Vacaciones"),
+                            React.createElement("span", { className: "gj-chip" + (tipoPermisoSolicitud === "examen" ? " selected" : ""), onClick: () => setTipoPermisoSolicitud("examen") }, "\uD83D\uDCDD Ex\u00E1men (permiso retribuido)"))),
+                    tipoPermisoSolicitud === "vacaciones" ? (React.createElement("div", { className: "gj-grid2" },
                         React.createElement("div", { className: "gj-field" },
                             React.createElement("label", { className: "gj-label" }, "Desde"),
                             React.createElement("input", { className: "gj-input", type: "date", value: vacFechaInicio, onChange: e => setVacFechaInicio(e.target.value) })),
                         React.createElement("div", { className: "gj-field" },
                             React.createElement("label", { className: "gj-label" }, "Hasta"),
-                            React.createElement("input", { className: "gj-input", type: "date", value: vacFechaFin, onChange: e => setVacFechaFin(e.target.value) }))),
+                            React.createElement("input", { className: "gj-input", type: "date", value: vacFechaFin, onChange: e => setVacFechaFin(e.target.value) })))) : (React.createElement(React.Fragment, null,
+                        React.createElement("div", { className: "gj-field" },
+                            React.createElement("label", { className: "gj-label" }, "Fecha del examen"),
+                            React.createElement("input", { className: "gj-input", type: "date", value: permisoFecha, onChange: e => setPermisoFecha(e.target.value) })),
+                        React.createElement("div", { className: "gj-grid2" },
+                            React.createElement("div", { className: "gj-field" },
+                                React.createElement("label", { className: "gj-label" }, "Hora de inicio"),
+                                React.createElement("input", { className: "gj-input", type: "time", value: permisoHoraInicio, onChange: e => setPermisoHoraInicio(e.target.value) })),
+                            React.createElement("div", { className: "gj-field" },
+                                React.createElement("label", { className: "gj-label" }, "Hora de fin"),
+                                React.createElement("input", { className: "gj-input", type: "time", value: permisoHoraFin, onChange: e => setPermisoHoraFin(e.target.value) }))))),
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "Notas (opcional)"),
                         React.createElement("input", { className: "gj-input", value: vacNotas, onChange: e => setVacNotas(e.target.value) })),
-                    React.createElement("button", { className: "gj-btn primary block", disabled: !vacFechaInicio || !vacFechaFin, onClick: enviarSolicitudVacaciones }, "Enviar solicitud"),
+                    React.createElement("button", { className: "gj-btn primary block", disabled: tipoPermisoSolicitud === "vacaciones" ? (!vacFechaInicio || !vacFechaFin) : (!permisoFecha || !permisoHoraInicio || !permisoHoraFin), onClick: enviarSolicitudVacaciones }, "Enviar solicitud"),
                     (data.solicitudesVacaciones || []).filter(s => s.workerId === workerId).length > 0 && (React.createElement("div", { style: { marginTop: 10 } },
                         React.createElement("div", { className: "gj-label", style: { marginBottom: 4 } }, "Tus solicitudes"),
                         (data.solicitudesVacaciones || []).filter(s => s.workerId === workerId).slice().sort((a, b) => b.fechaSolicitud.localeCompare(a.fechaSolicitud)).map(s => (React.createElement("div", { key: s.id, style: { fontSize: 12.5, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", justifyContent: "space-between" } },
                             React.createElement("span", null,
+                                s.tipo === "examen" ? "\uD83D\uDCDD " : "",
                                 fechaEs(s.fechaInicio),
-                                " \u2013 ",
-                                fechaEs(s.fechaFin)),
+                                s.tipo === "examen" ? ` (${s.horaInicio}\u2013${s.horaFin})` : ` \u2013 ${fechaEs(s.fechaFin)}`),
                             React.createElement("span", { className: "gj-badge " + (s.estado === "aprobada" ? "completado" : s.estado === "rechazada" ? "no_hecho" : "pendiente") }, s.estado === "aprobada" ? "Aprobada" : s.estado === "rechazada" ? "Rechazada" : "Pendiente"))))))))),
             (data.entregasEpi || []).filter(e => e.workerId === workerId && !e.confirmado).length > 0 && (React.createElement("div", { className: "gj-card", style: { background: "var(--pend-bg)" } },
                 React.createElement("div", { className: "gj-h3" }, "\uD83E\uDDBA Tienes EPIs/ropa pendientes de confirmar"),
@@ -18259,7 +18558,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                 React.createElement("input", { className: "gj-input", type: "number", value: (_b = o.tiempoAlmuerzoMin) !== null && _b !== void 0 ? _b : (data.settings.almuerzoEstandarMin || 15), onChange: e => updateTiempoOrden(o.id, "tiempoAlmuerzoMin", e.target.value) }),
                                 React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, "Solo administradores. Tambi\u00E9n se usa como respaldo si alg\u00FAn d\u00eda no se llega a fichar el almuerzo real."))))),
                     React.createElement("div", { style: { marginBottom: 10, padding: 8, background: "var(--pend-bg)", borderRadius: 4 } },
-                        React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 } }, "Tu almuerzo"),
+                        React.createElement("div", { style: { fontSize: 11, fontWeight: 600, color: "var(--ink-soft)", marginBottom: 6 } }, "Almuerzo de ", (worker === null || worker === void 0 ? void 0 : worker.nombre) || "", " (solo tuyo, no de tu compa\u00F1ero/a)"),
                         (() => {
                             const mio = (o.porTrabajadorAlmuerzo && o.porTrabajadorAlmuerzo[workerId]) || null;
                             if (!mio || !mio.inicio) {
@@ -18356,7 +18655,10 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             React.createElement("input", { type: "checkbox", checked: (s.labores || []).includes(labor), onChange: () => toggleLabor(o.id, s.clienteId, labor) })))),
                                         (s.labores || []).includes("Poda pendiente") && (React.createElement("div", { style: { marginTop: 4 } },
                                             React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Qu\u00E9 queda pendiente de la poda (opcional)"),
-                                            React.createElement("input", { className: "gj-input", defaultValue: s.notaPoda || "", placeholder: "Ej: falta el seto del fondo, no caben las m\u00E1quinas...", onBlur: e => updateStop(o.id, s.clienteId, { notaPoda: e.target.value }) }))))),
+                                            React.createElement("input", { className: "gj-input", defaultValue: s.notaPoda || "", placeholder: "Ej: falta el seto del fondo, no caben las m\u00E1quinas...", onBlur: e => updateStop(o.id, s.clienteId, { notaPoda: e.target.value }) }))),
+                                        (s.labores || []).includes("Poda parcial") && (React.createElement("div", { style: { marginTop: 4 } },
+                                            React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Qu\u00E9 se ha podado (opcional)"),
+                                            React.createElement("input", { className: "gj-input", defaultValue: s.notaPoda || "", placeholder: "Ej: solo el seto delantero, los arbustos de la entrada...", onBlur: e => updateStop(o.id, s.clienteId, { notaPoda: e.target.value }) }))))),
                                     !laboresAbiertas && s.labores && s.labores.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 2 } }, s.labores.join(", "))))),
                                 (cli === null || cli === void 0 ? void 0 : cli.esMantenimiento) && (React.createElement("div", { style: { marginTop: 6 } },
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "4px 6px", fontSize: 11.5 }, onClick: () => setRiegoPodaAbierto(riegoPodaAbierto === key ? null : key) },
@@ -18421,21 +18723,22 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             React.createElement("input", { className: "gj-input", style: { flex: "1 1 110px" }, placeholder: "Material", list: "dl-materiales-belardi", value: materialParadaNombre, onChange: e => setMaterialParadaNombre(e.target.value) }),
                                             React.createElement("input", { className: "gj-input", type: "number", min: "0", step: "0.01", style: { width: 80 }, placeholder: "Cant.", value: materialParadaCantidadNueva, onChange: e => setMaterialParadaCantidadNueva(e.target.value) }),
                                             React.createElement("label", { style: { fontSize: 11.5, display: "flex", alignItems: "center", gap: 4 } },
-                                                React.createElement("input", { type: "file", accept: "image/*", capture: "environment", style: { maxWidth: 140 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialParadaFoto(await leerFotoBase64(f)); } }),
-                                                materialParadaFoto && React.createElement("span", { style: { color: "var(--good)" } }, "\u2714 foto del albar\u00E1n lista")))),
+                                                React.createElement("input", { type: "file", accept: "image/*", style: { maxWidth: 140 }, onChange: async (e) => { const f = e.target.files && e.target.files[0]; if (f) setMaterialParadaFoto(await leerFotoBase64(f)); } }),
+                                                materialParadaFoto && React.createElement("span", { style: { color: "var(--good)" } }, "\u2714 foto lista"),
+                                                materialParadaFoto && React.createElement("button", { type: "button", className: "gj-btn ghost", style: { padding: "0 6px", fontSize: 10.5 }, onClick: () => setFotoAlbaranParadaGrande(materialParadaFoto) }, "Ver")))),
                                         React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 6 } },
                                             React.createElement("button", { className: "gj-btn primary", style: { padding: "3px 8px", fontSize: 12 }, onClick: () => añadirMaterialParada(o.id, s.clienteId) }, "A\u00F1adir"),
                                             React.createElement("button", { className: "gj-btn ghost", style: { padding: "3px 8px", fontSize: 12 }, onClick: () => setMaterialParadaAbierta(null) }, "Cerrar"))))),
                                 React.createElement("div", { className: "gj-grid2", style: { marginTop: 6 } },
                                     React.createElement("div", null,
                                         React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Foto antes"),
-                                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, capture: "environment", onChange: e => { subirFotoStop(o.id, s.clienteId, "fotosAntes", e.target.files); e.target.value = ""; } }),
+                                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, onChange: e => { subirFotoStop(o.id, s.clienteId, "fotosAntes", e.target.files); e.target.value = ""; } }),
                                         (s.fotosAntes || []).length > 0 && (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } }, s.fotosAntes.map((f, i) => (React.createElement("div", { key: i, style: { position: "relative" } },
                                             React.createElement("img", { src: f.dataUrl, alt: "", style: { width: 44, height: 44, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
                                             React.createElement("button", { onClick: () => quitarFotoStop(o.id, s.clienteId, "fotosAntes", i), style: { position: "absolute", top: -5, right: -5, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 16, height: 16, fontSize: 10, lineHeight: 1 } }, "\u00D7"))))))),
                                     React.createElement("div", null,
                                         React.createElement("label", { className: "gj-label", style: { marginBottom: 2 } }, "Foto despu\u00E9s"),
-                                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, capture: "environment", onChange: e => { subirFotoStop(o.id, s.clienteId, "fotosDespues", e.target.files); e.target.value = ""; } }),
+                                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", multiple: true, onChange: e => { subirFotoStop(o.id, s.clienteId, "fotosDespues", e.target.files); e.target.value = ""; } }),
                                         (s.fotosDespues || []).length > 0 && (React.createElement("div", { style: { display: "flex", gap: 4, flexWrap: "wrap", marginTop: 4 } }, s.fotosDespues.map((f, i) => (React.createElement("div", { key: i, style: { position: "relative" } },
                                             React.createElement("img", { src: f.dataUrl, alt: "", style: { width: 44, height: 44, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)" } }),
                                             React.createElement("button", { onClick: () => quitarFotoStop(o.id, s.clienteId, "fotosDespues", i), style: { position: "absolute", top: -5, right: -5, background: "var(--warn)", color: "#fff", border: "none", borderRadius: "50%", width: 16, height: 16, fontSize: 10, lineHeight: 1 } }, "\u00D7")))))))),
@@ -18489,13 +18792,14 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                         React.createElement("button", { className: "gj-btn block", onClick: () => setNotaAbierta(null) }, "Cancelar"),
                                         React.createElement("button", { className: "gj-btn danger block", onClick: () => abrirFlujoCierre(o.id, s.clienteId, "no_hecho", notaTexto) }, "Confirmar no hecho")))))));
                     }),
-                    (o.actividadesExtra || []).length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, o.actividadesExtra.map(a => {
+                    (o.actividadesExtra || []).filter(a => a.workerId === workerId).length > 0 && (React.createElement("div", { style: { marginTop: 8 } }, o.actividadesExtra.filter(a => a.workerId === workerId).map(a => {
                         const maq = a.maquinaId ? (data.maquinaria || []).find(m => m.id === a.maquinaId) : null;
                         const etiquetaTipo = a.tipoTaller === "dejar" ? " · Dejar maquinaria" : a.tipoTaller === "recogida" ? " · Recogida de maquinaria" : a.tipoTaller === "consumibles" ? " · Consumibles" : "";
                         const iconoCat = a.categoria === "repostaje" ? "\u26FD" : a.categoria === "talleres" ? "\uD83D\uDD27" : a.categoria === "carga" ? "\uD83D\uDE9B" : a.categoria === "permiso_personal" ? "\uD83D\uDCDD" : "\uD83D\uDCE6";
                         const etiquetaCat = a.categoria === "repostaje" ? "Repostaje" : a.categoria === "talleres" ? "Taller" : a.categoria === "carga" ? "Carga y descarga en nave" : a.categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
                         return (React.createElement("div", { key: a.id, style: { fontSize: 12, padding: "4px 0", borderBottom: "1px solid var(--line-soft)", display: "flex", flexWrap: "wrap", justifyContent: "space-between", alignItems: "center", gap: 6 } },
                             React.createElement("span", { style: { flex: "1 1 auto", minWidth: 0 } },
+                                React.createElement("span", { style: { fontWeight: 600 } }, (worker === null || worker === void 0 ? void 0 : worker.nombre) || "", ": "),
                                 iconoCat,
                                 " ",
                                 etiquetaCat,
@@ -18532,7 +18836,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                     React.createElement("option", { value: "recogida" }, "Recogida de maquinaria")),
                                 extraTipoTaller === "consumibles" && extraCategoria === "almacenes" && (React.createElement("div", { style: { marginTop: 8 } },
                                     React.createElement("div", { className: "gj-label" }, "Foto del albar\u00E1n"),
-                                    React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoAlbaran(e.target.files); e.target.value = ""; } }),
+                                    React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", onChange: e => { subirFotoAlbaran(e.target.files); e.target.value = ""; } }),
                                     materialFoto && React.createElement("img", { src: materialFoto, style: { maxWidth: 120, marginTop: 6, borderRadius: 4, display: "block" } }),
                                     React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "\u00BFPara qu\u00E9 obra son estos materiales?"),
                                     React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => setMaterialObraId(e.target.value) },
@@ -18674,7 +18978,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     }
                     return React.createElement(React.Fragment, null,
                         React.createElement("div", { style: { fontWeight: 600, fontSize: 15, marginBottom: 10 } }, "\u00BFQuieres adjuntar fotograf\u00EDas? (opcional)"),
-                        React.createElement("input", { type: "file", accept: "image/*", capture: "environment", multiple: true, onChange: e => subirFotoStop(flujoCierre.orderId, flujoCierre.clienteId, "fotosDespues", e.target.files) }),
+                        React.createElement("input", { type: "file", accept: "image/*", multiple: true, onChange: e => subirFotoStop(flujoCierre.orderId, flujoCierre.clienteId, "fotosDespues", e.target.files) }),
                         React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 14 }, onClick: () => avanzarFlujoCierre({}) }, "Finalizar"));
                 })()));
     const modalFotoAlbaranParada = fotoAlbaranParadaGrande && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoAlbaranParadaGrande(null) },
@@ -18738,6 +19042,81 @@ function PodasView({ data, getClient }) {
                         React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, fechaEs(r.fecha))),
                     React.createElement("span", { className: "gj-badge " + colorTipo[r.tipo] }, etiquetaTipo[r.tipo])),
                 r.notaPoda && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4 } }, r.notaPoda)))));
+}
+function AbonadosView({ data, getClient }) {
+    const [busqueda, setBusqueda] = useState("");
+    const registros = [];
+    data.orders.forEach(o => {
+        o.stops.forEach(s => {
+            if ((s.labores || []).includes("Abonado")) {
+                const cli = getClient(s.clienteId);
+                registros.push({ fecha: o.fecha, clienteId: s.clienteId, clienteNombre: (cli === null || cli === void 0 ? void 0 : cli.nombre) || "?" });
+            }
+        });
+    });
+    registros.sort((a, b) => b.fecha.localeCompare(a.fecha));
+    const filtrados = registros.filter(r => !busqueda.trim() || r.clienteNombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
+    // Resumen por cliente: cuántos abonados lleva cada uno este año, para ver de un vistazo quién va atrasado.
+    const añoActual = new Date().getFullYear();
+    const porCliente = {};
+    registros.filter(r => r.fecha.startsWith(String(añoActual))).forEach(r => {
+        porCliente[r.clienteId] = porCliente[r.clienteId] || { nombre: r.clienteNombre, veces: 0 };
+        porCliente[r.clienteId].veces++;
+    });
+    const resumenClientes = Object.values(porCliente).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Control de abonados"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Todos los abonados marcados en las visitas de mantenimiento, por cliente y fecha."),
+        resumenClientes.length > 0 && (React.createElement("div", { className: "gj-card", style: { marginBottom: 10 } },
+            React.createElement("div", { style: { fontWeight: 600, marginBottom: 4 } }, "Abonados hechos en ", añoActual, " por cliente"),
+            resumenClientes.map(c => React.createElement("div", { key: c.nombre, style: { fontSize: 12.5, display: "flex", justifyContent: "space-between", padding: "2px 0" } },
+                React.createElement("span", null, c.nombre),
+                React.createElement("span", { style: { color: "var(--ink-soft)" } }, c.veces, " vez", c.veces !== 1 ? "es" : ""))))),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 10 }, placeholder: "Buscar por cliente...", value: busqueda, onChange: e => setBusqueda(e.target.value) }),
+        React.createElement("div", { style: { fontWeight: 600, marginBottom: 4 } }, "Historial completo"),
+        filtrados.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay abonados registrados con ese filtro.") :
+            filtrados.map((r, i) => React.createElement("div", { className: "gj-card", key: i },
+                React.createElement("div", { className: "gj-row" },
+                    React.createElement("div", { style: { fontWeight: 600 } }, r.clienteNombre),
+                    React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, fechaEs(r.fecha)))))));
+}
+function EscarificadosView({ data, getClient }) {
+    const [busqueda, setBusqueda] = useState("");
+    const añoActual = new Date().getFullYear();
+    const registros = [];
+    data.orders.forEach(o => {
+        o.stops.forEach(s => {
+            if ((s.labores || []).includes("Escarificado")) {
+                registros.push({ fecha: o.fecha, clienteId: s.clienteId });
+            }
+        });
+    });
+    registros.sort((a, b) => a.fecha.localeCompare(b.fecha));
+    // El escarificado se hace una o dos veces al año — se guardan hasta dos fechas por cliente
+    // (la primera y la segunda vez), en vez de quedarnos solo con la más reciente.
+    const fechasPorCliente = {};
+    registros.filter(r => r.fecha.startsWith(String(añoActual))).forEach(r => {
+        fechasPorCliente[r.clienteId] = fechasPorCliente[r.clienteId] || [];
+        fechasPorCliente[r.clienteId].push(r.fecha);
+    });
+    const clientesMantenimiento = (data.clients || []).filter(c => c.esMantenimiento).sort((a, b) => a.nombre.localeCompare(b.nombre));
+    const filtrados = clientesMantenimiento.filter(c => !busqueda.trim() || c.nombre.toLowerCase().includes(busqueda.trim().toLowerCase()));
+    const casilla = (fecha) => React.createElement("span", { style: fecha ? { fontSize: 12, fontWeight: 600, color: "#15803D", background: "#DCFCE7", border: "1px solid #86EFAC", borderRadius: 6, padding: "2px 8px" } : { fontSize: 12, color: "var(--ink-soft)", background: "var(--line-soft)", borderRadius: 6, padding: "2px 8px" } }, fecha ? `\u2713 ${fechaEs(fecha)}` : "\u2014");
+    return (React.createElement("div", null,
+        React.createElement("h2", { className: "gj-h2" }, "Control de escarificados"),
+        React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 10 } }, "Estado de cada cliente de mantenimiento para ", añoActual, ". El escarificado se suele hacer una o dos veces al a\u00F1o: cada vez que se marca en una visita, se rellena la casilla de \"1\u00AA vez\" y, si se repite, la de \"2\u00AA vez\"."),
+        React.createElement("input", { className: "gj-input", style: { marginBottom: 10 }, placeholder: "Buscar por cliente...", value: busqueda, onChange: e => setBusqueda(e.target.value) }),
+        filtrados.length === 0 ? React.createElement("div", { className: "gj-card gj-empty" }, "No hay clientes de mantenimiento con ese filtro.") :
+            filtrados.map(c => {
+                const fechas = fechasPorCliente[c.id] || [];
+                return React.createElement("div", { className: "gj-card", key: c.id },
+                    React.createElement("div", { className: "gj-row" },
+                        React.createElement("div", { style: { fontWeight: 600 } }, c.nombre),
+                        React.createElement("div", { style: { display: "flex", gap: 6 } },
+                            casilla(fechas[0]),
+                            casilla(fechas[1]))));
+            }),
+        React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 12 } }, "Historial completo (todos los a\u00F1os): ", registros.length, " escarificados registrados en total.")));
 }
 function RiegoView({ data, persist, adminMode }) {
     const clientesMantenimiento = (data.clients || []).filter(c => c.esMantenimiento).sort((a, b) => a.nombre.localeCompare(b.nombre));
@@ -19175,13 +19554,17 @@ function SolicitudesVacacionesView({ data, persist, getWorker }) {
         if (estado === "aprobada") {
             sReal.fechaInicioAprobada = inicioAprobado;
             sReal.fechaFinAprobada = finAprobado;
-            next.vacaciones[s.workerId] = next.vacaciones[s.workerId] || {};
-            let d = new Date(inicioAprobado + "T00:00:00");
-            const fin = new Date(finAprobado + "T00:00:00");
-            while (d <= fin) {
-                const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-                next.vacaciones[s.workerId][dStr] = "vacaciones";
-                d.setDate(d.getDate() + 1);
+            // Un examen son solo unas horas sueltas, no se marca el día entero como ausente/vacaciones
+            // (el trabajador sigue disponible el resto del día) — solo se guarda la aprobación en sí.
+            if (s.tipo !== "examen") {
+                next.vacaciones[s.workerId] = next.vacaciones[s.workerId] || {};
+                let d = new Date(inicioAprobado + "T00:00:00");
+                const fin = new Date(finAprobado + "T00:00:00");
+                while (d <= fin) {
+                    const dStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+                    next.vacaciones[s.workerId][dStr] = "vacaciones";
+                    d.setDate(d.getDate() + 1);
+                }
             }
         }
         persist(next);
@@ -19191,26 +19574,30 @@ function SolicitudesVacacionesView({ data, persist, getWorker }) {
         const dias = Math.round((new Date(s.fechaFin) - new Date(s.fechaInicio)) / 86400000) + 1;
         const edit = fechasEdit[s.id] || { inicio: s.fechaInicio, fin: s.fechaFin };
         return (React.createElement("div", { className: "gj-card", key: s.id },
-            React.createElement("div", { style: { fontWeight: 600 } }, ((_a = getWorker(s.workerId)) === null || _a === void 0 ? void 0 : _a.nombre) || "\u2014"),
+            React.createElement("div", { style: { fontWeight: 600 } },
+                s.tipo === "examen" && "\uD83D\uDCDD Ex\u00E1men \u2014 ",
+                ((_a = getWorker(s.workerId)) === null || _a === void 0 ? void 0 : _a.nombre) || "\u2014"),
             React.createElement("div", { style: { fontSize: 13, marginTop: 2 } },
-                "Solicitado: ",
-                fechaEs(s.fechaInicio),
-                " \u2013 ",
-                fechaEs(s.fechaFin),
-                ` (${dias} d\u00EDa${dias !== 1 ? "s" : ""})`),
+                s.tipo === "examen" ? (React.createElement(React.Fragment, null, "Solicitado: ", fechaEs(s.fechaInicio), " de ", s.horaInicio, " a ", s.horaFin)) : (React.createElement(React.Fragment, null,
+                    "Solicitado: ",
+                    fechaEs(s.fechaInicio),
+                    " \u2013 ",
+                    fechaEs(s.fechaFin),
+                    ` (${dias} d\u00EDa${dias !== 1 ? "s" : ""})`))),
             s.notas && React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginTop: 4 } }, "\u201C", s.notas, "\u201D"),
             React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 4 } }, "Solicitado el ", fechaEs(s.fechaSolicitud)),
             s.estado === "pendiente" ? (React.createElement("div", { style: { marginTop: 8 } },
-                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 4 } }, "Puedes ajustar las fechas antes de aprobar, para una aprobaci\u00F3n parcial:"),
-                React.createElement("div", { className: "gj-grid2", style: { marginBottom: 8 } },
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" }, "Desde"),
-                        React.createElement("input", { className: "gj-input", type: "date", value: edit.inicio, onChange: e => setFechaEdit(s.id, "inicio", e.target.value, s) })),
-                    React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
-                        React.createElement("label", { className: "gj-label" }, "Hasta"),
-                        React.createElement("input", { className: "gj-input", type: "date", value: edit.fin, onChange: e => setFechaEdit(s.id, "fin", e.target.value, s) }))),
+                s.tipo !== "examen" && (React.createElement(React.Fragment, null,
+                    React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 4 } }, "Puedes ajustar las fechas antes de aprobar, para una aprobaci\u00F3n parcial:"),
+                    React.createElement("div", { className: "gj-grid2", style: { marginBottom: 8 } },
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" }, "Desde"),
+                            React.createElement("input", { className: "gj-input", type: "date", value: edit.inicio, onChange: e => setFechaEdit(s.id, "inicio", e.target.value, s) })),
+                        React.createElement("div", { className: "gj-field", style: { marginBottom: 0 } },
+                            React.createElement("label", { className: "gj-label" }, "Hasta"),
+                            React.createElement("input", { className: "gj-input", type: "date", value: edit.fin, onChange: e => setFechaEdit(s.id, "fin", e.target.value, s) }))))),
                 React.createElement("div", { style: { display: "flex", gap: 6 } },
-                    React.createElement("button", { className: "gj-btn primary", onClick: () => resolver(s, "aprobada") }, (edit.inicio !== s.fechaInicio || edit.fin !== s.fechaFin) ? "Aprobar (parcial)" : "Aprobar"),
+                    React.createElement("button", { className: "gj-btn primary", onClick: () => resolver(s, "aprobada") }, (s.tipo !== "examen" && (edit.inicio !== s.fechaInicio || edit.fin !== s.fechaFin)) ? "Aprobar (parcial)" : "Aprobar"),
                     React.createElement("button", { className: "gj-btn danger", onClick: () => resolver(s, "rechazada") }, "Rechazar")))) : (React.createElement("div", null,
                 React.createElement("span", { className: "gj-badge " + (s.estado === "rechazada" ? "no_hecho" : "completado") }, s.estado === "aprobada" ? "Aprobada" : s.estado === "aprobada_parcial" ? "Aprobada parcialmente" : "Rechazada"),
                 s.estado === "aprobada_parcial" && React.createElement("div", { style: { fontSize: 12.5, marginTop: 4 } },
@@ -19503,7 +19890,7 @@ function BolsaMaterialesView({ data, persist, getWorker, adminRole }) {
                     React.createElement("img", { src: a.fotoAlbaran, alt: "Albar\u00E1n", style: { width: 110, height: 110, objectFit: "cover", borderRadius: 4, border: "1px solid var(--line)", cursor: "pointer" }, onClick: () => setFotoGrande(a.fotoAlbaran) }),
                     React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", marginTop: 2 } }, fechaEs(a.fecha)),
                     React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)" } }, (w === null || w === void 0 ? void 0 : w.nombre) || "?"),
-                    (adminRole === "admin1" || adminRole === "admin2") && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 5px", fontSize: 10.5, marginTop: 2, width: "100%" }, disabled: ocrEnCurso === i, onClick: () => leerAlbaranOCR(i, a.fotoAlbaran) }, ocrEnCurso === i ? "Leyendo..." : "Leer texto"),
+                    (adminRole === "admin1" || adminRole === "admin2") && React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 5px", fontSize: 10.5, marginTop: 2, width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }, disabled: ocrEnCurso === i, onClick: () => leerAlbaranOCR(i, a.fotoAlbaran) }, ocrEnCurso === i ? React.createElement(React.Fragment, null, React.createElement(Loader2, { size: 12, className: "gj-spin" }), "Leyendo\u2026 puede tardar unos segundos") : "Leer texto"),
                     ocrResultado && ocrResultado.indice === i && React.createElement("div", { className: "gj-card", style: { marginTop: 4, padding: 6, fontSize: 11, maxHeight: 160, overflowY: "auto", whiteSpace: "pre-wrap" } },
                         ocrResultado.error ? React.createElement("span", { style: { color: "var(--warn)" } }, ocrResultado.error) : (ocrResultado.texto || "(no se ha reconocido texto en la foto)")));
             })),
@@ -20029,6 +20416,66 @@ function ResumenDiarioView({ data, getWorker, getClient }) {
                 " sin explicar entre la jornada y la suma de las partes.")),
             f.haySolape && (React.createElement("div", { style: { fontSize: 12.5, color: "var(--warn)", fontWeight: 600, marginTop: 4 } }, "\u26A0\uFE0F Hay fichajes que se solapan en el tiempo (dos cosas a la vez) \u2014 la suma de arriba puede estar contando ese hueco dos veces. Revisa los horarios de ese d\u00EDa en Rutas.")))))));
 }
+function CalendarioAnualExportable({ trabajador, year, data, horasAnio, horasObjetivoAnio, vacacionesAnio, bajaAnio, onCerrar }) {
+    const vacacionesTrabajador = (data.vacaciones && data.vacaciones[trabajador.id]) || {};
+    const diasVacacionesContratados = data.settings.vacacionesAnuales || 22;
+    const diasVacacionesRestantes = Math.max(0, diasVacacionesContratados - vacacionesAnio);
+    const horasRestantes = Math.max(0, horasObjetivoAnio - horasAnio);
+    const MESES_CORTO = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
+    const DIAS_CORTO = ["L", "M", "X", "J", "V", "S", "D"];
+    return (React.createElement("div", null,
+        React.createElement("div", { className: "gj-row gj-no-print", style: { marginBottom: 10 } },
+            React.createElement("button", { className: "gj-btn", onClick: onCerrar }, "\u2190 Volver"),
+            React.createElement("button", { className: "gj-btn primary", onClick: () => window.print() }, "\uD83D\uDDA8 Imprimir / Exportar PDF")),
+        React.createElement("div", { className: "gj-card" },
+            React.createElement("h2", { className: "gj-h2", style: { marginBottom: 2 } }, "Calendario anual ", year),
+            React.createElement("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 10 } }, trabajador.nombre),
+            React.createElement("div", { className: "gj-grid2", style: { marginBottom: 14 } },
+                React.createElement("div", { className: "gj-stat" },
+                    React.createElement("div", { className: "n" }, horasObjetivoAnio, "h"),
+                    React.createElement("div", { className: "l" }, "Horas anuales seg\u00FAn contrato")),
+                React.createElement("div", { className: "gj-stat" },
+                    React.createElement("div", { className: "n" }, fmtHM(horasAnio)),
+                    React.createElement("div", { className: "l" }, "Trabajadas hasta la fecha")),
+                React.createElement("div", { className: "gj-stat" },
+                    React.createElement("div", { className: "n" }, fmtHM(horasRestantes)),
+                    React.createElement("div", { className: "l" }, "Horas restantes del a\u00F1o")),
+                React.createElement("div", { className: "gj-stat" },
+                    React.createElement("div", { className: "n" }, diasVacacionesRestantes, " / ", diasVacacionesContratados),
+                    React.createElement("div", { className: "l" }, "D\u00EDas de vacaciones restantes"))),
+            React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 } },
+                MESES_CORTO.map((nombreMes, mIdx) => {
+                    const daysInMonth = new Date(year, mIdx + 1, 0).getDate();
+                    const offset = (new Date(year, mIdx, 1).getDay() + 6) % 7;
+                    return React.createElement("div", { key: mIdx, style: { border: "1px solid var(--line)", borderRadius: 6, padding: 4 } },
+                        React.createElement("div", { style: { fontWeight: 700, fontSize: 11.5, textAlign: "center", marginBottom: 2 } }, nombreMes),
+                        React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 1 } },
+                            DIAS_CORTO.map(d => React.createElement("div", { key: d, style: { fontSize: 8, textAlign: "center", color: "var(--ink-soft)" } }, d)),
+                            Array.from({ length: offset }, (_, i) => React.createElement("div", { key: "off" + i })),
+                            Array.from({ length: daysInMonth }, (_, i) => i + 1).map(d => {
+                                const dateStr = `${year}-${String(mIdx + 1).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+                                const marca = vacacionesTrabajador[dateStr];
+                                const festivo = data.festivos && data.festivos[dateStr];
+                                let bg;
+                                if (marca === "vacaciones")
+                                    bg = "var(--cal-vacaciones)";
+                                else if (marca === "baja")
+                                    bg = "var(--sick)";
+                                else if (marca === "permiso")
+                                    bg = "var(--permit)";
+                                else if (festivo)
+                                    bg = festivoColor(festivo.tipo);
+                                return React.createElement("div", { key: d, style: { fontSize: 9, textAlign: "center", borderRadius: 2, background: bg, padding: "1px 0" } }, d);
+                            })));
+                })),
+            React.createElement("div", { style: { display: "flex", gap: 12, flexWrap: "wrap", marginTop: 14, fontSize: 11, color: "var(--ink-soft)" } },
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--cal-vacaciones)", display: "inline-block" } }), " vacaciones"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--sick)", display: "inline-block" } }), " baja / enfermedad"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--permit)", display: "inline-block" } }), " permiso retribuido"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#4ADE80", display: "inline-block" } }), " festivo oficial"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#BBF7D0", display: "inline-block" } }), " festivo de empresa / puente"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#93C5FD", display: "inline-block" } }), " lluvia o nieve")))));
+}
 function HorasView({ data, persist, getWorker, getClient, adminMode }) {
     var _a;
     const now = new Date();
@@ -20036,6 +20483,7 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
     const [year, setYear] = useState(now.getFullYear());
     const [month, setMonth] = useState(now.getMonth());
     const [tipoMarca, setTipoMarca] = useState("vacaciones");
+    const [mostrarCalendarioExport, setMostrarCalendarioExport] = useState(false);
     const [subvista, setSubvista] = useState("horas");
     const todoElEquipo = workerId === "__todos__";
     const horasPorDia = {};
@@ -20192,7 +20640,7 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
         if (tipoAusencia === "permiso")
             return "permiso";
         if (festivo)
-            return festivo.tipo === "oficial" ? "festivo-oficial" : "festivo-empresa";
+            return "festivo-" + festivo.tipo;
         const dow = new Date(y, m, d).getDay();
         if (!horas)
             return (dow === 0 || dow === 6) ? "weekend" : "";
@@ -20205,6 +20653,9 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
             return "";
         return "long";
     };
+    if (mostrarCalendarioExport && trabajadorSel) {
+        return React.createElement(CalendarioAnualExportable, { trabajador: trabajadorSel, year, data, horasAnio, horasObjetivoAnio, vacacionesAnio, bajaAnio, onCerrar: () => setMostrarCalendarioExport(false) });
+    }
     const interruptorSubvista = React.createElement("div", { className: "gj-row", style: { gap: 6, marginBottom: 10, flexWrap: "wrap" } },
         React.createElement("button", { className: "gj-btn" + (subvista === "horas" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("horas") }, "Horas"),
         React.createElement("button", { className: "gj-btn" + (subvista === "almuerzos" ? " primary" : " ghost"), style: { flex: 1 }, onClick: () => setSubvista("almuerzos") }, "\uD83C\uDF7D\uFE0F Almuerzos"),
@@ -20274,6 +20725,7 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
                 React.createElement("div", { className: "n" }, permisoAnio),
                 React.createElement("div", { className: "l" }, "D\u00EDas de permiso retribuido"))),
         todoElEquipo && (React.createElement("div", { className: "gj-card gj-empty" }, "Selecciona un trabajador concreto para ver o marcar su calendario de vacaciones, bajas y permisos. En \"Todo el equipo\" solo se muestran las estad\u00EDsticas totales de arriba.")),
+        !todoElEquipo && (React.createElement("button", { className: "gj-btn ghost block", style: { marginBottom: 10 }, onClick: () => setMostrarCalendarioExport(true) }, "\uD83D\uDCC5 Ver / exportar calendario anual completo")),
         !todoElEquipo && (React.createElement(React.Fragment, null,
             adminMode && (React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Tipo de marca a aplicar al tocar un d\u00EDa en blanco"),
@@ -20297,7 +20749,7 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", border: "1px solid var(--line)", background: "#fff", display: "inline-block" } }),
                         " jornada normal (hasta 8h10)"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--good)", display: "inline-block" } }),
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--cal-vacaciones)", display: "inline-block" } }),
                         " vacaciones"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--sick)", display: "inline-block" } }),
@@ -20306,11 +20758,11 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--permit)", display: "inline-block" } }),
                         " permiso retribuido"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--accent)", display: "inline-block" } }),
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--cal-extra)", display: "inline-block" } }),
                         " m\u00E1s de 8h10 (L-V)"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--warn)", display: "inline-block" } }),
-                        " <8h (L-V)"),
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--cal-incompleto)", display: "inline-block" } }),
+                        " <8h10 (L-V) \u2014 revisar"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--highlight)", display: "inline-block" } }),
                         " s\u00E1bado trabajado"),
@@ -20318,11 +20770,14 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
                         React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "var(--line-soft)", border: "1px solid var(--line)", display: "inline-block" } }),
                         " fin de semana (no trabajado)"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#FCA5A5", display: "inline-block" } }),
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#4ADE80", display: "inline-block" } }),
                         " festivo oficial"),
                     React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#FDBA74", display: "inline-block" } }),
-                        " festivo de empresa / vacaciones comunes"))),
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#BBF7D0", display: "inline-block" } }),
+                        " festivo de empresa / vacaciones comunes"),
+                    React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                        React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#93C5FD", display: "inline-block" } }),
+                        " lluvia o nieve"))),
             React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 8 } }, adminMode ? "Toca un día para marcarlo o quitarlo con el tipo seleccionado arriba." : "Solo un administrador puede marcar vacaciones, bajas o permisos."),
             React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(7, 1fr)", gap: 4, maxWidth: 320 } },
                 DIAS_SEMANA.map(d => React.createElement("div", { key: d, style: { textAlign: "center", fontSize: 10.5, fontWeight: 700, color: "var(--ink-soft)" } }, d)),
@@ -20334,7 +20789,7 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
                     const festivo = (data.festivos || {})[dateStr] || null;
                     const cls = claseDelDia(year, month, d, horas, tipoAusencia, festivo);
                     const etiquetas = { vacaciones: "Vacaciones", baja: "Baja o enfermedad", permiso: "Permiso retribuido" };
-                    const tituloFestivo = festivo ? `${festivo.tipo === "oficial" ? "Festivo oficial" : "Festivo de empresa"}${festivo.nombre ? ": " + festivo.nombre : ""}` : "";
+                    const tituloFestivo = festivo ? `${festivoEtiqueta(festivo.tipo)}${festivo.nombre ? ": " + festivo.nombre : ""}` : "";
                     return (React.createElement("div", { key: d, className: "gj-daycell" + (cls ? " " + cls : "") + (dateStr === todayKey ? " today" : ""), style: { width: "100%", height: 30, borderRadius: 4, cursor: adminMode ? "pointer" : "default" }, onClick: () => toggleVacacion(dateStr), title: tipoAusencia ? etiquetas[tipoAusencia] : tituloFestivo ? tituloFestivo : horas ? fmtHM(horas) + " trabajadas" : "" }, d));
                 }))))));
 }
@@ -23084,7 +23539,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                             React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[k] || "", onChange: e => setPrecioLinea(k, e.target.value), placeholder: "0" }))),
                     tieneCantidad && (React.createElement("div", { style: { marginBottom: 8 } },
                         React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoPartida(k, e.target.files); e.target.value = ""; } }),
+                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", onChange: e => { subirFotoPartida(k, e.target.files); e.target.value = ""; } }),
                             (fotosPartidas[k] || []).map((foto, idx) => React.createElement("div", { key: idx, style: { position: "relative" } },
                                 React.createElement("img", { src: foto, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 4 } }),
                                 React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, position: "absolute", top: -6, right: -6, background: "var(--surface)" }, onClick: () => quitarFotoPartida(k, idx) }, "\u2715"))))))));
@@ -23125,7 +23580,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                             React.createElement("input", { className: "gj-input", type: "number", step: "0.01", value: preciosLinea[d.key] || "", onChange: e => setPrecioLinea(d.key, e.target.value), placeholder: "0" }))),
                     Number(cantidades[d.key]) > 0 && (React.createElement("div", { style: { marginBottom: 8 } },
                         React.createElement("div", { style: { display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" } },
-                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", capture: "environment", onChange: e => { subirFotoPartida(d.key, e.target.files); e.target.value = ""; } }),
+                            React.createElement("input", { className: "gj-input", style: { flex: 1, minWidth: 140 }, type: "file", accept: "image/*", onChange: e => { subirFotoPartida(d.key, e.target.files); e.target.value = ""; } }),
                             (fotosPartidas[d.key] || []).map((foto, idx) => React.createElement("div", { key: idx, style: { position: "relative" } },
                                 React.createElement("img", { src: foto, style: { width: 40, height: 40, objectFit: "cover", borderRadius: 4 } }),
                                 React.createElement("button", { className: "gj-btn ghost", style: { padding: "0 4px", fontSize: 10, position: "absolute", top: -6, right: -6, background: "var(--surface)" }, onClick: () => quitarFotoPartida(d.key, idx) }, "\u2715")))))))),
@@ -23159,7 +23614,7 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
                         m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura).toFixed(1),
                         " m\u00B2"),
                     React.createElement("div", { style: { marginTop: 6 } },
-                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", capture: "environment", onChange: async (e) => { const f = e.target.files[0]; if (f) { const dataUrl = await leerFotoBase64(f); updateSetoRowObra(s.id, "foto", dataUrl); } e.target.value = ""; } }),
+                        React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", onChange: async (e) => { const f = e.target.files[0]; if (f) { const dataUrl = await leerFotoBase64(f); updateSetoRowObra(s.id, "foto", dataUrl); } e.target.value = ""; } }),
                         s.foto && (React.createElement("div", { style: { marginTop: 4 } },
                             React.createElement("img", { src: s.foto, style: { maxWidth: 100, borderRadius: 4, display: "block" } }),
                             React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 6px", fontSize: 10.5, marginTop: 2 }, onClick: () => updateSetoRowObra(s.id, "foto", null) }, "Quitar foto"))))))),
@@ -23949,7 +24404,8 @@ function FestivoForm({ data, persist, adminRole }) {
                 React.createElement("label", { className: "gj-label" }, "Tipo"),
                 React.createElement("select", { className: "gj-select", value: tipo, onChange: e => setTipo(e.target.value) },
                     React.createElement("option", { value: "oficial" }, "Oficial"),
-                    React.createElement("option", { value: "empresa" }, "Empresa")))),
+                    React.createElement("option", { value: "empresa" }, "Empresa (vacaciones comunes)"),
+                    React.createElement("option", { value: "lluvia_nieve" }, "D\u00EDa de lluvia o nieve")))),
         React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Nombre (opcional)"),
             React.createElement("input", { className: "gj-input", value: nombre, onChange: e => setNombre(e.target.value), placeholder: "Ej: D\u00EDa del Pilar" })),
@@ -23984,22 +24440,25 @@ function FestivoForm({ data, persist, adminRole }) {
                     const f = (data.festivos || {})[dateStr];
                     return (React.createElement("div", { key: d, title: f ? (f.nombre || f.tipo) : "", style: {
                             textAlign: "center", fontSize: 11, padding: "4px 0", borderRadius: 4,
-                            background: f ? (f.tipo === "oficial" ? "#FCA5A5" : "#FDBA74") : "transparent",
+                            background: f ? festivoColor(f.tipo) : "transparent",
                             color: f ? "#3f1f1f" : "var(--ink)", fontWeight: f ? 700 : 400,
                         } }, d));
                 })),
             React.createElement("div", { style: { display: "flex", gap: 14, marginTop: 8, fontSize: 11, justifyContent: "center" } },
                 React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#FCA5A5", display: "inline-block" } }),
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#4ADE80", display: "inline-block" } }),
                     " festivo oficial"),
                 React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
-                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#FDBA74", display: "inline-block" } }),
-                    " festivo de empresa"))),
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#BBF7D0", display: "inline-block" } }),
+                    " festivo de empresa"),
+                React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } },
+                    React.createElement("span", { style: { width: 10, height: 10, borderRadius: 3, background: "#93C5FD", display: "inline-block" } }),
+                    " lluvia o nieve"))),
         festivos.length > 0 && (React.createElement("div", { style: { marginTop: 10 } }, festivos.map(([d, f]) => (React.createElement("div", { className: "gj-row", key: d, style: { padding: "4px 0", borderBottom: "1px solid var(--line-soft)" } },
             React.createElement("span", { style: { fontSize: 12.5 } },
                 fechaEs(d),
                 " \u2014 ",
-                f.nombre || (f.tipo === "oficial" ? "Oficial" : "Empresa"),
+                f.nombre || festivoEtiqueta(f.tipo),
                 " ",
                 React.createElement("span", { className: "gj-badge", style: { background: "var(--pend-bg)", color: "var(--ink-soft)" } }, f.tipo)),
             React.createElement("button", { className: "gj-btn ghost", onClick: () => quitar(d) },
