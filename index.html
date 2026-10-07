@@ -17897,6 +17897,11 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             cliente.podaCompletaFecha = todayStr();
             cliente.podaCompletaPor = nombreTrabajador;
         }
+        else if (sel.accion === "poda_parcial") {
+            cliente.podaParcialFecha = todayStr();
+            cliente.podaParcialPor = nombreTrabajador;
+            cliente.podaParcialNota = (sel.notaPoda || "").trim();
+        }
         persist(next);
         setRiegoPodaAbierto(null);
         setRiegoPodaSel(sel2 => ({ ...sel2, [clienteId]: {} }));
@@ -18605,7 +18610,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                             React.createElement("b", null, fmtHM(totalDesplazamiento / 60)))) : null;
                     })(),
                     o.stops.map((s, idxStop) => {
-                        var _a, _b, _c, _d;
+                        var _a, _b, _c, _d, _e, _f;
                         const cli = getClient(s.clienteId);
                         const key = o.id + s.clienteId;
                         const miFicha = (s.porTrabajador && s.porTrabajador[workerId]) || null;
@@ -18670,7 +18675,11 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             React.createElement("option", { value: "revision" }, "Revisi\u00F3n de riego completa"),
                                             React.createElement("option", { value: "on" }, "Riego ON"),
                                             React.createElement("option", { value: "off" }, "Riego OFF"),
-                                            React.createElement("option", { value: "poda" }, "Poda COMPLETA")),
+                                            React.createElement("option", { value: "poda" }, "Poda COMPLETA"),
+                                            React.createElement("option", { value: "poda_parcial" }, "Poda PARCIAL")),
+                                        ((_e = riegoPodaSel[s.clienteId]) === null || _e === void 0 ? void 0 : _e.accion) === "poda_parcial" && (React.createElement("div", { style: { marginTop: 6 } },
+                                            React.createElement("label", { className: "gj-label" }, "Qu\u00E9 se ha podado"),
+                                            React.createElement("input", { className: "gj-input", value: ((_f = riegoPodaSel[s.clienteId]) === null || _f === void 0 ? void 0 : _f.notaPoda) || "", placeholder: "Ej: solo el seto delantero, los arbustos de la entrada...", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], notaPoda: e.target.value } })) }))),
                                         ((_b = riegoPodaSel[s.clienteId]) === null || _b === void 0 ? void 0 : _b.accion) === "on" && (React.createElement("div", { className: "gj-grid2", style: { marginTop: 6 } },
                                             React.createElement("div", null,
                                                 React.createElement("label", { className: "gj-label" }, "D\u00EDas/semana"),
