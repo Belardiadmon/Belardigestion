@@ -231,17 +231,16 @@ window.gjSyncManualAhora = async (STORAGE_KEY) => {
 // ya se resuelve solo), lo que hay en este móvil, aunque sea de hace rato, se queda guardado en el
 // propio teléfono (localStorage) y se reintenta subir solo en cuanto vuelva la cobertura — sin que
 // el administrador ni el trabajador tengan que acordarse de nada ni volver a guardarlo a mano.
-window.gjReintentarSubidaPendiente = async (STORAGE_KEY) => {
-  if (window.gjSyncStatus && window.gjSyncStatus.estado === "error") {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) await window.storage.set(STORAGE_KEY, raw, true);
-  }
-};
-if (typeof window !== "undefined") {
-  window.addEventListener("online", () => {
-    if (window.__GJ_MAIN_KEY__) window.gjReintentarSubidaPendiente(window.__GJ_MAIN_KEY__);
-  });
-}
+// ELIMINADO (motivo importante): aquí había un mecanismo que, cada 25s o al recuperar conexión, volvía
+// a subir a ciegas lo último que hubiera en el almacenamiento local del móvil si el guardado anterior
+// había fallado. El problema: ese almacenamiento local podía quedarse con una copia anticuada (por
+// ejemplo, si una escritura local fallaba en silencio por falta de espacio, mientras la memoria en
+// vivo del propio móvil sí estaba al día) — y este mecanismo la volvía a enviar igualmente, pisando
+// por encima cambios reales de otros dispositivos sin que nadie lo pidiera. Las acciones de fichaje ya
+// tienen su propio reintento seguro (persistConReintento), que siempre parte de los datos más recientes
+// conocidos en ese momento, no de una copia guardada sin verificar — por eso esta función ya no hace
+// ninguna subida por su cuenta.
+window.gjReintentarSubidaPendiente = async (STORAGE_KEY) => { /* intencionadamente vacío, ver nota arriba */ };
 </script>
 <script>
 (() => {
@@ -16455,30 +16454,41 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
         setEditingJornada(null);
     };
     const añadirMaterialParadaAdmin = (orderId, clienteId) => {
-        persistConReintento(base => {
-            const next = structuredClone(base);
-        const order = next.orders.find(o => o.id === orderId);
-        const stop = order.stops.find(s => s.clienteId === clienteId);
-        stop.materialesUsados = stop.materialesUsados || [];
+        // Las comprobaciones de validez van ANTES de llamar a persistConReintento: un "return" suelto
+        // dentro del patch (sin devolver los datos) vacía toda la app, así que nunca debe poder pasar.
         if (materialAdminOrigen === "bolsa") {
             const cant = Number(materialAdminCantidadBolsa);
             if (!materialAdminStockId || !cant || cant <= 0)
                 return;
-            next.almacenGeneral = next.almacenGeneral || [];
-            const item = next.almacenGeneral.find(s => s.id === materialAdminStockId);
+            const item = (data.almacenGeneral || []).find(s => s.id === materialAdminStockId);
             if (!item || cant > item.cantidad)
                 return;
-            item.cantidad -= cant;
-            stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
-            if (item.cantidad <= 0)
-                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
         }
         else {
             const cant = Number(materialAdminCantidadNueva);
             if (!materialAdminNombre.trim() || !cant || cant <= 0)
                 return;
-            stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant, fotoAlbaran: materialAdminFoto || null });
         }
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.materialesUsados = stop.materialesUsados || [];
+            if (materialAdminOrigen === "bolsa") {
+                const cant = Number(materialAdminCantidadBolsa);
+                next.almacenGeneral = next.almacenGeneral || [];
+                const item = next.almacenGeneral.find(s => s.id === materialAdminStockId);
+                if (!item || cant > item.cantidad)
+                    return next; // ya no debería pasar (validado arriba), pero por seguridad no se toca nada
+                item.cantidad -= cant;
+                stop.materialesUsados.push({ id: uid("mat"), origen: "bolsa", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant });
+                if (item.cantidad <= 0)
+                    next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+            }
+            else {
+                const cant = Number(materialAdminCantidadNueva);
+                stop.materialesUsados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialAdminProveedor.trim(), material: materialAdminNombre.trim(), cantidad: cant, fotoAlbaran: materialAdminFoto || null });
+            }
             return next;
         });
         setMaterialAdminFoto(null);
@@ -16504,35 +16514,50 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
         });
     };
     const añadirMaterialActividadAdmin = (orderId, actividadId) => {
-        persistConReintento(base => {
-            const next = structuredClone(base);
-        const order = next.orders.find(o => o.id === orderId);
-        const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
-        if (!act)
+        // Comprobaciones ANTES de persistConReintento (ver nota en añadirMaterialParadaAdmin): un
+        // "return" suelto dentro del patch, sin devolver los datos, vacía toda la app.
+        const order0 = data.orders.find(o => o.id === orderId);
+        const act0 = order0 && (order0.actividadesExtra || []).find(a => a.id === actividadId);
+        if (!act0)
             return;
-        act.materialesImputados = act.materialesImputados || [];
         if (materialActOrigen === "bolsa") {
             const cant = Number(materialActCantidadBolsa);
             if (!materialActStockId || !cant || cant <= 0)
                 return;
-            next.almacenGeneral = next.almacenGeneral || [];
-            const item = next.almacenGeneral.find(s => s.id === materialActStockId);
+            const item = (data.almacenGeneral || []).find(s => s.id === materialActStockId);
             if (!item || cant > item.cantidad)
                 return;
-            item.cantidad -= cant;
-            act.materialesImputados.push({ id: uid("mat"), origen: "stock", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant, bloqueado: false });
-            if (item.cantidad <= 0)
-                next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
         }
         else {
             const cant = Number(materialActCantidadNueva);
             if (!materialActNombre.trim() || !cant || cant <= 0)
                 return;
-            act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false, fotoAlbaran: materialActFoto || null });
         }
-            setMaterialActFoto(null);
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
+            if (!act)
+                return next;
+            act.materialesImputados = act.materialesImputados || [];
+            if (materialActOrigen === "bolsa") {
+                const cant = Number(materialActCantidadBolsa);
+                next.almacenGeneral = next.almacenGeneral || [];
+                const item = next.almacenGeneral.find(s => s.id === materialActStockId);
+                if (!item || cant > item.cantidad)
+                    return next;
+                item.cantidad -= cant;
+                act.materialesImputados.push({ id: uid("mat"), origen: "stock", stockId: item.id, proveedor: item.proveedor, material: item.material, cantidad: cant, bloqueado: false });
+                if (item.cantidad <= 0)
+                    next.almacenGeneral = next.almacenGeneral.filter(s => s.id !== item.id);
+            }
+            else {
+                const cant = Number(materialActCantidadNueva);
+                act.materialesImputados.push({ id: uid("mat"), origen: "nuevo", proveedor: materialActProveedor.trim(), material: materialActNombre.trim(), cantidad: cant, cantidadRecogida: cant, bloqueado: false, fotoAlbaran: materialActFoto || null });
+            }
             return next;
         });
+        setMaterialActFoto(null);
         setMaterialActStockId(""); setMaterialActCantidadBolsa("");
         setMaterialActProveedor(""); setMaterialActNombre(""); setMaterialActCantidadNueva("");
     };
@@ -16542,7 +16567,7 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
         const order = next.orders.find(o => o.id === orderId);
         const act = (order.actividadesExtra || []).find(a => a.id === actividadId);
         if (!act)
-            return;
+            return next;
         const linea = (act.materialesImputados || []).find(m => m.id === lineaId);
         if (linea && linea.origen === "stock" && linea.stockId) {
             next.almacenGeneral = next.almacenGeneral || [];
@@ -16619,17 +16644,24 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
         setFichajeFin("");
     };
     const toggleCrewMember = (orderId, workerId) => {
+        // Ojo: si el patch de persistConReintento devuelve "undefined" en vez de los datos, toda la
+        // app se queda sin datos en memoria y la pantalla entera se rompe — por eso esta comprobación
+        // (no dejar la ruta sin nadie) se hace AQUÍ, antes de llamar a persistConReintento, y nunca
+        // con un "return" suelto dentro del patch.
+        const order = data.orders.find(o => o.id === orderId);
+        if (!order)
+            return;
+        if (order.workerIds.includes(workerId) && order.workerIds.length <= 1)
+            return; // no se puede dejar la ruta sin ningún trabajador asignado
         persistConReintento(base => {
             const next = structuredClone(base);
-        const order = next.orders.find(o => o.id === orderId);
-        if (order.workerIds.includes(workerId)) {
-            if (order.workerIds.length <= 1)
-                return;
-            order.workerIds = order.workerIds.filter(id => id !== workerId);
-        }
-        else {
-            order.workerIds = [...order.workerIds, workerId];
-        }
+            const order2 = next.orders.find(o => o.id === orderId);
+            if (order2.workerIds.includes(workerId)) {
+                order2.workerIds = order2.workerIds.filter(id => id !== workerId);
+            }
+            else {
+                order2.workerIds = [...order2.workerIds, workerId];
+            }
             return next;
         });
     };
