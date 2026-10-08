@@ -13157,7 +13157,7 @@ function buscarClienteCoincidente(clients, p) {
     }
     return cliente || null;
 }
-function upsertClienteDesdePresupuesto(next, p, tipoNuevo, forzarNuevo) {
+function upsertClienteDesdePresupuesto(next, p, tipoNuevo, forzarNuevo, clienteOrigenId) {
     // Coincide por DNI, direcci\u00F3n o nombre (ver buscarClienteCoincidente; el tel\u00E9fono se quit\u00F3 como
     // criterio). El aviso al aprobar, en las pantallas que llaman a esta funci\u00F3n, es lo que permite al
     // administrador decidir si de verdad es el mismo cliente antes de que se fusione. Si forzarNuevo es
@@ -13178,6 +13178,11 @@ function upsertClienteDesdePresupuesto(next, p, tipoNuevo, forzarNuevo) {
             id: uid("cli"), nombre: p.nombre, direccion: p.direccion, telefono: p.telefono, email: p.email, dni: p.dni || "",
             esMantenimiento: false, esObra: false, cuotaMensual: 0, presupuesto: 0, estadoObra: "en_curso",
             personasEstimadas: 0, diasEstimados: 0, fechaInicioPlan: "", orden: 0, activo: true,
+            // Si esta obra viene de un cliente de mantenimiento ya existente (el administrador ha visto
+            // el aviso de posible duplicado y ha elegido "son distintos, crear nuevo"), queda enlazada a
+            // su ficha de origen — solo para agrupar visualmente y sumar la rentabilidad conjunta más
+            // adelante; sus datos de contacto siguen siendo propios, no se repite nada a mano.
+            obraDeClienteId: (tipoNuevo === "obra" && clienteOrigenId) ? clienteOrigenId : null,
         };
         next.clients.push(cliente);
     }
@@ -15777,6 +15782,10 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
         React.createElement("div", { className: "gj-row" },
             React.createElement("div", null,
                 React.createElement("div", { style: { fontWeight: 600 } }, c.nombre),
+                c.obraDeClienteId && (() => {
+                    const origen = data.clients.find(x => x.id === c.obraDeClienteId);
+                    return origen && React.createElement("div", { style: { fontSize: 11, color: "var(--primary)" } }, "\uD83D\uDD17 Obra de ", origen.nombre, " (cliente de mantenimiento)");
+                })(),
                 React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", display: "flex", alignItems: "center", gap: 4 } },
                     c.zona ? `[${c.zona}] ` : "",
                     c.direccion,
@@ -17050,8 +17059,8 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                     React.createElement("option", { value: "" }, "Sin asignar"),
                     (data.vehiculos || []).map(v => React.createElement("option", { key: v, value: v }, v)))),
             React.createElement("div", { className: "gj-field" },
-                React.createElement("label", { className: "gj-label" }, "Clientes de la ruta (agrupados por zona; el orden de la ruta es el orden en que los vayas pulsando)"),
-                React.createElement("div", { className: "gj-checklist" }, data.clients.slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).map((c, i, arr) => {
+                React.createElement("label", { className: "gj-label" }, "Clientes de mantenimiento (agrupados por zona; el orden de la ruta es el orden en que los vayas pulsando)"),
+                React.createElement("div", { className: "gj-checklist" }, data.clients.filter(c => c.esMantenimiento).slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).map((c, i, arr) => {
                     const nPend = (data.pendientes || []).filter(p => p.clienteId === c.id && !p.resuelto).length;
                     const cambioDeZona = i === 0 || (c.zona || "") !== (arr[i - 1].zona || "");
                     return React.createElement(React.Fragment, { key: c.id },
@@ -17059,9 +17068,18 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                         React.createElement("span", { className: "gj-chip" + (selClients.includes(c.id) ? " selected" : ""), onClick: () => toggleClient(c.id) },
                             selClients.includes(c.id) ? (selClients.indexOf(c.id) + 1) + ". " : "",
                             c.nombre,
-                            c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "",
                             nPend > 0 ? ` \u26A0\uFE0F${nPend}` : ""));
                 }))),
+            React.createElement("div", { className: "gj-field" },
+                React.createElement("label", { className: "gj-label" }, "Obras a asignar (solo las que siguen en curso; por orden alfab\u00E9tico)"),
+                data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").length === 0 ? React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "No hay ninguna obra en curso ahora mismo.") : (React.createElement("div", { className: "gj-checklist" }, data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").slice().sort((a, b) => a.nombre.localeCompare(b.nombre)).map(c => {
+                    const nPend = (data.pendientes || []).filter(p => p.clienteId === c.id && !p.resuelto).length;
+                    return React.createElement("span", { key: c.id, className: "gj-chip" + (selClients.includes(c.id) ? " selected" : ""), onClick: () => toggleClient(c.id) },
+                        selClients.includes(c.id) ? (selClients.indexOf(c.id) + 1) + ". " : "",
+                        c.nombre,
+                        c.referenciaObra ? ` (${c.referenciaObra})` : "",
+                        nPend > 0 ? ` \u26A0\uFE0F${nPend}` : "");
+                })))),
             selClients.length > 0 && (React.createElement("div", { className: "gj-field" },
                 React.createElement("label", { className: "gj-label" }, "Observaciones / trabajo extra por cliente (opcional)"),
                 selClients.map(cid => {
@@ -17102,10 +17120,14 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                     React.createElement(Pencil, { size: 11 }),
                     " Editar cuadrilla"))),
                 adminMode && (editingStops === o.id ? (React.createElement("div", { className: "gj-card", style: { margin: "6px 0" } },
-                    React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, "A\u00F1adir clientes a esta ruta"),
-                    React.createElement("div", { className: "gj-checklist" }, data.clients.slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).filter(c => !o.stops.some(s => s.clienteId === c.id)).map(c => (React.createElement("span", { key: c.id, className: "gj-chip" + (nuevosClientesRuta.includes(c.id) ? " selected" : ""), onClick: () => toggleNuevoClienteRuta(c.id) },
+                    React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4 } }, "A\u00F1adir mantenimientos a esta ruta (por zona)"),
+                    React.createElement("div", { className: "gj-checklist" }, data.clients.filter(c => c.esMantenimiento).slice().sort((a, b) => (a.zona || "\uFFFF").localeCompare(b.zona || "\uFFFF") || a.nombre.localeCompare(b.nombre)).filter(c => !o.stops.some(s => s.clienteId === c.id)).map(c => (React.createElement("span", { key: c.id, className: "gj-chip" + (nuevosClientesRuta.includes(c.id) ? " selected" : ""), onClick: () => toggleNuevoClienteRuta(c.id) },
                         c.zona ? `[${c.zona}] ` : "",
                         c.nombre)))),
+                    React.createElement("div", { style: { fontSize: 12, fontWeight: 600, marginBottom: 4, marginTop: 8 } }, "A\u00F1adir obras a esta ruta (en curso, por orden alfab\u00E9tico)"),
+                    React.createElement("div", { className: "gj-checklist" }, data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").slice().sort((a, b) => a.nombre.localeCompare(b.nombre)).filter(c => !o.stops.some(s => s.clienteId === c.id)).map(c => (React.createElement("span", { key: c.id, className: "gj-chip" + (nuevosClientesRuta.includes(c.id) ? " selected" : ""), onClick: () => toggleNuevoClienteRuta(c.id) },
+                        c.nombre,
+                        c.referenciaObra ? ` (${c.referenciaObra})` : "")))),
                     React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 8 } },
                         React.createElement("button", { className: "gj-btn primary", disabled: nuevosClientesRuta.length === 0, onClick: () => añadirClientesARuta(o.id) },
                             "A\u00F1adir ",
@@ -17620,6 +17642,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     }
                 }
             });
+            // Por si se le olvidó pulsar "Volver" del almuerzo antes de iniciar esto: se cierra aquí
+            // también, para que ese rato no se cuente a la vez como almuerzo y como esta otra labor.
+            const miAlmuerzoAbierto = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
+            if (miAlmuerzoAbierto && miAlmuerzoAbierto.inicio && !miAlmuerzoAbierto.fin) {
+                miAlmuerzoAbierto.fin = horaAhora;
+            }
             order.porTrabajadorJornada = order.porTrabajadorJornada || {};
             if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
                 order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: horaAhora };
@@ -18165,6 +18193,18 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
+            // Por si quedó una actividad de Carga/Almacén/Talleres sin finalizar (p.ej. se le olvidó
+            // pulsar "Finalizar"), se cierra aquí al iniciar la parada nueva, para que no se solape con
+            // el tiempo de la parada.
+            (order.actividadesExtra || []).forEach(act => {
+                if (act.workerId === workerId && !act.horaFin) {
+                    act.horaFin = hora;
+                }
+            });
+            const miAlmuerzoAbierto2 = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
+            if (miAlmuerzoAbierto2 && miAlmuerzoAbierto2.inicio && !miAlmuerzoAbierto2.fin) {
+                miAlmuerzoAbierto2.fin = hora;
+            }
             const stop = order.stops.find(s => s.clienteId === clienteId);
             stop.porTrabajador = stop.porTrabajador || {};
             stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: null, avisoUbicacionInicio: false, tramos: [{ horaInicio: hora, coordInicio: null, horaFin: null, coordFin: null }] };
@@ -18417,6 +18457,14 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                     const ultimo = mia.tramos[mia.tramos.length - 1];
                     if (!ultimo.horaFin)
                         ultimo.horaFin = hora;
+                }
+            });
+            // Lo mismo si tiene una actividad de Carga/Almacén/Talleres todavía abierta (sin finalizar):
+            // estas no tienen tramos con pausa, así que si no se cierran aquí, su rato se sigue
+            // contando hasta que se finalice más tarde, solapándose con el almuerzo por en medio.
+            (order.actividadesExtra || []).forEach(act => {
+                if (act.workerId === workerId && !act.horaFin) {
+                    act.horaFin = hora;
                 }
             });
             order.porTrabajadorAlmuerzo = order.porTrabajadorAlmuerzo || {};
@@ -22695,7 +22743,7 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
         pres.aprobado = true;
         pres.fechaAprobacion = todayStr();
         pres.convertido = true;
-        const cliente = upsertClienteDesdePresupuesto(next, p, "obra", forzarNuevo);
+        const cliente = upsertClienteDesdePresupuesto(next, p, "obra", forzarNuevo, confirmarFusion ? confirmarFusion.id : null);
         pres.clienteId = cliente.id;
         persist(next);
         setConfirmarFusion(null);
@@ -22833,6 +22881,18 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
             new Date(h.fechaHora).toLocaleString("es-ES"),
             h.importe !== undefined ? ` — importe anterior: ${eur(h.importe)}` : ` — datos anteriores: ${h.apellidos || "—"}, DNI ${h.dni || "—"}`)))));
     if (confirmarFusion) {
+        if (confirmarFusion.esMantenimiento) {
+            // Caso normal: la persona ya es cliente de mantenimiento y os encarga una obra aparte. No es
+            // un dilema real, así que no se pregunta como tal \u2014 se confirma con un solo botón, y el caso
+            // raro (coincidencia de nombre entre dos personas distintas) queda como opción secundaria.
+            return (React.createElement("div", { className: "gj-card", style: { background: "var(--good-bg)" } },
+                React.createElement("div", { style: { fontWeight: 600, color: "var(--good)", marginBottom: 6 } }, "\u2705 ", confirmarFusion.nombre, " ya es cliente de mantenimiento"),
+                React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } }, "Esta obra se va a registrar como un trabajo nuevo e independiente para \u00E9l \u2014 las horas, los materiales y la rentabilidad no se mezclar\u00E1n con su mantenimiento."),
+                React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 10 }, onClick: () => ejecutarAprobacion(true) }, "Crear la obra para ", confirmarFusion.nombre),
+                React.createElement("div", { style: { textAlign: "center" } },
+                    React.createElement("a", { href: "#", style: { fontSize: 12, color: "var(--ink-soft)" }, onClick: e => { e.preventDefault(); ejecutarAprobacion(false); } }, "\u00BFNo es \u00E9l/ella? Coincide el nombre o la direcci\u00F3n por casualidad \u2014 usar su ficha igualmente")),
+                React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6 }, onClick: () => setConfirmarFusion(null) }, "Cancelar y revisar antes")));
+        }
         return (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
             React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Posible cliente duplicado"),
             React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } },
@@ -24030,7 +24090,7 @@ function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
         const p = next.presupuestos.find(x => x.id === id);
         p.aprobado = true;
         p.convertido = true;
-        upsertClienteDesdePresupuesto(next, p, p.tipo === "mantenimiento" ? "mantenimiento" : "obra", forzarNuevo);
+        upsertClienteDesdePresupuesto(next, p, p.tipo === "mantenimiento" ? "mantenimiento" : "obra", forzarNuevo, confirmarFusion ? confirmarFusion.coincidente.id : null);
         persist(next);
         setConfirmarFusion(null);
     };
@@ -24046,6 +24106,16 @@ function PresupuestosView({ data, persist, setView, setFocusClienteId }) {
     const aprobados = todosPresupuestos.filter(p => p.convertido && (p.tipo || "obra") === tipoPresupuesto);
     if (confirmarFusion) {
         const pConf = todosPresupuestos.find(x => x.id === confirmarFusion.id);
+        const esObraDeMantenimiento = confirmarFusion.coincidente.esMantenimiento && (pConf === null || pConf === void 0 ? void 0 : pConf.tipo) !== "mantenimiento";
+        if (esObraDeMantenimiento) {
+            return (React.createElement("div", { className: "gj-card", style: { background: "var(--good-bg)" } },
+                React.createElement("div", { style: { fontWeight: 600, color: "var(--good)", marginBottom: 6 } }, "\u2705 ", confirmarFusion.coincidente.nombre, " ya es cliente de mantenimiento"),
+                React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } }, "Esta obra se va a registrar como un trabajo nuevo e independiente para \u00E9l \u2014 las horas, los materiales y la rentabilidad no se mezclar\u00E1n con su mantenimiento."),
+                React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 10 }, onClick: () => ejecutarAprobacion(confirmarFusion.id, true) }, "Crear la obra para ", confirmarFusion.coincidente.nombre),
+                React.createElement("div", { style: { textAlign: "center" } },
+                    React.createElement("a", { href: "#", style: { fontSize: 12, color: "var(--ink-soft)" }, onClick: e => { e.preventDefault(); ejecutarAprobacion(confirmarFusion.id, false); } }, "\u00BFNo es \u00E9l/ella? Coincide el nombre o la direcci\u00F3n por casualidad \u2014 usar su ficha igualmente")),
+                React.createElement("button", { className: "gj-btn ghost block", style: { marginTop: 6 }, onClick: () => setConfirmarFusion(null) }, "Cancelar y revisar antes")));
+        }
         return (React.createElement("div", { className: "gj-card", style: { background: "var(--warn-bg)" } },
             React.createElement("div", { style: { fontWeight: 600, color: "var(--warn)", marginBottom: 6 } }, "\u26A0\uFE0F Posible cliente duplicado"),
             React.createElement("div", { style: { fontSize: 13, marginBottom: 10 } },
@@ -25281,7 +25351,23 @@ function RentabilidadView({ data, persist }) {
             : horasPersona * (Number(costeHora) || 0);
         const beneficio = cuotaAnual - costeAnual;
         const margen = cuotaAnual > 0 ? (beneficio / cuotaAnual) * 100 : 0;
-        return { c, horasPersona, cuotaAnual, costeAnual, beneficio, margen };
+        // Obras que este cliente de mantenimiento os ha encargado aparte (enlazadas, con su propio
+        // identificador independiente \u2014 nunca se mezclan horas ni materiales entre ellas). Se calcula
+        // con la misma f\u00F3rmula que en Rentabilidad de obras, sumando todo su hist\u00F3rico.
+        const obrasVinculadas = data.clients.filter(x => x.obraDeClienteId === c.id).map(ob => {
+            let horasObra = 0;
+            data.orders.forEach(o => {
+                o.stops.forEach(s => {
+                    if (s.clienteId === ob.id && s.estado === "completado")
+                        horasObra += personaHorasStop(s, o);
+                });
+            });
+            const costeObra = horasObra * (Number(costeHora) || 0);
+            const beneficioObra = (ob.presupuesto || 0) - costeObra;
+            return { obra: ob, horasObra, beneficioObra };
+        });
+        const beneficioObrasTotal = obrasVinculadas.reduce((a, x) => a + x.beneficioObra, 0);
+        return { c, horasPersona, cuotaAnual, costeAnual, beneficio, margen, obrasVinculadas, beneficioConjunto: beneficio + beneficioObrasTotal };
     });
     const totalHoras = filas.reduce((a, f) => a + f.horasPersona, 0);
     const totalBeneficio = filas.reduce((a, f) => a + f.beneficio, 0);
@@ -25436,8 +25522,10 @@ function RentabilidadView({ data, persist }) {
                         React.createElement("th", null, "Horas-persona"),
                         React.createElement("th", null, "Cuota del periodo"),
                         React.createElement("th", null, "Coste est."),
-                        React.createElement("th", null, "Beneficio"),
-                        React.createElement("th", null, "Margen"))),
+                        React.createElement("th", null, "Beneficio mantenimiento"),
+                        React.createElement("th", null, "Margen"),
+                        React.createElement("th", null, "Obras vinculadas"),
+                        React.createElement("th", null, "Total conjunto"))),
                 React.createElement("tbody", null, filas.map(f => (React.createElement("tr", { key: f.c.id },
                     React.createElement("td", { style: { fontWeight: 600 } },
                         f.c.nombre,
@@ -25448,7 +25536,10 @@ function RentabilidadView({ data, persist }) {
                     React.createElement("td", { style: { color: f.beneficio >= 0 ? "var(--good)" : "var(--warn)", fontWeight: 600 } }, eur(f.beneficio)),
                     React.createElement("td", null,
                         f.margen.toFixed(0),
-                        "%"))))))),
+                        "%"),
+                    React.createElement("td", { style: { fontSize: 11.5 }, title: f.obrasVinculadas.map(x => `${x.obra.nombre}${x.obra.referenciaObra ? " (" + x.obra.referenciaObra + ")" : ""}: ${eur(x.beneficioObra)}`).join("\n") },
+                        f.obrasVinculadas.length === 0 ? "\u2014" : `${f.obrasVinculadas.length} obra${f.obrasVinculadas.length !== 1 ? "s" : ""} \u00B7 ${eur(f.obrasVinculadas.reduce((a, x) => a + x.beneficioObra, 0))}`),
+                    React.createElement("td", { style: { color: f.beneficioConjunto >= 0 ? "var(--good)" : "var(--warn)", fontWeight: 700 } }, eur(f.beneficioConjunto)))))))),
         data.clients.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, "A\u00F1ade clientes para ver su rentabilidad."),
         React.createElement("h3", { className: "gj-h3", style: { marginTop: 20 } }, "Comparativa hist\u00F3rica de ejercicios cerrados"),
         React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", marginBottom: 8 } }, "Aqu\u00ED se acumulan todos los ejercicios que vayas cerrando arriba, con las fechas que quieras cada vez, para poder comparar de un vistazo la evoluci\u00F3n."),
