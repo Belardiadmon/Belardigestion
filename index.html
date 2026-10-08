@@ -15781,7 +15781,9 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
     const renderCliente = (c) => (React.createElement("div", { className: "gj-card", key: c.id, onClick: () => c.esMantenimiento && setClienteJardin(c), style: { cursor: c.esMantenimiento ? "pointer" : "default" } },
         React.createElement("div", { className: "gj-row" },
             React.createElement("div", null,
-                React.createElement("div", { style: { fontWeight: 600 } }, c.nombre),
+                React.createElement("div", { style: { fontWeight: 600, display: "flex", alignItems: "center", gap: 5 } },
+                    c.nombre,
+                    c.esMantenimiento && React.createElement("span", { title: (c.fasesRiego || []).length > 0 ? `${c.fasesRiego.length} fase(s) de riego documentadas` : "Sin fases de riego documentadas todav\u00EDa", style: { fontSize: 12, color: (c.fasesRiego || []).length > 0 ? "#16A34A" : "#D1D5DB" } }, "\uD83D\uDCA7")),
                 c.obraDeClienteId && (() => {
                     const origen = data.clients.find(x => x.id === c.obraDeClienteId);
                     return origen && React.createElement("div", { style: { fontSize: 11, color: "var(--primary)" } }, "\uD83D\uDD17 Obra de ", origen.nombre, " (cliente de mantenimiento)");
@@ -15884,6 +15886,11 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
             React.createElement("input", { type: "checkbox", checked: showImportes, onChange: e => setShowImportes(e.target.checked) })),
         editing && React.createElement(ClienteForm, { initial: editing, data: data, onCancel: () => setEditing(null), onSave: save }),
         React.createElement("h3", { className: "gj-h3" }, "Clientes de mantenimiento"),
+        (() => {
+            const totalMant = data.clients.filter(c => c.esMantenimiento).length;
+            const conFases = data.clients.filter(c => c.esMantenimiento && (c.fasesRiego || []).length > 0).length;
+            return totalMant > 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "\uD83D\uDCA7 ", conFases, " de ", totalMant, " clientes con fases de riego documentadas");
+        })(),
         mantenimiento.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, filtroTexto ? "Ningún cliente de mantenimiento coincide con la búsqueda." : "Todavía no hay clientes de mantenimiento."),
         mantenimiento.map((c, i) => {
             const zonaAnterior = i > 0 ? (mantenimiento[i - 1].zona || "") : null;
@@ -15950,6 +15957,16 @@ function ClienteForm({ initial, data, onCancel, onSave }) {
                 React.createElement("option", { value: "oficinas" }, "Oficinas"),
                 React.createElement("option", { value: "otro" }, "Otro")),
             React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 2 } }, "Ajusta el margen que se permite entre el fichaje y la ubicaci\u00F3n guardada, para que una comunidad grande no d\u00E9 falsos avisos de \"ubicaci\u00F3n no coincide\".")),
+        form.esMantenimiento && (React.createElement("div", { className: "gj-field" },
+            React.createElement("label", { className: "gj-label" }, "Fases de riego (zona y aparato \u2014 el tiempo lo ir\u00E1 metiendo quien haga la revisi\u00F3n, desde Fichar)"),
+            (form.fasesRiego || []).map((fr, i) => React.createElement("div", { key: fr.id, style: { display: "flex", gap: 6, marginBottom: 4 } },
+                React.createElement("input", { className: "gj-input", style: { flex: 2 }, value: fr.zona, placeholder: "Zona: delantera, lateral, goteo de parterres...", onChange: e => set("fasesRiego", form.fasesRiego.map((x, xi) => xi === i ? { ...x, zona: e.target.value } : x)) }),
+                React.createElement("select", { className: "gj-select", style: { flex: 1 }, value: fr.aparato, onChange: e => set("fasesRiego", form.fasesRiego.map((x, xi) => xi === i ? { ...x, aparato: e.target.value } : x)) },
+                    React.createElement("option", { value: "difusores" }, "Difusores"),
+                    React.createElement("option", { value: "aspersores" }, "Aspersores"),
+                    React.createElement("option", { value: "goteo" }, "Goteo")),
+                React.createElement("button", { className: "gj-btn ghost", onClick: () => set("fasesRiego", form.fasesRiego.filter((_, xi) => xi !== i)) }, React.createElement(Trash2, { size: 13 })))),
+            React.createElement("button", { className: "gj-btn ghost", onClick: () => set("fasesRiego", [...(form.fasesRiego || []), { id: uid("fr"), zona: "", aparato: "difusores" }]) }, "+ A\u00F1adir fase"))),
         React.createElement("div", { className: "gj-field" },
             React.createElement("label", { className: "gj-label" }, "Zona geogr\u00E1fica (para organizar rutas por cercan\u00EDa)"),
             React.createElement("input", { className: "gj-input", list: "gj-zonas-sugeridas", value: form.zona || "", onChange: e => set("zona", e.target.value), placeholder: "Ej: Pozuelo, Majadahonda, Las Rozas..." }),
@@ -17226,11 +17243,13 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => guardarFichajeManual(o.id, s.clienteId, wid) }, "Guardar"),
                                     React.createElement("button", { className: "gj-btn ghost", style: { padding: "2px 6px", fontSize: 11 }, onClick: () => setEditingFichaje(null) }, "Cancelar")));
                             }
-                            return (React.createElement("span", { key: wid, style: { marginRight: 10 } },
-                                `${w.nombre}: ${txt}`,
-                                (ficha === null || ficha === void 0 ? void 0 : ficha.validadoPorAdmin) && " (validado)",
-                                React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10, marginLeft: 3 }, title: "Corregir fichaje de este trabajador", onClick: () => { setEditingFichaje(fkey); setFichajeInicio((ficha === null || ficha === void 0 ? void 0 : ficha.horaInicio) || ""); setFichajeFin((ficha === null || ficha === void 0 ? void 0 : ficha.horaFin) || ""); setFichajeResultado((ficha === null || ficha === void 0 ? void 0 : ficha.resultado) || "hecho"); } },
-                                    React.createElement(Pencil, { size: 10 }))));
+                            return (React.createElement("span", { key: wid, style: { marginRight: 10, display: "inline-block" } },
+                                React.createElement("span", null,
+                                    `${w.nombre}: ${txt}`,
+                                    (ficha === null || ficha === void 0 ? void 0 : ficha.validadoPorAdmin) && " (validado)",
+                                    React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 4px", fontSize: 10, marginLeft: 3 }, title: "Corregir fichaje de este trabajador", onClick: () => { setEditingFichaje(fkey); setFichajeInicio((ficha === null || ficha === void 0 ? void 0 : ficha.horaInicio) || ""); setFichajeFin((ficha === null || ficha === void 0 ? void 0 : ficha.horaFin) || ""); setFichajeResultado((ficha === null || ficha === void 0 ? void 0 : ficha.resultado) || "hecho"); } },
+                                        React.createElement(Pencil, { size: 10 }))),
+                                ficha && ficha.tramos && ficha.tramos.length > 1 && React.createElement("div", { style: { fontSize: 10.5, color: "var(--ink-soft)", paddingLeft: 8 } }, ficha.tramos.map((t, ti) => React.createElement("div", { key: ti }, "Tramo ", ti + 1, ": ", t.horaInicio || "?", "\u2013", t.horaFin || React.createElement("span", { style: { color: "var(--accent)", fontWeight: 600 } }, "en curso"))))));
                         }))),
                         adminMode && (s.coordInicio || s.coordFin) && (React.createElement("div", { style: { display: "flex", gap: 10, marginTop: 2, fontSize: 11.5 } },
                             s.coordInicio ? (React.createElement("a", { href: mapsLinkCoord(s.coordInicio), target: "_blank", rel: "noreferrer", style: { fontSize: 11.5 } }, "\uD83D\uDCCD Ver ubicaci\u00F3n de inicio")) : React.createElement("span", { style: { fontSize: 11.5, color: "var(--warn)" } }, "Sin ubicaci\u00F3n de inicio"),
@@ -17945,6 +17964,15 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             cliente.riegoRevisadoPor = nombreTrabajador;
             cliente.revisionesRiego = cliente.revisionesRiego || [];
             cliente.revisionesRiego.push({ trabajador: nombreTrabajador, fecha: todayStr() });
+            // Tiempos metidos para las fases ya existentes \u2014 se vuelcan a la ficha del cliente.
+            if (sel.tiemposFases && cliente.fasesRiego && cliente.fasesRiego.length > 0) {
+                cliente.fasesRiego = cliente.fasesRiego.map(fr => sel.tiemposFases[fr.id] !== undefined && sel.tiemposFases[fr.id] !== "" ? { ...fr, tiempoMin: Number(sel.tiemposFases[fr.id]) || 0, tiempoActualizadoFecha: todayStr(), tiempoActualizadoPor: nombreTrabajador } : fr);
+            }
+            // Si el cliente todav\u00EDa no ten\u00EDa ninguna fase y el trabajador ha dado de alta la primera
+            // sobre el terreno, se crea aqu\u00ED \u2014 as\u00ED queda documentada para las pr\u00F3ximas revisiones.
+            if ((!cliente.fasesRiego || cliente.fasesRiego.length === 0) && sel.nuevaFaseZona && sel.nuevaFaseZona.trim()) {
+                cliente.fasesRiego = [{ id: uid("fr"), zona: sel.nuevaFaseZona.trim(), aparato: sel.nuevaFaseAparato || "difusores", tiempoMin: Number(sel.nuevaFaseTiempo) || 0, tiempoActualizadoFecha: todayStr(), tiempoActualizadoPor: nombreTrabajador }];
+            }
         }
         else if (sel.accion === "on") {
             cliente.riegoEstado = "on";
@@ -18695,7 +18723,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                             React.createElement("b", null, fmtHM(totalDesplazamiento / 60)))) : null;
                     })(),
                     o.stops.map((s, idxStop) => {
-                        var _a, _b, _c, _d, _e, _f;
+                        var _a, _b, _c, _d, _e, _f, _h, _i, _j;
                         const cli = getClient(s.clienteId);
                         const key = o.id + s.clienteId;
                         const miFicha = (s.porTrabajador && s.porTrabajador[workerId]) || null;
@@ -18762,6 +18790,20 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             React.createElement("option", { value: "off" }, "Riego OFF"),
                                             React.createElement("option", { value: "poda" }, "Poda COMPLETA"),
                                             React.createElement("option", { value: "poda_parcial" }, "Poda PARCIAL")),
+                                        ((_e = riegoPodaSel[s.clienteId]) === null || _e === void 0 ? void 0 : _e.accion) === "revision" && (React.createElement("div", { style: { marginTop: 6 } },
+                                            (cli.fasesRiego || []).length > 0 ? (React.createElement(React.Fragment, null,
+                                                React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 4 } }, "Mete el tiempo que ten\u00EDa puesto cada fase:"),
+                                                cli.fasesRiego.map(fr => { var _g; return React.createElement("div", { key: fr.id, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 } },
+                                                    React.createElement("span", { style: { fontSize: 12.5, flex: 1 } }, fr.zona, " (", fr.aparato, ")"),
+                                                    React.createElement("input", { className: "gj-input", type: "number", style: { width: 70 }, placeholder: "min", value: ((_g = riegoPodaSel[s.clienteId]) === null || _g === void 0 ? void 0 : _g.tiemposFases) && riegoPodaSel[s.clienteId].tiemposFases[fr.id] !== undefined ? riegoPodaSel[s.clienteId].tiemposFases[fr.id] : (fr.tiempoMin || ""), onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], tiemposFases: { ...((sel[s.clienteId] && sel[s.clienteId].tiemposFases) || {}), [fr.id]: e.target.value } } })) })); }))) : (React.createElement(React.Fragment, null,
+                                                React.createElement("div", { style: { fontSize: 12, color: "var(--warn)", fontWeight: 600, marginBottom: 4 } }, "\uD83D\uDCA7 Este cliente todav\u00EDa no tiene fases de riego apuntadas. A\u00F1ade la que acabas de revisar:"),
+                                                React.createElement("input", { className: "gj-input", style: { marginBottom: 4 }, placeholder: "Zona: delantera, lateral, goteo de parterres...", value: ((_h = riegoPodaSel[s.clienteId]) === null || _h === void 0 ? void 0 : _h.nuevaFaseZona) || "", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], nuevaFaseZona: e.target.value } })) }),
+                                                React.createElement("div", { style: { display: "flex", gap: 6 } },
+                                                    React.createElement("select", { className: "gj-select", style: { flex: 1 }, value: ((_i = riegoPodaSel[s.clienteId]) === null || _i === void 0 ? void 0 : _i.nuevaFaseAparato) || "difusores", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], nuevaFaseAparato: e.target.value } })) },
+                                                        React.createElement("option", { value: "difusores" }, "Difusores"),
+                                                        React.createElement("option", { value: "aspersores" }, "Aspersores"),
+                                                        React.createElement("option", { value: "goteo" }, "Goteo")),
+                                                    React.createElement("input", { className: "gj-input", type: "number", style: { width: 70 }, placeholder: "min", value: ((_j = riegoPodaSel[s.clienteId]) === null || _j === void 0 ? void 0 : _j.nuevaFaseTiempo) || "", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], nuevaFaseTiempo: e.target.value } })) })))))),
                                         ((_e = riegoPodaSel[s.clienteId]) === null || _e === void 0 ? void 0 : _e.accion) === "poda_parcial" && (React.createElement("div", { style: { marginTop: 6 } },
                                             React.createElement("label", { className: "gj-label" }, "Qu\u00E9 se ha podado"),
                                             React.createElement("input", { className: "gj-input", value: ((_f = riegoPodaSel[s.clienteId]) === null || _f === void 0 ? void 0 : _f.notaPoda) || "", placeholder: "Ej: solo el seto delantero, los arbustos de la entrada...", onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], notaPoda: e.target.value } })) }))),
