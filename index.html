@@ -15884,7 +15884,7 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
         React.createElement("label", { className: "gj-row", style: { marginBottom: 10, cursor: "pointer" } },
             React.createElement("span", { style: { fontSize: 12.5, color: "var(--ink-soft)" } }, "Mostrar importes (cuota / presupuesto), ocultos por defecto"),
             React.createElement("input", { type: "checkbox", checked: showImportes, onChange: e => setShowImportes(e.target.checked) })),
-        editing && React.createElement(ClienteForm, { initial: editing, data: data, onCancel: () => setEditing(null), onSave: save }),
+        editing && React.createElement(ClienteForm, { key: editing.id || "nuevo", initial: editing, data: data, onCancel: () => setEditing(null), onSave: save }),
         React.createElement("h3", { className: "gj-h3" }, "Clientes de mantenimiento"),
         (() => {
             const totalMant = data.clients.filter(c => c.esMantenimiento).length;
