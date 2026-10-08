@@ -17831,6 +17831,19 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         setMaterialStockId("");
     };
     const quitarLineaMaterial = (id) => setMaterialesLista(materialesLista.filter(m => m.id !== id));
+    const seleccionarObraMaterial = (obraId) => {
+        setMaterialObraId(obraId);
+        if (almacenEnCursoId) {
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                const order = next.orders.find(o => o.id === almacenEnCursoId.orderId);
+                const act = order && (order.actividadesExtra || []).find(a => a.id === almacenEnCursoId.actividadId);
+                if (act)
+                    act.obraId = obraId || null;
+                return next;
+            });
+        }
+    };
     const subirFotoAlbaran = async (files) => {
         const archivos = Array.from(files || []);
         if (archivos.length === 0)
@@ -18872,7 +18885,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                     React.createElement("input", { className: "gj-input", type: "file", accept: "image/*", onChange: e => { subirFotoAlbaran(e.target.files); e.target.value = ""; } }),
                                     materialFoto && React.createElement("img", { src: materialFoto, style: { maxWidth: 120, marginTop: 6, borderRadius: 4, display: "block" } }),
                                     React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "\u00BFPara qu\u00E9 obra son estos materiales?"),
-                                    React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => setMaterialObraId(e.target.value) },
+                                    React.createElement("select", { className: "gj-select", value: materialObraId, onChange: e => seleccionarObraMaterial(e.target.value) },
                                         React.createElement("option", { value: "" }, "Selecciona la obra..."),
                                         data.clients.filter(c => c.esObra && c.estadoObra !== "finalizada").map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre + (c.referenciaObra ? " — " + c.referenciaObra : "")))),
                                     React.createElement("div", { className: "gj-label", style: { marginTop: 10 } }, "Materiales"),
@@ -18959,8 +18972,8 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             " (en ",
                                             m.enTaller.lugar,
                                             ")"))))))))))),
-                        (almacenEnCursoId && almacenEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: finalizarRecogidaMaterial }, "Finalizar recogida")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))) || (extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar")),
-                        extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 4 } }, "\u26A0\uFE0F Elige a qu\u00E9 obra van estos materiales antes de pulsar Iniciar \u2014 si no, no quedar\u00E1n asociados a ninguna obra.")),
+                        (almacenEnCursoId && almacenEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: finalizarRecogidaMaterial }, "Finalizar recogida")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar")),
+                        extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 4 } }, "\u26A0\uFE0F Recuerda elegir a qu\u00E9 obra van estos materiales antes de pulsar \"Finalizar recogida\" \u2014 puedes hacerlo con calma despu\u00E9s de fotografiar el albar\u00E1n, no hace falta saberlo ya para empezar.")),
                         extraCategoria !== "carga" && adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
                             React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
                             React.createElement("button", { className: "gj-btn ghost", onClick: () => añadirOpcionListaFichaje(extraCategoria) }, "A\u00F1adir"))),
