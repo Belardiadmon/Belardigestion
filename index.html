@@ -13717,6 +13717,11 @@ function fechaEs(iso) {
 function diasEnAnio(year) {
     return (new Date(year, 1, 29).getMonth() === 1) ? 366 : 365;
 }
+function fasesRiegoReales(cliente) {
+    // Una fase "+ A\u00F1adir fase" sin rellenar (zona vac\u00EDa) no cuenta como documentada \u2014 solo las que
+    // de verdad tienen una zona escrita, para que el indicador y el contador reflejen datos reales.
+    return ((cliente === null || cliente === void 0 ? void 0 : cliente.fasesRiego) || []).filter(fr => fr.zona && fr.zona.trim());
+}
 function festivoColor(tipo) {
     if (tipo === "oficial")
         return "#4ADE80"; // verde
@@ -15783,7 +15788,8 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
             React.createElement("div", null,
                 React.createElement("div", { style: { fontWeight: 600, display: "flex", alignItems: "center", gap: 5 } },
                     c.nombre,
-                    c.esMantenimiento && React.createElement("span", { title: (c.fasesRiego || []).length > 0 ? `${c.fasesRiego.length} fase(s) de riego documentadas` : "Sin fases de riego documentadas todav\u00EDa", style: { fontSize: 12, color: (c.fasesRiego || []).length > 0 ? "#16A34A" : "#D1D5DB" } }, "\uD83D\uDCA7")),
+                    c.esMantenimiento && React.createElement("span", { title: fasesRiegoReales(c).length > 0 ? `${fasesRiegoReales(c).length} fase(s) de riego documentadas` : "Sin fases de riego documentadas todav\u00EDa", style: { fontSize: 12, color: fasesRiegoReales(c).length > 0 ? "#16A34A" : "#D1D5DB" } }, "\uD83D\uDCA7")),
+                c.esMantenimiento && fasesRiegoReales(c).length > 0 && React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 1 } }, fasesRiegoReales(c).map(fr => `${fr.zona} (${fr.aparato}${fr.tiempoMin ? ", " + fr.tiempoMin + " min" : ""})`).join(" \u00B7 ")),
                 c.obraDeClienteId && (() => {
                     const origen = data.clients.find(x => x.id === c.obraDeClienteId);
                     return origen && React.createElement("div", { style: { fontSize: 11, color: "var(--primary)" } }, "\uD83D\uDD17 Obra de ", origen.nombre, " (cliente de mantenimiento)");
@@ -15888,7 +15894,7 @@ function ClientesView({ data, persist, setView, setFocusClienteId, focusClienteI
         React.createElement("h3", { className: "gj-h3" }, "Clientes de mantenimiento"),
         (() => {
             const totalMant = data.clients.filter(c => c.esMantenimiento).length;
-            const conFases = data.clients.filter(c => c.esMantenimiento && (c.fasesRiego || []).length > 0).length;
+            const conFases = data.clients.filter(c => c.esMantenimiento && fasesRiegoReales(c).length > 0).length;
             return totalMant > 0 && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 6 } }, "\uD83D\uDCA7 ", conFases, " de ", totalMant, " clientes con fases de riego documentadas");
         })(),
         mantenimiento.length === 0 && React.createElement("div", { className: "gj-card gj-empty" }, filtroTexto ? "Ningún cliente de mantenimiento coincide con la búsqueda." : "Todavía no hay clientes de mantenimiento."),
@@ -17965,12 +17971,12 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             cliente.revisionesRiego = cliente.revisionesRiego || [];
             cliente.revisionesRiego.push({ trabajador: nombreTrabajador, fecha: todayStr() });
             // Tiempos metidos para las fases ya existentes \u2014 se vuelcan a la ficha del cliente.
-            if (sel.tiemposFases && cliente.fasesRiego && cliente.fasesRiego.length > 0) {
+            if (sel.tiemposFases && fasesRiegoReales(cliente).length > 0) {
                 cliente.fasesRiego = cliente.fasesRiego.map(fr => sel.tiemposFases[fr.id] !== undefined && sel.tiemposFases[fr.id] !== "" ? { ...fr, tiempoMin: Number(sel.tiemposFases[fr.id]) || 0, tiempoActualizadoFecha: todayStr(), tiempoActualizadoPor: nombreTrabajador } : fr);
             }
             // Si el cliente todav\u00EDa no ten\u00EDa ninguna fase y el trabajador ha dado de alta la primera
             // sobre el terreno, se crea aqu\u00ED \u2014 as\u00ED queda documentada para las pr\u00F3ximas revisiones.
-            if ((!cliente.fasesRiego || cliente.fasesRiego.length === 0) && sel.nuevaFaseZona && sel.nuevaFaseZona.trim()) {
+            if (fasesRiegoReales(cliente).length === 0 && sel.nuevaFaseZona && sel.nuevaFaseZona.trim()) {
                 cliente.fasesRiego = [{ id: uid("fr"), zona: sel.nuevaFaseZona.trim(), aparato: sel.nuevaFaseAparato || "difusores", tiempoMin: Number(sel.nuevaFaseTiempo) || 0, tiempoActualizadoFecha: todayStr(), tiempoActualizadoPor: nombreTrabajador }];
             }
         }
@@ -18791,9 +18797,9 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             React.createElement("option", { value: "poda" }, "Poda COMPLETA"),
                                             React.createElement("option", { value: "poda_parcial" }, "Poda PARCIAL")),
                                         ((_e = riegoPodaSel[s.clienteId]) === null || _e === void 0 ? void 0 : _e.accion) === "revision" && (React.createElement("div", { style: { marginTop: 6 } },
-                                            (cli.fasesRiego || []).length > 0 ? (React.createElement(React.Fragment, null,
+                                            fasesRiegoReales(cli).length > 0 ? (React.createElement(React.Fragment, null,
                                                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginBottom: 4 } }, "Mete el tiempo que ten\u00EDa puesto cada fase:"),
-                                                cli.fasesRiego.map(fr => { var _g; return React.createElement("div", { key: fr.id, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 } },
+                                                fasesRiegoReales(cli).map(fr => { var _g; return React.createElement("div", { key: fr.id, style: { display: "flex", alignItems: "center", gap: 6, marginBottom: 4 } },
                                                     React.createElement("span", { style: { fontSize: 12.5, flex: 1 } }, fr.zona, " (", fr.aparato, ")"),
                                                     React.createElement("input", { className: "gj-input", type: "number", style: { width: 70 }, placeholder: "min", value: ((_g = riegoPodaSel[s.clienteId]) === null || _g === void 0 ? void 0 : _g.tiemposFases) && riegoPodaSel[s.clienteId].tiemposFases[fr.id] !== undefined ? riegoPodaSel[s.clienteId].tiemposFases[fr.id] : (fr.tiempoMin || ""), onChange: e => setRiegoPodaSel(sel => ({ ...sel, [s.clienteId]: { ...sel[s.clienteId], tiemposFases: { ...((sel[s.clienteId] && sel[s.clienteId].tiemposFases) || {}), [fr.id]: e.target.value } } })) })); }))) : (React.createElement(React.Fragment, null,
                                                 React.createElement("div", { style: { fontSize: 12, color: "var(--warn)", fontWeight: 600, marginBottom: 4 } }, "\uD83D\uDCA7 Este cliente todav\u00EDa no tiene fases de riego apuntadas. A\u00F1ade la que acabas de revisar:"),
