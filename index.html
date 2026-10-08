@@ -16951,6 +16951,29 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
             return next;
         });
     };
+    const reabrirParada = (orderId, clienteId) => {
+        const order = data.orders.find(o => o.id === orderId);
+        const stop = order === null || order === void 0 ? void 0 : order.stops.find(s => s.clienteId === clienteId);
+        const cli = getClient(clienteId);
+        if (!confirm(`¿Reabrir "${(cli === null || cli === void 0 ? void 0 : cli.nombre) || ""}"? Pasa de "Hecho" a "En curso" otra vez, para que el trabajador pueda retomarla y completar lo que falte, hoy mismo.`))
+            return;
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === orderId);
+            const stop = order.stops.find(s => s.clienteId === clienteId);
+            stop.estado = "en_progreso";
+            stop.resultado = null;
+            // A cada trabajador que la hubiera marcado como hecha se le vuelve a abrir también, para
+            // que le aparezca "Reanudar" en su Fichar y pueda a\u00F1adir un tramo nuevo hoy mismo.
+            Object.keys(stop.porTrabajador || {}).forEach(wid => {
+                const pt = stop.porTrabajador[wid];
+                if (pt && pt.estado === "completado") {
+                    pt.estado = "en_progreso";
+                }
+            });
+            return next;
+        });
+    };
     const actualizarExcepcionHorario = (orderId, workerId, campo, valor) => {
         persistConReintento(base => {
             const next = structuredClone(base);
@@ -17153,6 +17176,7 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
                                 (cli === null || cli === void 0 ? void 0 : cli.referenciaObra) ? ` — ${cli.referenciaObra}` : ""),
                             React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 4 } },
                                 React.createElement("span", { className: "gj-badge " + (s.resultado === "no_hecho" ? "no_hecho" : s.estado) }, s.resultado === "no_hecho" ? "no hecho" : s.estado.replace("_", " ")),
+                                adminMode && s.estado === "completado" && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px", fontSize: 10.5 }, title: "Reabrir esta parada para completarla hoy mismo", onClick: () => reabrirParada(o.id, s.clienteId) }, "\u21BA Reabrir"),
                                 adminMode && React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 5px" }, title: "Quitar esta parada de la ruta", onClick: () => quitarParadaDeRuta(o.id, s.clienteId) },
                                     React.createElement(Trash2, { size: 12, color: "var(--warn)" })))),
                         adminMode && o.workerIds.length > 0 && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 4 } }, o.workerIds.map(wid => {
