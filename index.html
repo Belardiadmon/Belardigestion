@@ -17404,6 +17404,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const fcGpsRef = useRef(null);
     const enviandoActividadRef = useRef(false); // evita que varios toques seguidos en "Iniciar" (mientras se espera al GPS) creen varias actividades duplicadas
     const finalizandoActividadRef = useRef(false); // lo mismo, para "Finalizar"
+    const enviandoParadaRef = useRef(false); // lo mismo, para "Iniciar" una parada (mantenimiento/obra)
     const fcCoordRef = useRef(undefined);
     const [fcObsTexto, setFcObsTexto] = useState("");
     const [materialParadaAbierta, setMaterialParadaAbierta] = useState(null); // key = orderId+clienteId
@@ -17494,8 +17495,10 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const [materialObraId, setMaterialObraId] = useState("");
     const [materialFoto, setMaterialFoto] = useState(null);
     const [almacenEnCursoId, setAlmacenEnCursoId] = useState(null); // { orderId, actividadId } de una recogida de material aún abierta
+    const [actividadGenericaEnCursoId, setActividadGenericaEnCursoId] = useState(null); // { orderId, actividadId, categoria, nombreCategoria } de una Carga/Repostaje/Taller (sin recogida) aún abierta
     const [extraNuevaMaquina, setExtraNuevaMaquina] = useState("");
     const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
+    const [paradaSinCerrar, setParadaSinCerrar] = useState(null);
     const [notaTexto, setNotaTexto] = useState("");
     if (worker && worker.activo === false && !adminMode) {
         return (React.createElement("div", { className: "gj-card", style: { textAlign: "center", padding: 24 } },
@@ -17630,6 +17633,15 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             enviandoActividadRef.current = false;
             return;
         }
+        // Si ya hay una Carga/Repostaje/Taller (o una recogida de material) sin finalizar, no se deja
+        // empezar esta otra \u2014 hay que ir a finalizarla primero. El almuerzo sigue siendo la \u00FAnica
+        // excepci\u00F3n: ese cierra solo lo que haya abierto, para no obligar a nadie a hacer papeleo antes
+        // de poder comer.
+        if (actividadGenericaEnCursoId || almacenEnCursoId) {
+            alert(`Todav\u00EDa tienes "${(actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material"}" sin finalizar.\n\nFinal\u00EDzala antes de empezar esta otra.`);
+            enviandoActividadRef.current = false;
+            return;
+        }
         const esRecogidaMaterial = categoria === "almacenes" && extraTipoTaller === "consumibles";
         // Si se han rellenado los campos de un material pero no se ha pulsado "Añadir a la lista" antes
         // de pulsar "Iniciar", se añade igualmente aquí, para no perder esa línea por un paso olvidado.
@@ -17680,6 +17692,11 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             if (!order.entradaMananaHora) {
                 order.entradaMananaHora = horaAhora;
             }
+            // Si persistConReintento tiene que reintentar por un conflicto de sincronización (p.ej. con
+            // poca cobertura), esta misma función se vuelve a ejecutar entera \u2014 sin esta comprobación,
+            // el .push() de abajo crear\u00EDa una segunda actividad id\u00E9ntica en cada reintento.
+            if (order.actividadesExtra.some(a => a.id === idActividadNueva))
+                return next;
             order.actividadesExtra.push({
                 id: idActividadNueva, categoria, lugar, horaInicio: horaAhora, horaFin: null, coordInicio: null, coordFin: null, trabajador: nombreTrabajador, workerId,
                 tipoTaller: esTallerAlmacen ? extraTipoTaller : null,
@@ -17744,6 +17761,8 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             setMaterialCantidadUsada("");
         }
         else {
+            const nombreCategoria = categoria === "repostaje" ? "Repostaje" : categoria === "talleres" ? "Taller" : categoria === "carga" ? "Carga y descarga en nave" : categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
+            setActividadGenericaEnCursoId({ orderId, actividadId: idActividadNueva, categoria, nombreCategoria });
             setExtraAbierto(null);
             setExtraCategoria(null);
             setExtraLugar("");
@@ -18125,60 +18144,24 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         });
     };
     const iniciarPrimeraParada = async (orderId, clienteId) => {
-        const orderChkJ = data.orders.find(o => o.id === orderId);
-        const miJornadaChk = orderChkJ && orderChkJ.porTrabajadorJornada && orderChkJ.porTrabajadorJornada[workerId];
-        if (miJornadaChk === null || miJornadaChk === void 0 ? void 0 : miJornadaChk.salidaHora) {
-            alert("Tu jornada ya est\u00E1 finalizada hoy. Si te han asignado trabajo nuevo, pide a un administrador que te reabra la jornada desde Rutas antes de empezar \u2014 as\u00ED este tiempo cuenta correctamente.");
-            return;
-        }
-        const hora = nowTime();
-        persistConReintento(base => {
+        // Solo se encarga de marcar la entrada de jornada si todav\u00EDa no estaba (caso t\u00EDpico: la
+        // primera parada del d\u00EDa). El resto \u2014 bloqueos, comprobaciones, y el inicio de la parada en
+        // s\u00ED \u2014 lo hace iniciarParada, as\u00ED que toda protecci\u00F3n que tenga esa (contra toques repetidos,
+        // contra actividades sin cerrar, etc.) se aplica aqu\u00ED tambi\u00E9n sin tener que repetirla.
+        await persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
-            const stop = order.stops.find(s => s.clienteId === clienteId);
-            stop.porTrabajador = stop.porTrabajador || {};
-            stop.porTrabajador[workerId] = { ...(stop.porTrabajador[workerId] || {}), estado: "en_progreso", horaInicio: hora, coordInicio: null, avisoUbicacionInicio: false, tramos: [{ horaInicio: hora, coordInicio: null, horaFin: null, coordFin: null }] };
-            if (stop.estado === "pendiente") {
-                stop.estado = "en_progreso";
-                stop.horaInicio = hora;
-                stop.coordInicio = null;
-                stop.avisoUbicacionInicio = false;
-            }
             order.porTrabajadorJornada = order.porTrabajadorJornada || {};
             if (!order.porTrabajadorJornada[workerId] || !order.porTrabajadorJornada[workerId].entradaHora) {
-                order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: hora, entradaCoord: null };
+                order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: nowTime(), entradaCoord: null };
             }
             if (!order.entradaMananaHora) {
-                order.entradaMananaHora = hora;
+                order.entradaMananaHora = nowTime();
                 order.entradaMananaCoord = null;
             }
             return next;
         });
-        aplicarUbicacionEnSegundoPlano((base, coord) => {
-            const next = structuredClone(base);
-            const order = next.orders.find(o => o.id === orderId);
-            const stop = order.stops.find(s => s.clienteId === clienteId);
-            const cliente = next.clients.find(c => c.id === clienteId);
-            const aviso = avisoUbicacionCliente(coord, cliente);
-            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
-            if (mia && mia.horaInicio === hora) {
-                mia.coordInicio = coord;
-                mia.avisoUbicacionInicio = aviso;
-                if (mia.tramos && mia.tramos.length > 0)
-                    mia.tramos[mia.tramos.length - 1].coordInicio = coord;
-            }
-            if (stop.horaInicio === hora) {
-                stop.coordInicio = coord;
-                stop.avisoUbicacionInicio = aviso;
-            }
-            if (order.porTrabajadorJornada && order.porTrabajadorJornada[workerId] && order.porTrabajadorJornada[workerId].entradaHora === hora) {
-                order.porTrabajadorJornada[workerId].entradaCoord = coord;
-            }
-            if (order.entradaMananaHora === hora) {
-                order.entradaMananaCoord = coord;
-            }
-            return next;
-        });
+        await iniciarParada(orderId, clienteId);
     };
     const aplicarUbicacionEnSegundoPlano = (patchConUbicacion) => {
         getPosicionActual().then(coord => {
@@ -18187,11 +18170,39 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             persistConReintento(base => patchConUbicacion(base, coord));
         });
     };
+    const resolverParadaSinCerrar = (cerrarTambien) => {
+        const info = paradaSinCerrar;
+        if (!info)
+            return;
+        setParadaSinCerrar(null);
+        if (!cerrarTambien)
+            return; // el trabajador dice que sigue allí de verdad; no se toca nada, que cierre él cuando acabe
+        const hora = nowTime();
+        persistConReintento(base => {
+            const next = structuredClone(base);
+            const order = next.orders.find(o => o.id === info.orderId);
+            const stop = order.stops.find(s => s.clienteId === info.clienteIdAbierta);
+            const mia = stop.porTrabajador && stop.porTrabajador[workerId];
+            if (mia && mia.estado === "en_progreso") {
+                const ultimo = mia.tramos && mia.tramos[mia.tramos.length - 1];
+                if (ultimo && !ultimo.horaFin)
+                    ultimo.horaFin = hora;
+                mia.estado = "completado";
+                mia.resultado = stop.resultado || "hecho";
+                mia.horaFin = hora;
+            }
+            return next;
+        });
+    };
     const iniciarParada = async (orderId, clienteId) => {
+        if (enviandoParadaRef.current)
+            return; // ya hay un "Iniciar" en marcha; se ignoran los toques repetidos mientras tanto
+        enviandoParadaRef.current = true;
         const orderChkJ2 = data.orders.find(o => o.id === orderId);
         const miJornadaChk2 = orderChkJ2 && orderChkJ2.porTrabajadorJornada && orderChkJ2.porTrabajadorJornada[workerId];
         if (miJornadaChk2 === null || miJornadaChk2 === void 0 ? void 0 : miJornadaChk2.salidaHora) {
             alert("Tu jornada ya est\u00E1 finalizada hoy. Si te han asignado trabajo nuevo, pide a un administrador que te reabra la jornada desde Rutas antes de empezar \u2014 as\u00ED este tiempo cuenta correctamente.");
+            enviandoParadaRef.current = false;
             return;
         }
         // Si este trabajador tiene CUALQUIER OTRA parada todavía abierta (en progreso, sin marcar
@@ -18210,6 +18221,15 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         if (otraAbierta) {
             const cliAnterior = getClient(otraAbierta.clienteId);
             const cliNuevo = getClient(clienteId);
+            // Si un compañero de cuadrilla ya cerró esta otra parada (Hecho o No hecho) mientras tu parte
+            // seguía abierta, se te ofrece cerrarla también \u2014 pero la decisión es tuya: puede que tu
+            // compañero marcara que él no pudo hacerlo y tú sigas trabajando allí de verdad, así que
+            // nunca se cierra sola.
+            if (otraAbierta.estado === "completado") {
+                setParadaSinCerrar({ orderId, clienteIdAbierta: otraAbierta.clienteId, clienteIdNuevo: clienteId, nombreAnterior: (cliAnterior === null || cliAnterior === void 0 ? void 0 : cliAnterior.nombre) || "la parada anterior", resultadoCompanero: otraAbierta.resultado === "no_hecho" ? "no hecho" : "hecho" });
+                enviandoParadaRef.current = false;
+                return;
+            }
             alert(`Todavía tienes "${(cliAnterior === null || cliAnterior === void 0 ? void 0 : cliAnterior.nombre) || "la parada anterior"}" sin cerrar (sin marcar Hecho).\n\nVuelve a esa parada y pulsa "Hecho" antes de iniciar esta otra.`);
             persistConReintento(base => {
                 const next = structuredClone(base);
@@ -18221,20 +18241,20 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 });
                 return next;
             });
+            enviandoParadaRef.current = false;
+            return;
+        }
+        // Lo mismo si tiene una Carga/Repostaje/Taller (o una recogida de material) todavía sin
+        // finalizar: se le recuerda que la cierre primero, en vez de cerrarla sola por él.
+        if (actividadGenericaEnCursoId || almacenEnCursoId) {
+            alert(`Todavía tienes "${(actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material"}" sin finalizar.\n\nFinalízala antes de iniciar esta parada.`);
+            enviandoParadaRef.current = false;
             return;
         }
         const hora = nowTime();
-        persistConReintento(base => {
+        await persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
-            // Por si quedó una actividad de Carga/Almacén/Talleres sin finalizar (p.ej. se le olvidó
-            // pulsar "Finalizar"), se cierra aquí al iniciar la parada nueva, para que no se solape con
-            // el tiempo de la parada.
-            (order.actividadesExtra || []).forEach(act => {
-                if (act.workerId === workerId && !act.horaFin) {
-                    act.horaFin = hora;
-                }
-            });
             const miAlmuerzoAbierto2 = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
             if (miAlmuerzoAbierto2 && miAlmuerzoAbierto2.inicio && !miAlmuerzoAbierto2.fin) {
                 miAlmuerzoAbierto2.fin = hora;
@@ -18272,6 +18292,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             }
             return next;
         });
+        enviandoParadaRef.current = false;
     };
     const reanudarParada = async (orderId, clienteId) => {
         const orderChkJ3 = data.orders.find(o => o.id === orderId);
@@ -19068,7 +19089,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                                             " (en ",
                                             m.enTaller.lugar,
                                             ")"))))))))))),
-                        (almacenEnCursoId && almacenEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: finalizarRecogidaMaterial }, "Finalizar recogida")) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar")),
+                        (almacenEnCursoId && almacenEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: finalizarRecogidaMaterial }, "Finalizar recogida")) : (actividadGenericaEnCursoId && actividadGenericaEnCursoId.orderId === o.id) ? (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, onClick: () => { finalizarActividadExtra(actividadGenericaEnCursoId.orderId, actividadGenericaEnCursoId.actividadId); setActividadGenericaEnCursoId(null); } }, "Finalizar ", actividadGenericaEnCursoId.nombreCategoria.toLowerCase())) : (React.createElement("button", { className: "gj-btn primary block", style: { marginTop: 6 }, disabled: !extraLugar || ((extraCategoria === "talleres" || extraCategoria === "almacenes") && (!extraTipoTaller || (extraTipoTaller !== "consumibles" && !extraMaquinaId))), onClick: () => iniciarActividadExtra(o.id, extraCategoria, extraLugar) }, "Iniciar")),
                         extraCategoria === "almacenes" && extraTipoTaller === "consumibles" && (materialesLista.length > 0 || materialNombre || materialStockId) && !materialObraId && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--warn)", marginTop: 4 } }, "\u26A0\uFE0F Recuerda elegir a qu\u00E9 obra van estos materiales antes de pulsar \"Finalizar recogida\" \u2014 puedes hacerlo con calma despu\u00E9s de fotografiar el albar\u00E1n, no hace falta saberlo ya para empezar.")),
                         extraCategoria !== "carga" && adminMode && (React.createElement("div", { className: "gj-row", style: { gap: 6, marginTop: 8 } },
                             React.createElement("input", { className: "gj-input", value: extraNuevoLugar, onChange: e => setExtraNuevoLugar(e.target.value), placeholder: "A\u00F1adir opci\u00F3n a esta lista" }),
@@ -19125,7 +19146,13 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
                 })()));
     const modalFotoAlbaranParada = fotoAlbaranParadaGrande && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.85)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 }, onClick: () => setFotoAlbaranParadaGrande(null) },
         React.createElement("img", { src: fotoAlbaranParadaGrande, style: { maxWidth: "100%", maxHeight: "100%", borderRadius: 6 } }));
-    return React.createElement(React.Fragment, null, contenidoPrincipalFichar, modalFlujoCierre, modalFotoAlbaranParada);
+    const modalParadaSinCerrar = paradaSinCerrar && React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.6)", zIndex: 999, display: "flex", alignItems: "center", justifyContent: "center", padding: 16 } },
+        React.createElement("div", { className: "gj-card", style: { maxWidth: 380 } },
+            React.createElement("div", { style: { fontWeight: 600, marginBottom: 8 } }, "Todav\u00EDa tienes \"", paradaSinCerrar.nombreAnterior, "\" sin cerrar"),
+            React.createElement("div", { style: { fontSize: 13, marginBottom: 14 } }, "Tu compa\u00F1ero/a ya la marc\u00F3 como \"", paradaSinCerrar.resultadoCompanero, "\". \u00BFTu parte tambi\u00E9n est\u00E1 terminada ah\u00ED, o sigues trabajando?"),
+            React.createElement("button", { className: "gj-btn primary block", style: { marginBottom: 6 }, onClick: () => resolverParadaSinCerrar(true) }, "S\u00ED, ya he terminado \u2014 cerrar tambi\u00E9n mi parte"),
+            React.createElement("button", { className: "gj-btn ghost block", onClick: () => resolverParadaSinCerrar(false) }, "No, sigo trabajando ah\u00ED \u2014 cancelar")));
+    return React.createElement(React.Fragment, null, contenidoPrincipalFichar, modalFlujoCierre, modalFotoAlbaranParada, modalParadaSinCerrar);
 }
 function MaquinariaEnTalleresView({ data }) {
     const maquinasFuera = (data.maquinaria || []).filter(m => m.enTaller).sort((a, b) => (a.numero || 0) - (b.numero || 0));
@@ -19760,13 +19787,30 @@ function SolicitudesVacacionesView({ data, persist, getWorker }) {
 }
 function EpisView({ data, persist }) {
     const ITEMS_EPI = [
-        { grupo: "EPIs", items: ["Gafas de protecci\u00F3n", "Guantes", "Chaleco"] },
+        { grupo: "EPIs", items: ["Gafas de protecci\u00F3n", "Guantes", "Chaleco", "Casco"] },
         { grupo: "Ropa de trabajo", items: ["Botas", "Pantal\u00F3n", "Polo", "Jersey", "Chubasquero"] },
     ];
+    // Lo que se vaya añadiendo a mano con "+ Otro (añadir nuevo)" se guarda aquí, para que la próxima
+    // vez ya aparezca en el desplegable sin tener que volver a escribirlo.
+    const itemsEpiConExtras = ITEMS_EPI.concat((data.listaEpiExtra || []).length > 0 ? [{ grupo: "Otros", items: data.listaEpiExtra }] : []);
     const [workerId, setWorkerId] = useState("");
     const [item, setItem] = useState("");
+    const [itemNuevoTexto, setItemNuevoTexto] = useState("");
     const [talla, setTalla] = useState("");
     const [notas, setNotas] = useState("");
+    const añadirItemNuevoALista = () => {
+        const texto = itemNuevoTexto.trim();
+        if (!texto)
+            return;
+        const next = structuredClone(data);
+        next.listaEpiExtra = next.listaEpiExtra || [];
+        if (!next.listaEpiExtra.includes(texto)) {
+            next.listaEpiExtra.push(texto);
+            persist(next);
+        }
+        setItem(texto);
+        setItemNuevoTexto("");
+    };
     const trabajadores = data.workers.slice().sort((a, b) => a.nombre.localeCompare(b.nombre));
     const entregas = (data.entregasEpi || []).filter(e => e.workerId === workerId).slice().sort((a, b) => b.fecha.localeCompare(a.fecha));
     const añadirEntrega = () => {
@@ -19799,9 +19843,13 @@ function EpisView({ data, persist }) {
                 React.createElement("div", { className: "gj-h3" }, "Registrar entrega"),
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Prenda / equipo"),
-                    React.createElement("select", { className: "gj-select", value: item, onChange: e => setItem(e.target.value) },
+                    React.createElement("select", { className: "gj-select", value: item === null || (itemsEpiConExtras.some(g => g.items.includes(item))) ? item : "__nuevo__", onChange: e => { if (e.target.value === "__nuevo__") { setItem(""); } else { setItem(e.target.value); } } },
                         React.createElement("option", { value: "" }, "Selecciona..."),
-                        ITEMS_EPI.map(g => React.createElement("optgroup", { key: g.grupo, label: g.grupo }, g.items.map(it => React.createElement("option", { key: it, value: it }, it)))))),
+                        itemsEpiConExtras.map(g => React.createElement("optgroup", { key: g.grupo, label: g.grupo }, g.items.map(it => React.createElement("option", { key: it, value: it }, it)))),
+                        React.createElement("option", { value: "__nuevo__" }, "+ Otro (a\u00F1adir nuevo)")),
+                    !itemsEpiConExtras.some(g => g.items.includes(item)) && (React.createElement("div", { style: { display: "flex", gap: 6, marginTop: 4 } },
+                        React.createElement("input", { className: "gj-input", value: itemNuevoTexto, placeholder: "Nombre del equipo o prenda nuevo...", onChange: e => setItemNuevoTexto(e.target.value) }),
+                        React.createElement("button", { className: "gj-btn ghost", disabled: !itemNuevoTexto.trim(), onClick: añadirItemNuevoALista }, "A\u00F1adir")))),
                 React.createElement("div", { className: "gj-grid2" },
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "Talla (opcional)"),
