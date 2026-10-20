@@ -14787,7 +14787,8 @@ function App() {
     // de avisar y parar, vuelve a aplicar la MISMA acción sobre los datos ya actualizados y lo
     // reintenta sola, hasta 3 veces, sin que el trabajador tenga que darse cuenta ni volver a pulsar.
     // patchFn recibe los datos base (clonados ya por el propio patchFn) y debe devolver el nuevo "next".
-    const persistConReintento = useCallback(async (patchFn) => {
+    const persistQueueRef = useRef(Promise.resolve());
+    const persistConReintentoInterno = async (patchFn) => {
         let base = dataRef.current;
         for (let intento = 1; intento <= 3; intento++) {
             const next = patchFn(base);
@@ -14818,6 +14819,15 @@ function App() {
         }
         setSaveError("conflicto");
         return false;
+    };
+    const persistConReintento = useCallback((patchFn) => {
+        // Si dos acciones se encadenan muy seguidas (iniciar, terminar, ir a lo siguiente...), cada
+        // guardado espera aquí a que el anterior haya terminado del todo \u2014 incluida la respuesta del
+        // servidor \u2014 antes de empezar el suyo propio. Así nunca viajan dos guardados a la vez por la
+        // red, que es lo que podía hacer que uno "pisara" al otro y se perdiera un fichaje reciente.
+        const tanda = persistQueueRef.current.then(() => persistConReintentoInterno(patchFn), () => persistConReintentoInterno(patchFn));
+        persistQueueRef.current = tanda.catch(() => {});
+        return tanda;
     }, []);
     useEffect(() => {
         if (!data)
