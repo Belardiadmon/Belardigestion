@@ -14999,6 +14999,10 @@ function App() {
           .gj{ background:#fff; padding-bottom:0; }
           .gj-main{ max-width:100%; padding:0; }
           @page{ margin: 2.2cm 1.8cm; }
+          /* Por defecto, el navegador quita los colores de fondo al imprimir para ahorrar tinta —
+             esto obliga a mantenerlos, imprescindible para el calendario de vacaciones/bajas/permisos
+             y para cualquier otra cosa que dependa de un color para entenderse. */
+          *{ -webkit-print-color-adjust:exact !important; color-adjust:exact !important; print-color-adjust:exact !important; }
         }
       `),
         deviceWorkerId === undefined ? (React.createElement("div", { style: { display: "flex", alignItems: "center", justifyContent: "center", minHeight: 320, gap: 8 } },
@@ -17005,12 +17009,23 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
             const stop = order.stops.find(s => s.clienteId === clienteId);
             stop.estado = "en_progreso";
             stop.resultado = null;
+            stop.horaFin = null;
             // A cada trabajador que la hubiera marcado como hecha se le vuelve a abrir también, para
-            // que le aparezca "Reanudar" en su Fichar y pueda a\u00F1adir un tramo nuevo hoy mismo.
+            // que le aparezca "Reanudar" en su Fichar y pueda a\u00F1adir un tramo nuevo hoy mismo. Se
+            // limpia tambi\u00E9n la hora de fin que tuviera guardada \u2014 si no, queda en un estado mezclado
+            // ("en progreso" pero con una hora de fin de antes todav\u00EDa puesta), que puede confundir al
+            // formulario de correcci\u00F3n manual del administrador cuando intenta volver a cerrarla.
             Object.keys(stop.porTrabajador || {}).forEach(wid => {
                 const pt = stop.porTrabajador[wid];
                 if (pt && pt.estado === "completado") {
                     pt.estado = "en_progreso";
+                    pt.horaFin = null;
+                    pt.resultado = null;
+                    if (pt.tramos && pt.tramos.length > 0) {
+                        const ultimo = pt.tramos[pt.tramos.length - 1];
+                        if (ultimo.horaFin)
+                            ultimo.horaFin = null;
+                    }
                 }
             });
             return next;
@@ -17506,6 +17521,29 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     const [materialFoto, setMaterialFoto] = useState(null);
     const [almacenEnCursoId, setAlmacenEnCursoId] = useState(null); // { orderId, actividadId } de una recogida de material aún abierta
     const [actividadGenericaEnCursoId, setActividadGenericaEnCursoId] = useState(null); // { orderId, actividadId, categoria, nombreCategoria } de una Carga/Repostaje/Taller (sin recogida) aún abierta
+    // Si la app se recarga (se queda en segundo plano, pierde cobertura un momento, etc.) estos dos
+    // estados se pierden, aunque la actividad siga bien guardada por dentro — sin esto, el botón
+    // "Finalizar" desaparecería y el trabajador no tendría forma de cerrarla. Al cargar o cambiar de
+    // datos, se recupera aquí mismo desde lo que ya está guardado, nunca desde la memoria de la pantalla.
+    useEffect(() => {
+        if (!workerId || !data)
+            return;
+        for (const o of data.orders || []) {
+            if (!o.workerIds || !o.workerIds.includes(workerId))
+                continue;
+            const abierta = (o.actividadesExtra || []).find(a => a.workerId === workerId && !a.horaFin);
+            if (!abierta)
+                continue;
+            if (abierta.categoria === "almacenes" && abierta.tipoTaller === "consumibles") {
+                setAlmacenEnCursoId(prev => (prev && prev.actividadId === abierta.id) ? prev : { orderId: o.id, actividadId: abierta.id });
+            }
+            else {
+                const nombreCategoria = abierta.categoria === "repostaje" ? "Repostaje" : abierta.categoria === "talleres" ? "Taller" : abierta.categoria === "carga" ? "Carga y descarga en nave" : abierta.categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
+                setActividadGenericaEnCursoId(prev => (prev && prev.actividadId === abierta.id) ? prev : { orderId: o.id, actividadId: abierta.id, categoria: abierta.categoria, nombreCategoria });
+            }
+            break;
+        }
+    }, [data, workerId]);
     const [extraNuevaMaquina, setExtraNuevaMaquina] = useState("");
     const [riegoPodaSel, setRiegoPodaSel] = useState({}); // { [clienteId]: {accion, dias, veces} }
     const [paradaSinCerrar, setParadaSinCerrar] = useState(null);
