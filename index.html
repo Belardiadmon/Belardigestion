@@ -17528,7 +17528,10 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
     useEffect(() => {
         if (!workerId || !data)
             return;
+        const hoyStr = todayStr();
         for (const o of data.orders || []) {
+            if (o.fecha !== hoyStr)
+                continue; // nunca mirar días anteriores: un registro viejo sin cerrar no debe bloquear hoy
             if (!o.workerIds || !o.workerIds.includes(workerId))
                 continue;
             const abierta = (o.actividadesExtra || []).find(a => a.workerId === workerId && !a.horaFin);
@@ -17686,7 +17689,19 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         // excepci\u00F3n: ese cierra solo lo que haya abierto, para no obligar a nadie a hacer papeleo antes
         // de poder comer.
         if (actividadGenericaEnCursoId || almacenEnCursoId) {
-            alert(`Todav\u00EDa tienes "${(actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material"}" sin finalizar.\n\nFinal\u00EDzala antes de empezar esta otra.`);
+            const nombreSinCerrar = (actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material";
+            const nombreNuevaCat = categoria === "repostaje" ? "Repostaje" : categoria === "talleres" ? "Taller" : categoria === "carga" ? "Carga y descarga en nave" : categoria === "permiso_personal" ? "Permiso personal" : "Almac\u00E9n";
+            alert(`Todav\u00EDa tienes "${nombreSinCerrar}" sin finalizar.\n\nFinal\u00EDzala antes de empezar esta otra.`);
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                next.incidenciasFichaje = next.incidenciasFichaje || [];
+                next.incidenciasFichaje.push({
+                    id: uid("inc"), tipo: "intento_sin_cerrar", fecha: todayStr(), hora: nowTime(), orderId, workerId,
+                    workerNombre: (worker === null || worker === void 0 ? void 0 : worker.nombre) || "", clienteSinCerrar: nombreSinCerrar,
+                    clienteNuevo: nombreNuevaCat, resuelta: false,
+                });
+                return next;
+            });
             enviandoActividadRef.current = false;
             return;
         }
@@ -18295,7 +18310,19 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         // Lo mismo si tiene una Carga/Repostaje/Taller (o una recogida de material) todavía sin
         // finalizar: se le recuerda que la cierre primero, en vez de cerrarla sola por él.
         if (actividadGenericaEnCursoId || almacenEnCursoId) {
-            alert(`Todavía tienes "${(actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material"}" sin finalizar.\n\nFinalízala antes de iniciar esta parada.`);
+            const nombreSinCerrar2 = (actividadGenericaEnCursoId === null || actividadGenericaEnCursoId === void 0 ? void 0 : actividadGenericaEnCursoId.nombreCategoria) || "una recogida de material";
+            const cliNuevo2 = getClient(clienteId);
+            alert(`Todavía tienes "${nombreSinCerrar2}" sin finalizar.\n\nFinalízala antes de iniciar esta parada.`);
+            persistConReintento(base => {
+                const next = structuredClone(base);
+                next.incidenciasFichaje = next.incidenciasFichaje || [];
+                next.incidenciasFichaje.push({
+                    id: uid("inc"), tipo: "intento_sin_cerrar", fecha: todayStr(), hora: nowTime(), orderId, workerId,
+                    workerNombre: (worker === null || worker === void 0 ? void 0 : worker.nombre) || "", clienteSinCerrar: nombreSinCerrar2,
+                    clienteNuevo: (cliNuevo2 === null || cliNuevo2 === void 0 ? void 0 : cliNuevo2.nombre) || "", resuelta: false,
+                });
+                return next;
+            });
             enviandoParadaRef.current = false;
             return;
         }
