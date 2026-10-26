@@ -16704,9 +16704,14 @@ function RutasView({ data, persist, persistConReintento, getClient, getWorker, a
     const guardarJornadaManual = (orderId, workerId, entrada, salida) => {
         persistConReintento(base => {
             const next = structuredClone(base);
-        const order = next.orders.find(o => o.id === orderId);
-        order.porTrabajadorJornada = order.porTrabajadorJornada || {};
-        order.porTrabajadorJornada[workerId] = { ...(order.porTrabajadorJornada[workerId] || {}), entradaHora: entrada || null, salidaHora: salida || null, validadoPorAdmin: true };
+            const order = next.orders.find(o => o.id === orderId);
+            order.porTrabajadorJornada = order.porTrabajadorJornada || {};
+            const actual = order.porTrabajadorJornada[workerId] || {};
+            // Por seguridad: si el campo llega vacío al guardar, se mantiene la hora que ya hubiera en
+            // vez de borrarla \u2014 así, una entrada ya fichada nunca desaparece por un guardado manual
+            // con el campo en blanco. Para borrar una hora de verdad hace falta vaciarla y el otro campo
+            // (entrada o salida) sí debe tener algo, para distinguirlo de un simple fallo de carga.
+            order.porTrabajadorJornada[workerId] = { ...actual, entradaHora: entrada || actual.entradaHora || null, salidaHora: salida || actual.salidaHora || null, validadoPorAdmin: true };
             return next;
         });
         setEditingJornada(null);
