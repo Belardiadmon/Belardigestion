@@ -13064,6 +13064,21 @@ if (typeof window !== "undefined")
 const DEVICE_KEY = "gj_device_worker_v1";
 const CONSENT_KEY = "gj_device_consent_v1";
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 9); }
+// Valores por defecto de los ratios de presupuesto (m\u00B2/hora, etc.). Si alg\u00FAn ajuste guardado no tiene
+// uno de estos campos (p.ej. por haberse a\u00F1adido despu\u00E9s de que ya se guardaran los ajustes), se
+// completa con este valor por defecto en vez de quedarse en cero en silencio \u2014 eso hac\u00EDa que, por
+// ejemplo, las podas de seto no sumaran nada de tiempo aunque se metieran todos los datos.
+const PARAMETROS_PRESUPUESTO_DEFAULT = {
+    origenEmpresa: "Pol\u00EDgono Industrial de Mutilva, Calle F, 2, Mutilva, Navarra",
+    cespedManoM2h: 300, cespedTractorM2h: 500, visitasCespedAnuales: 24,
+    desbrozadoMlH: 300, escardaM2h: 15,
+    escarificadoCosteMaterialPorTramo: 5, escarificadoM2Tramo: 15,
+    setoM2h: 24, arbustosUh: 10,
+    riegoM2Base: 150, riegoHorasBase: 0.5,
+    herbicidaCoste: 12, fitosanitarioCoste: 12,
+    arboladoUh: 1 / 1.5, alcorquesUh: 10, abonadoCoste: 0.07,
+    desbrozadoObraM2hPersona: 125, desbrozadoObraM2hMaquina: 300,
+};
 function asignarNumeroPresupuesto(next, fecha) {
     next.contadorPresupuestos = (next.contadorPresupuestos || 0) + 1;
     const n = next.contadorPresupuestos;
@@ -13631,7 +13646,7 @@ function duracionEstimadaVisitaMin(data, cliente) {
         const recientes = hist.slice(-8);
         return Math.round(recientes.reduce((a, h) => a + (h.minutos || 0), 0) / recientes.length);
     }
-    const p = data.parametrosPresupuesto || {};
+    const p = { ...PARAMETROS_PRESUPUESTO_DEFAULT, ...(data.parametrosPresupuesto || {}) };
     const dj = cliente.caracteristicasJardin || {};
     const rateCesped = dj.metodoCesped === "tractor" ? (p.cespedTractorM2h || 500) : (p.cespedManoM2h || 300);
     const horasCesped = rateCesped > 0 ? (dj.m2Cesped || 0) / rateCesped : 0;
@@ -15536,7 +15551,7 @@ function PanelView({ data, persist, persistConReintento, getClient, getWorker, a
         })));
 }
 function FichaJardinCliente({ cliente, data, persist, onCerrar }) {
-    const p = data.parametrosPresupuesto;
+    const p = { ...PARAMETROS_PRESUPUESTO_DEFAULT, ...(data.parametrosPresupuesto || {}) };
     const dj = cliente.datosJardin;
     const [editando, setEditando] = useState(!dj);
     const [metodoCesped, setMetodoCesped] = useState((dj === null || dj === void 0 ? void 0 : dj.metodoCesped) || "mano");
@@ -21421,7 +21436,7 @@ function ExportarView({ data, getClient, getWorker }) {
             filasCliente.length === 0 && React.createElement("div", { className: "gj-empty" }, "No hay visitas registradas este a\u00F1o para este cliente."))));
 }
 function CalculadoraMantenimiento({ data, persist, onGuardar }) {
-    const p = data.parametrosPresupuesto;
+    const p = { ...PARAMETROS_PRESUPUESTO_DEFAULT, ...(data.parametrosPresupuesto || {}) };
     const [nombre, setNombre] = useState("");
     const [direccion, setDireccion] = useState("");
     const [telefono, setTelefono] = useState("");
