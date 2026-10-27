@@ -14794,7 +14794,14 @@ function App() {
             const next = patchFn(base);
             setData(next);
             try {
-                const r = await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
+                // Límite de tiempo: si window.storage.set se queda colgado esperando respuesta (mala
+                // cobertura, p.ej.), esto evita que se quede esperando para siempre \u2014 y, como ahora
+                // todos los guardados pasan por una fila única, uno colgado bloquearía también a todos
+                // los que vinieran detrás hasta que alguien saliera y volviera a entrar en la app.
+                const r = await Promise.race([
+                    window.storage.set(STORAGE_KEY, JSON.stringify(next), true),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout_guardado")), 12000)),
+                ]);
                 if (r) {
                     setSaveError(false);
                     return true;
@@ -14813,6 +14820,11 @@ function App() {
                 return false;
             }
             catch (e) {
+                // Esto incluye el caso de que se haya agotado el tiempo de espera: en vez de rendirse al
+                // primer intento, se reintenta igual que con un conflicto \u2014 muchas veces es solo un
+                // bache puntual de cobertura que sí funciona al segundo o tercer intento.
+                if (intento < 3)
+                    continue;
                 setSaveError("error");
                 return false;
             }
@@ -15020,13 +15032,14 @@ function App() {
                     React.createElement("h1", null, data.settings.nombreEmpresa),
                     React.createElement("div", { className: "gj-sub" },
                         "Gesti\u00F3n de mantenimientos ",
-                        saveError === "error" ? "\u00B7 sin conexi\u00F3n con el guardado" : "")),
+                        "")),
                 adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: () => setAdminRole(null) },
                     React.createElement(Unlock, { size: 14 }),
                     " ",
                     adminRole === "admin1" ? data.settings.adminNombre1 : data.settings.adminNombre2)) : (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: requestUnlock },
                     React.createElement(Lock, { size: 14 })))),
             saveError === "conflicto" && React.createElement("div", { className: "gj-no-print", style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F Otro m\u00F3vil guard\u00F3 algo justo ahora. Este \u00FAltimo cambio tuyo NO se ha subido, para no perder lo suyo \u2014 vuelve a hacerlo."),
+            saveError === "error" && React.createElement("div", { className: "gj-no-print", style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F No se ha podido guardar tu \u00FAltimo cambio (sin conexi\u00F3n o cobertura muy d\u00E9bil). Vuelve a hacerlo en cuanto tengas cobertura."),
             pinPrompt && (React.createElement("div", { className: "gj-pin-overlay gj-no-print" },
                 React.createElement("div", { className: "gj-label" }, "PIN de administrador"),
                 React.createElement("div", { style: { display: "flex", gap: 6 } },
