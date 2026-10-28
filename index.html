@@ -13078,6 +13078,7 @@ const PARAMETROS_PRESUPUESTO_DEFAULT = {
     herbicidaCoste: 12, fitosanitarioCoste: 12,
     arboladoUh: 1 / 1.5, alcorquesUh: 10, abonadoCoste: 0.07,
     desbrozadoObraM2hPersona: 125, desbrozadoObraM2hMaquina: 300,
+    margenManoObra: 35,
 };
 function asignarNumeroPresupuesto(next, fecha) {
     next.contadorPresupuestos = (next.contadorPresupuestos || 0) + 1;
@@ -19764,7 +19765,13 @@ function PendientesView({ data, persist, getClient, adminMode }) {
         persist(next);
         setEditandoId(null);
     };
-    const pendientes = (data.pendientes || []).slice().sort((a, b) => (a.resuelto === b.resuelto ? 0 : a.resuelto ? 1 : -1));
+    const pendientes = (data.pendientes || []).slice().sort((a, b) => {
+        if (a.resuelto !== b.resuelto)
+            return a.resuelto ? 1 : -1;
+        const nombreA = (a.clienteId ? ((getClient(a.clienteId) === null || getClient(a.clienteId) === void 0 ? void 0 : getClient(a.clienteId).nombre) || "") : "") || "\uFFFF";
+        const nombreB = (b.clienteId ? ((getClient(b.clienteId) === null || getClient(b.clienteId) === void 0 ? void 0 : getClient(b.clienteId).nombre) || "") : "") || "\uFFFF";
+        return nombreA.localeCompare(nombreB);
+    });
     return (React.createElement("div", null,
         React.createElement("h2", { className: "gj-h2" }, "Trabajos pendientes"),
         React.createElement("div", { className: "gj-card" },
@@ -19773,7 +19780,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                 React.createElement("label", { className: "gj-label" }, "Cliente (opcional)"),
                 React.createElement("select", { className: "gj-select", value: clienteId, onChange: e => setClienteId(e.target.value) },
                     React.createElement("option", { value: "" }, "General / sin cliente concreto"),
-                    data.clients.map(c => React.createElement("option", { key: c.id, value: c.id },
+                    data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre)).map(c => React.createElement("option", { key: c.id, value: c.id },
                         c.nombre,
                         c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
             React.createElement("div", { className: "gj-field" },
@@ -19807,7 +19814,7 @@ function PendientesView({ data, persist, getClient, adminMode }) {
                         React.createElement("label", { className: "gj-label" }, "Cliente (opcional)"),
                         React.createElement("select", { className: "gj-select", value: editClienteId, onChange: e => setEditClienteId(e.target.value) },
                             React.createElement("option", { value: "" }, "General / sin cliente concreto"),
-                            data.clients.map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre, c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
+                            data.clients.slice().sort((a, b) => a.nombre.localeCompare(b.nombre)).map(c => React.createElement("option", { key: c.id, value: c.id }, c.nombre, c.esObra ? ` (obra${c.referenciaObra ? ": " + c.referenciaObra : ""})` : "")))),
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "\u00BFQu\u00E9 hay que hacer?"),
                         React.createElement("textarea", { className: "gj-input", rows: 2, value: editDescripcion, onChange: e => setEditDescripcion(e.target.value) })),
@@ -21589,6 +21596,7 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
             alcorquesUh: Number(paramEdit.alcorquesUh) || 0,
             abonadoCoste: Number(paramEdit.abonadoCoste) || 0,
             origenEmpresa: paramEdit.origenEmpresa,
+            margenManoObra: Number(paramEdit.margenManoObra) || 0,
         };
         persist(next);
     };
@@ -21614,7 +21622,8 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
         ? (2 * horasCespedUnaVez * (data.settings.costeHora || 0)) + ((Number(m2Cesped) || 0) / (p.escarificadoM2Tramo || 15)) * (p.escarificadoCosteMaterialPorTramo || 0)
         : 0;
     const totalHorasAnual = horasDesplazamientoAnual + horasCespedAnual + horasDesbrozadoAnual + horasEscardaAnual + horasSetosAnual + horasArbustosAnual + horasRiegoAnual + horasArboladoAnual + horasAlcorquesAnual;
-    const costeManoObraAnual = totalHorasAnual * (data.settings.costeHora || 0);
+    const costeManoObraSinMargen = totalHorasAnual * (data.settings.costeHora || 0);
+    const costeManoObraAnual = costeManoObraSinMargen * (1 + (Number(p.margenManoObra) || 0) / 100);
     const totalAnual = costeManoObraAnual + costeEscarificadoAnual + costeHerbicidaAnual + costeFitosanitarioAnual + costeAbonadoAnual;
     const cuotaMensual = totalAnual / 12;
     const TIPOS_CORTE = [
@@ -22000,6 +22009,10 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
                 React.createElement("div", { className: "gj-field" },
                     React.createElement("label", { className: "gj-label" }, "Direcci\u00F3n de origen (empresa)"),
                     React.createElement("input", { className: "gj-input", value: paramEdit.origenEmpresa, onChange: e => setParamEdit(pe => ({ ...pe, origenEmpresa: e.target.value })) })),
+                React.createElement("div", { className: "gj-field" },
+                    React.createElement("label", { className: "gj-label" }, "Margen de beneficio sobre mano de obra (%)"),
+                    React.createElement("input", { className: "gj-input", type: "number", value: paramEdit.margenManoObra, onChange: e => setParamEdit(pe => ({ ...pe, margenManoObra: e.target.value })) }),
+                    React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 2 } }, "Se suma solo sobre el coste de horas (horas \u00D7 coste/hora), antes de a\u00F1adir materiales como escarificado, herbicida o abonado.")),
                 React.createElement("div", { className: "gj-grid2" },
                     React.createElement("div", { className: "gj-field" },
                         React.createElement("label", { className: "gj-label" }, "C\u00E9sped a mano (m\u00B2/h)"),
@@ -22090,10 +22103,15 @@ function CalculadoraMantenimiento({ data, persist, onGuardar }) {
                 React.createElement("div", null,
                     "Perfilado de alcorques: ",
                     fmtHM(horasAlcorquesAnual)),
-                React.createElement("div", { style: { fontWeight: 600, marginTop: 4 } },
-                    "Mano de obra: ",
+                React.createElement("div", { style: { marginTop: 4 } },
+                    "Mano de obra (sin margen): ",
                     fmtHM(totalHorasAnual),
                     " \u2192 ",
+                    eur(costeManoObraSinMargen)),
+                React.createElement("div", { style: { fontWeight: 600 } },
+                    "Mano de obra + margen (",
+                    Number(p.margenManoObra) || 0,
+                    "%): ",
                     eur(costeManoObraAnual)),
                 React.createElement("div", null,
                     "Escarificado: ",
@@ -23211,6 +23229,8 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
                         eur(p.importe)))) : (React.createElement("div", { style: { padding: 14, border: "1px solid var(--line)", borderRadius: 6, textAlign: "center" } },
                     React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)" } }, "Importe presupuestado"),
                     React.createElement("div", { style: { fontSize: 24, fontWeight: 700 } }, eur(p === null || p === void 0 ? void 0 : p.importe))))),
+                (p === null || p === void 0 ? void 0 : p.partidas) && p.partidas.some(l => l.key === "trat_herbicida_total") && p.partidas.some(l => l.key === "siembra_semilla" || l.key === "implantacion_tepes") && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 14, padding: 8, border: "1px solid var(--line)", borderRadius: 4 } }, "El tratamiento con herbicida total elimina la vegetaci\u00F3n existente en el momento de la aplicaci\u00F3n, pero no evita el rebrote posterior de gram\u00EDneas (como la grama) \u2014 este presupuesto no contempla dicho rebrote.")),
+                (p === null || p === void 0 ? void 0 : p.partidas) && p.partidas.some(l => l.label && l.label.startsWith("C\u00E9sped artificial \u2014 ")) && (React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 14, padding: 8, border: "1px solid var(--line)", borderRadius: 4 } }, "La instalaci\u00F3n de c\u00E9sped artificial no cubre en garant\u00EDa los asentamientos del terreno ni los hundimientos del sustrato posteriores a la instalaci\u00F3n.")),
                 React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", marginTop: 20 } }, (p === null || p === void 0 ? void 0 : p.ampliacionDeId)
                     ? "Al firmar, el cliente autoriza la ejecución de estos trabajos adicionales y acepta el importe indicado."
                     : "Presupuesto válido durante 30 días desde la fecha indicada. Precio sujeto a confirmación final tras visita de valoración, si procede."),
@@ -23583,10 +23603,13 @@ function CalculadoraObra({ data, persist, onGuardar, presupuestoEditar, datosCli
     const m2SetoObraTotal = setosObra.reduce((acc, s) => acc + m2Seto(s.tipoCorte, s.ml, s.altura, s.anchura), 0);
     const [precioPodaSeto, setPrecioPodaSeto] = useState(() => { var _a; return (_a = presupuestoEditar === null || presupuestoEditar === void 0 ? void 0 : presupuestoEditar.precioPodaSeto) !== null && _a !== void 0 ? _a : (preciosBase.poda_seto ? preciosBase.poda_seto.precio : 0); });
     // Desbrozado de obra - calculo automatico igual que el cesped de mantenimiento (m² / rendimiento x coste/hora), diferenciado a mano / a maquina
-    const parametrosObra = data.parametrosPresupuesto || {};
+    const parametrosObra = { ...PARAMETROS_PRESUPUESTO_DEFAULT, ...(data.parametrosPresupuesto || {}) };
     const [rendimientoDesbrozadoMano, setRendimientoDesbrozadoMano] = useState(parametrosObra.desbrozadoObraM2hPersona || 125);
     const [rendimientoDesbrozadoMaquina, setRendimientoDesbrozadoMaquina] = useState(parametrosObra.desbrozadoObraM2hMaquina || 300);
-    const costeHoraEmpresa = ((_b = data.settings) === null || _b === void 0 ? void 0 : _b.costeHora) || 0;
+    const costeHoraEmpresaSinMargen = ((_b = data.settings) === null || _b === void 0 ? void 0 : _b.costeHora) || 0;
+    // Igual que en mantenimiento: el margen de beneficio se aplica sobre el coste de la mano de obra
+    // (aqu\u00ED, el coste de hora que alimenta cada precio por unidad), antes de sumar materiales.
+    const costeHoraEmpresa = costeHoraEmpresaSinMargen * (1 + (Number(parametrosObra.margenManoObra) || 0) / 100);
     const precioM2DesbrozadoMano = rendimientoDesbrozadoMano > 0 ? costeHoraEmpresa / rendimientoDesbrozadoMano : 0;
     const precioM2DesbrozadoMaquina = rendimientoDesbrozadoMaquina > 0 ? costeHoraEmpresa / rendimientoDesbrozadoMaquina : 0;
     const DESBROZADOS_OBRA = [
