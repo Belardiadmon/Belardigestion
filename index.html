@@ -43,12 +43,36 @@ function gjBorrarConfigSupabase() {
   localStorage.setItem(GJ_SB_CONFIG_KEY, JSON.stringify({ desconectado: true }));
   window.__gjSupabaseClient = null;
 }
+let gjCargandoLibreria = false;
+// La librería de Supabase se descarga de internet al abrir la app. Si esa descarga falla (cobertura
+// floja justo en ese momento), antes la app se quedaba EN SILENCIO en "modo local": lo que se fichaba
+// no llegaba nunca al servidor y al volver a abrir se perdía. Ahora se reintenta desde otra fuente y,
+// mientras no esté, se avisa con un cartel rojo.
+function gjIntentarCargarLibreria() {
+  if (window.supabase && window.supabase.createClient) return;
+  if (gjCargandoLibreria) return;
+  gjCargandoLibreria = true;
+  const fuentes = ["https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2", "https://unpkg.com/@supabase/supabase-js@2"];
+  let i = 0;
+  const siguiente = () => {
+    if (window.supabase && window.supabase.createClient) { gjCargandoLibreria = false; gjAvisarCambioEstado(); return; }
+    if (i >= fuentes.length) { setTimeout(() => { gjCargandoLibreria = false; }, 15000); return; }
+    const sc = document.createElement("script");
+    sc.src = fuentes[i++];
+    sc.onload = () => { gjCargandoLibreria = false; gjAvisarCambioEstado(); };
+    sc.onerror = () => { try { sc.remove(); } catch (e) {} siguiente(); };
+    document.head.appendChild(sc);
+  };
+  siguiente();
+}
+// true si la app DEBERÍA estar conectada al servidor pero no lo está (la librería no ha cargado)
+window.gjSinServidor = () => !!gjLeerConfigSupabase() && !(window.supabase && window.supabase.createClient);
 function gjGetSupabaseClient() {
   const cfg = gjLeerConfigSupabase();
   if (!cfg || !cfg.url || !cfg.anonKey) return null;
-  if (!window.supabase || !window.supabase.createClient) return null;
+  if (!window.supabase || !window.supabase.createClient) { gjIntentarCargarLibreria(); return null; }
   if (!window.__gjSupabaseClient) {
-    window.__gjSupabaseClient = window.supabase.createClient(cfg.url, cfg.anonKey);
+    window.__gjSupabaseClient = window.supabase.createClient(cfg.url, cfg.anonKey, { global: { fetch: gjFetchInstrumentado } });
   }
   return window.__gjSupabaseClient;
 }
@@ -67,47 +91,182 @@ function gjMarcarUltimaSync(valor) {
   gjUltimaSyncEnMemoria = valor;
   try { localStorage.setItem(GJ_LAST_SYNC_KEY, valor); } catch (e) { /* sin espacio local; la memoria ya la tiene guardada igualmente */ }
 }
+// ---------------------------------------------------------------------------------------------
+// CAPA DE SINCRONIZACIÓN (reescrita). Principios:
+//  1) El orden entre versiones lo da un NÚMERO DE VERSIÓN (__v) guardado dentro de los propios datos,
+//     que solo sube de uno en uno y solo si el guardado se ha aceptado. NUNCA se compara un reloj de un
+//     móvil con el de otro: un móvil con el reloj 2 segundos adelantado ya no puede quedarse "en
+//     conflicto para siempre" sin enterarse de que otro ha guardado.
+//  2) La marca de concurrencia (updated_at) se usa solo para comprobar IGUALDAD, y el valor que se
+//     recuerda es el que devuelve el propio servidor tras guardar (no el que generó el móvil).
+//  3) Todo lo que viaja por la red queda anotado (tamaño, duración, error exacto) y tiene un límite
+//     de tiempo REAL (se cancela la petición), para que nada se quede colgado en silencio.
+// ---------------------------------------------------------------------------------------------
+const GJ_VERSION_KEY = "gj_version_conocida_v1";
+const GJ_PENDIENTE_KEY = "gj_pendiente_subida_v1";
+const GJ_COPIA_KEY = "gj_copia_sin_subir_v1";
+const GJ_LOG_KEY = "gj_log_guardado_v1";
+let gjVersionConocida = (() => { try { return Number(localStorage.getItem(GJ_VERSION_KEY)) || 0; } catch (e) { return 0; } })();
+function gjMarcarVersion(v) { gjVersionConocida = v; try { localStorage.setItem(GJ_VERSION_KEY, String(v)); } catch (e) { /* sin espacio: queda en memoria */ } }
+function gjVersionDe(d) { return Number(d && d.__v) || 0; }
+// Convierte una marca de tiempo (de cualquier formato que devuelva el servidor) en milisegundos, para
+// poder comprobar si dos marcas son la MISMA aunque una lleve "Z" y otra "+00:00", o no lleve zona.
+function gjMs(t) {
+  if (t === null || t === undefined) return NaN;
+  let x = String(t).trim().replace(" ", "T");
+  if (!/(Z|[+-]\d{2}(:?\d{2})?)$/i.test(x)) x += "Z";
+  return Date.parse(x);
+}
+function gjMismaMarca(a, b) { const x = gjMs(a), y = gjMs(b); return !isNaN(x) && !isNaN(y) && x === y; }
+// ¿Lo que hay en el servidor es algo que este móvil todavía no tiene?  Sí si su versión es mayor, o si
+// es la misma versión pero con otra marca (escritura de una app antigua que no numera versiones).
+function gjRemotoEsDistinto(remotoData, remotoToken) {
+  const vr = gjVersionDe(remotoData);
+  if (vr > gjVersionConocida) return true;
+  if (vr < gjVersionConocida) return false;
+  return !gjUltimaSyncEnMemoria || !gjMismaMarca(remotoToken, gjUltimaSyncEnMemoria);
+}
+function gjMarcarPendiente() { try { localStorage.setItem(GJ_PENDIENTE_KEY, "1"); } catch (e) {} }
+function gjLimpiarPendiente() { try { localStorage.removeItem(GJ_PENDIENTE_KEY); } catch (e) {} }
+function gjHayPendiente() { try { return localStorage.getItem(GJ_PENDIENTE_KEY) === "1"; } catch (e) { return false; } }
+
+// --- Registro de lo que pasa al guardar (se conserva aunque se cierre la app) ---
+window.gjLogGuardado = (() => { try { const x = JSON.parse(localStorage.getItem(GJ_LOG_KEY) || "[]"); return Array.isArray(x) ? x : []; } catch (e) { return []; } })();
+function gjAvisarCambioEstado() { try { if (window.gjOnSyncEvent) window.gjOnSyncEvent(); } catch (e) {} }
+function gjRegistrar(ent) {
+  try {
+    ent.t = new Date().toISOString();
+    window.gjLogGuardado.push(ent);
+    while (window.gjLogGuardado.length > 40) window.gjLogGuardado.shift();
+    try { localStorage.setItem(GJ_LOG_KEY, JSON.stringify(window.gjLogGuardado)); } catch (e) {}
+  } catch (e) {}
+  gjAvisarCambioEstado();
+}
+let gjUltimaPeticion = null;
+async function gjFetchInstrumentado(input, init) {
+  const url = typeof input === "string" ? input : ((input && input.url) || "");
+  const metodo = ((init && init.method) || (input && input.method) || "GET").toUpperCase();
+  const esEscritura = metodo !== "GET" && url.indexOf("gj_app_data") !== -1;
+  const ctrl = new AbortController();
+  const original = init && init.signal;
+  if (original) { if (original.aborted) ctrl.abort(); else original.addEventListener("abort", () => ctrl.abort()); }
+  const limiteMs = esEscritura ? 90000 : 40000;
+  const timer = setTimeout(() => ctrl.abort(), limiteMs);
+  const t0 = Date.now();
+  const bytes = init && typeof init.body === "string" ? init.body.length : 0;
+  try {
+    const resp = await fetch(input, Object.assign({}, init || {}, { signal: ctrl.signal }));
+    let cuerpoError = "";
+    if (!resp.ok) { try { cuerpoError = (await resp.clone().text()).slice(0, 300); } catch (e) {} }
+    gjUltimaPeticion = { metodo, status: resp.status, ms: Date.now() - t0, bytes, error: cuerpoError, escritura: esEscritura };
+    window.gjUltimaPeticion_agotada = false;
+    return resp;
+  } catch (e) {
+    const abortado = e && (e.name === "AbortError" || /abort/i.test(String(e.message)));
+    gjUltimaPeticion = { metodo, status: 0, ms: Date.now() - t0, bytes, escritura: esEscritura,
+      error: abortado ? ("Tiempo de espera agotado (" + Math.round(limiteMs / 1000) + " s): conexión muy lenta o cortada") : ("Sin respuesta de la red: " + ((e && e.message) || e)) };
+    window.gjUltimaPeticion_agotada = !!abortado;
+    throw e;
+  } finally { clearTimeout(timer); }
+}
+function gjTextoError(e) {
+  if (!e) return "desconocido";
+  const partes = [];
+  if (e.code) partes.push("[" + e.code + "]");
+  partes.push(e.message || String(e));
+  if (e.details) partes.push(String(e.details));
+  if (e.hint) partes.push(String(e.hint));
+  let txt = partes.join(" ");
+  if (gjUltimaPeticion && gjUltimaPeticion.escritura && gjUltimaPeticion.status !== 200) {
+    txt += " · HTTP " + gjUltimaPeticion.status + (gjUltimaPeticion.error ? " " + gjUltimaPeticion.error : "");
+  }
+  return txt.slice(0, 500);
+}
+
 async function gjSincronizarConSupabase(STORAGE_KEY, forzar) {
   const client = gjGetSupabaseClient();
   if (!client) { window.gjSyncStatus.estado = "local"; return null; }
   try {
+    // Comprobación barata primero: ¿ha cambiado algo en el servidor desde la última vez? Solo se
+    // descarga el bloque entero de datos (varios MB con fotos) si la marca ha cambiado. Antes, cada
+    // móvil bajaba TODO cada 25 s aunque no hubiera cambios: saturaba la cobertura y atascaba los guardados.
+    if (!forzar && gjUltimaSyncEnMemoria) {
+      const { data: fila, error: e0 } = await client.from("gj_app_data").select("updated_at").eq("id", 1).single();
+      if (e0) throw e0;
+      window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
+      if (fila && fila.updated_at && gjMismaMarca(fila.updated_at, gjUltimaSyncEnMemoria)) return null;
+    }
     const { data, error } = await client.from("gj_app_data").select("data, updated_at").eq("id", 1).single();
     if (error) throw error;
     window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
-    // Si Supabase todavía no tiene datos reales (tabla recién creada, vacía), no la usamos:
-    // dejamos que la app siga con sus datos locales, que se subirán solos en el próximo guardado.
+    // Si Supabase todavía no tiene datos reales (tabla recién creada, vacía), no la usamos.
     if (data && data.data && Array.isArray(data.data.workers) && data.data.workers.length > 0) {
-      // Solo sobrescribimos lo local si el servidor tiene una versión realmente más nueva que la
-      // última que este dispositivo sabe que existe. Así, si este móvil tiene un cambio reciente
-      // que todavía no ha llegado a subirse (por ejemplo, por un fallo de red momentáneo), no se
-      // pierde al recargar la página. Con forzar=true (la carga inicial de la app) esta comparación
-      // se salta: siempre se acepta lo que haya en el servidor, aunque su fecha sea "más antigua"
-      // que la última que este móvil recuerda — algo que puede pasar de forma legítima, por ejemplo
-      // justo después de restaurar una copia de seguridad de la base de datos a un momento anterior.
-      const ultimaConocida = gjUltimaSyncEnMemoria;
-      const remotoEsMasNuevo = forzar || !ultimaConocida || (data.updated_at && data.updated_at > ultimaConocida);
-      if (!remotoEsMasNuevo) return null;
-      // Guardar una copia local es solo una comodidad (para abrir más rápido/sin conexión la próxima
-      // vez); si el móvil no tiene sitio para ello, NO debe impedir usar los datos que sí se acaban
-      // de traer bien del servidor — por eso esto nunca bloquea el resultado.
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data));
-      } catch (e) { /* sin espacio local; seguimos igualmente con los datos ya descargados */ }
+      // Solo se sobrescribe lo local si el servidor tiene algo que este móvil no tiene (versión mayor).
+      // Con forzar=true (carga inicial, o tras un choque de guardado) se acepta siempre lo del servidor.
+      if (!forzar && gjUltimaSyncEnMemoria && !gjRemotoEsDistinto(data.data, data.updated_at)) return null;
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data)); } catch (e) { /* sin espacio local: seguimos con los datos descargados */ }
+      gjMarcarVersion(gjVersionDe(data.data));
       if (data.updated_at) gjMarcarUltimaSync(data.updated_at);
       return data.data;
     }
     return null;
   } catch (e) {
-    window.gjSyncStatus = { estado: "error", ultimoError: (e && e.message) || String(e), ultimaSync: window.gjSyncStatus.ultimaSync };
+    window.gjSyncStatus = { estado: "error", ultimoError: gjTextoError(e), ultimaSync: window.gjSyncStatus.ultimaSync };
     return null;
   }
 }
 
+// Al arrancar, si la última vez la app se cerró con cambios sin subir: si el servidor sigue exactamente
+// igual que la última vez que este móvil lo vio, se suben (no pisan nada de nadie). Si otro móvil guardó
+// entretanto, no se puede unir a ciegas: se guarda una copia aparte y se avisa, en vez de perderlo en silencio.
+async function gjRecuperarPendienteAlArrancar(client, key) {
+  try {
+    const local = localStorage.getItem(key);
+    if (!local || !gjUltimaSyncEnMemoria) return null;
+    const { data: fila, error } = await client.from("gj_app_data").select("updated_at").eq("id", 1).single();
+    if (error || !fila) return null;
+    if (gjMismaMarca(fila.updated_at, gjUltimaSyncEnMemoria)) {
+      const parsed = JSON.parse(local);
+      const nueva = gjVersionConocida + 1;
+      parsed.__v = nueva;
+      const ahoraISO = new Date().toISOString();
+      const { data: filas, error: e2 } = await client.from("gj_app_data").update({ data: parsed, updated_at: ahoraISO }).eq("id", 1).eq("updated_at", gjUltimaSyncEnMemoria).select("id, updated_at");
+      if (!e2 && filas && filas.length) {
+        gjMarcarVersion(nueva);
+        gjMarcarUltimaSync(filas[0].updated_at || ahoraISO);
+        gjLimpiarPendiente();
+        gjRegistrar({ tipo: "recuperado", ok: true, nota: "Al abrir la app se han subido cambios que se habían quedado sin subir" });
+        return { key, value: JSON.stringify(parsed) };
+      }
+      return null;
+    }
+    try { localStorage.setItem(GJ_COPIA_KEY, JSON.stringify({ t: new Date().toISOString(), data: local })); } catch (e) {}
+    gjLimpiarPendiente();
+    window.gjCambiosDescartados = true;
+    gjRegistrar({ tipo: "descartado", ok: false, nota: "Había cambios sin subir en este móvil y otro móvil guardó mientras tanto: no se han podido unir. Se ha guardado una copia aparte." });
+    return null;
+  } catch (e) { return null; }
+}
+
+// Al arrancar, si la librería de Supabase todavía no ha cargado (cobertura floja), se espera un poco en vez
+// de seguir en modo local: en ese modo la app mostraba datos viejos y lo que se fichaba nunca llegaba al servidor.
+async function gjEsperarLibreria(maxMs) {
+  const t0 = Date.now();
+  while (window.gjSinServidor && window.gjSinServidor() && Date.now() - t0 < maxMs) {
+    gjIntentarCargarLibreria();
+    await new Promise(r => setTimeout(r, 250));
+  }
+}
 window.storage = {
   async get(key, shared) {
     if (key === window.__GJ_MAIN_KEY__) {
+      await gjEsperarLibreria(8000);
       const client = gjGetSupabaseClient();
       if (client) {
+        if (gjHayPendiente()) {
+          const rec = await gjRecuperarPendienteAlArrancar(client, key);
+          if (rec) return rec;
+        }
         const remoto = await gjSincronizarConSupabase(key, true);
         if (remoto) return { key, value: JSON.stringify(remoto) };
       }
@@ -116,65 +275,74 @@ window.storage = {
     return v !== null ? { key, value: v } : null;
   },
   async set(key, value, shared) {
-    // Igual que al leer: guardar en el móvil es solo una comodidad. Si no cabe (demasiadas fotos
-    // acumuladas para el límite del navegador), NO debe impedir que el guardado real —en Supabase—
-    // siga adelante con normalidad.
-    try {
-      localStorage.setItem(key, value);
-    } catch (e) { /* sin espacio local; seguimos e intentamos subirlo a Supabase igualmente */ }
-    if (key === window.__GJ_MAIN_KEY__) {
-      const client = gjGetSupabaseClient();
-      if (client) {
-        try {
-          const parsed = JSON.parse(value);
-          const ahoraISO = new Date().toISOString();
-          const ultimaConocida = gjUltimaSyncEnMemoria;
-          // Subida protegida contra carreras: si este móvil ya conoce una versión anterior, la
-          // actualización solo se aplica si el servidor SIGUE teniendo exactamente esa versión en
-          // ese instante (comprobación y escritura en una sola operación atómica de base de datos,
-          // sin hueco entre "mirar" y "escribir" en el que otro móvil pueda colarse). Si otro
-          // dispositivo guardó algo entre medias, esta subida no se aplica: nos ponemos al día con
-          // lo de fuera y avisamos de que este cambio concreto no se ha subido, para no perder nada.
-          let filasActualizadas = null;
-          if (ultimaConocida) {
-            const { data: filas, error: errorUpdate } = await client.from("gj_app_data").update({ data: parsed, updated_at: ahoraISO }).eq("id", 1).eq("updated_at", ultimaConocida).select("id");
-            if (errorUpdate) throw errorUpdate;
-            filasActualizadas = filas;
-          }
-          if (ultimaConocida && (!filasActualizadas || filasActualizadas.length === 0)) {
-            const remoto = await gjSincronizarConSupabase(key);
-            if (remoto && gjRemoteChangeCallback)
-              gjRemoteChangeCallback(remoto);
-            window.gjSyncStatus = { estado: "conflicto", ultimoError: "Otro dispositivo guard\u00F3 algo m\u00E1s reciente; este cambio concreto no se ha subido, para no perder lo suyo. Vuelve a intentarlo.", ultimaSync: window.gjSyncStatus.ultimaSync };
-            return null;
-          }
-          if (!ultimaConocida) {
-            // Primera subida de este móvil (o nunca sincronizó antes): no hay nada que comparar
-            // todavía con la marca local — pero ANTES de escribir, se comprueba igualmente si el
-            // servidor ya tiene datos reales guardados. Si los tiene, nunca se sobrescriben a
-            // ciegas: se avisa y se pide sincronizar primero, aunque este móvil no supiera nada de
-            // esa versión. Solo si el servidor está realmente vacío (primera vez de verdad) se crea.
-            const { data: filaActual } = await client.from("gj_app_data").select("data").eq("id", 1).maybeSingle();
-            const yaHayDatosReales = !!(filaActual && filaActual.data && Array.isArray(filaActual.data.workers) && filaActual.data.workers.length > 0);
-            if (yaHayDatosReales) {
-              const remoto = await gjSincronizarConSupabase(key);
-              if (remoto && gjRemoteChangeCallback)
-                gjRemoteChangeCallback(remoto);
-              window.gjSyncStatus = { estado: "conflicto", ultimoError: "Este m\u00F3vil no ten\u00EDa sincronizados los datos reales que ya hab\u00EDa en el servidor; por seguridad no se han sobrescrito. Vuelve a intentarlo ahora que ya los tienes.", ultimaSync: window.gjSyncStatus.ultimaSync };
-              return null;
-            }
-            const { error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO });
-            if (error) throw error;
-          }
-          gjMarcarUltimaSync(ahoraISO);
-          window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
-        } catch (e) {
-          window.gjSyncStatus = { estado: "error", ultimoError: (e && e.message) || String(e), ultimaSync: window.gjSyncStatus.ultimaSync };
-          return null; // avisamos de fallo al guardar en remoto
-        }
-      }
+    // Guardar en el móvil es solo una comodidad: si no cabe, NO debe impedir el guardado real.
+    try { localStorage.setItem(key, value); } catch (e) { /* sin espacio local; seguimos */ }
+    if (key !== window.__GJ_MAIN_KEY__) return { key, value };
+    const client = gjGetSupabaseClient();
+    if (!client) {
+      // Sin cliente: o la app está desconectada a propósito (modo local) o la librería no ha cargado.
+      gjMarcarPendiente();
+      window.gjResultadoGuardado = "sin_servidor";
+      return { key, value };
     }
-    return { key, value };
+    const t0 = Date.now();
+    const kb = Math.round(value.length / 1024);
+    gjMarcarPendiente();
+    try {
+      const parsed = JSON.parse(value);
+      const ahoraISO = new Date().toISOString();
+      const ultimaConocida = gjUltimaSyncEnMemoria;
+      const nuevaVersion = gjVersionConocida + 1;
+      parsed.__v = nuevaVersion;
+      let token = null;
+      if (ultimaConocida) {
+        // Subida protegida: solo se aplica si el servidor SIGUE teniendo exactamente la versión que este
+        // móvil conoce (comprobar y escribir en una sola operación atómica).
+        const { data: filas, error: errorUpdate } = await client.from("gj_app_data").update({ data: parsed, updated_at: ahoraISO }).eq("id", 1).eq("updated_at", ultimaConocida).select("id, updated_at");
+        if (errorUpdate) throw errorUpdate;
+        if (!filas || filas.length === 0) {
+          // Otro dispositivo guardó antes. Sabemos que el servidor ha cambiado, así que se coge su versión
+          // sin más comparaciones (forzar) y el reintento parte de ella.
+          const remoto = await gjSincronizarConSupabase(key, true);
+          window.gjBaseRemotaParaReintento = remoto || null;
+          if (remoto && gjRemoteChangeCallback) gjRemoteChangeCallback(remoto);
+          window.gjResultadoGuardado = "conflicto";
+          window.gjSyncStatus = { estado: "conflicto", ultimoError: "Otro dispositivo guardó algo más reciente; este cambio concreto no se ha subido, para no perder lo suyo.", ultimaSync: window.gjSyncStatus.ultimaSync };
+          gjRegistrar({ tipo: "escritura", ok: false, conflicto: true, kb, ms: Date.now() - t0, error: "Otro móvil guardó antes; se reintenta partiendo de sus datos" });
+          return null;
+        }
+        token = filas[0].updated_at || ahoraISO;
+      } else {
+        // Primera subida de este móvil: antes de escribir se comprueba si el servidor ya tiene datos reales.
+        const { data: filaActual } = await client.from("gj_app_data").select("data").eq("id", 1).maybeSingle();
+        const yaHayDatosReales = !!(filaActual && filaActual.data && Array.isArray(filaActual.data.workers) && filaActual.data.workers.length > 0);
+        if (yaHayDatosReales) {
+          const remoto = await gjSincronizarConSupabase(key, true);
+          window.gjBaseRemotaParaReintento = remoto || null;
+          if (remoto && gjRemoteChangeCallback) gjRemoteChangeCallback(remoto);
+          window.gjResultadoGuardado = "conflicto";
+          window.gjSyncStatus = { estado: "conflicto", ultimoError: "Este móvil no tenía sincronizados los datos reales que ya había en el servidor; por seguridad no se han sobrescrito.", ultimaSync: window.gjSyncStatus.ultimaSync };
+          gjRegistrar({ tipo: "escritura", ok: false, conflicto: true, kb, ms: Date.now() - t0, error: "Primera subida: el servidor ya tenía datos reales" });
+          return null;
+        }
+        const { data: filasUp, error } = await client.from("gj_app_data").upsert({ id: 1, data: parsed, updated_at: ahoraISO }).select("id, updated_at");
+        if (error) throw error;
+        token = (filasUp && filasUp[0] && filasUp[0].updated_at) || ahoraISO;
+      }
+      // Solo se avanza la marca si no hemos recibido, mientras tanto, algo aún más nuevo.
+      if (nuevaVersion > gjVersionConocida) { gjMarcarVersion(nuevaVersion); gjMarcarUltimaSync(token); }
+      gjLimpiarPendiente();
+      window.gjResultadoGuardado = "ok";
+      window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
+      gjRegistrar({ tipo: "escritura", ok: true, kb, ms: Date.now() - t0 });
+      return { key, value };
+    } catch (e) {
+      const msg = gjTextoError(e);
+      window.gjResultadoGuardado = "error";
+      window.gjSyncStatus = { estado: "error", ultimoError: msg, ultimaSync: window.gjSyncStatus.ultimaSync };
+      gjRegistrar({ tipo: "escritura", ok: false, kb, ms: Date.now() - t0, error: msg });
+      return null;
+    }
   },
   async delete(key, shared) {
     const existed = localStorage.getItem(key) !== null;
@@ -200,12 +368,18 @@ function gjIniciarRealtimeSupabase(STORAGE_KEY) {
     gjRealtimeChannelActual = client
       .channel("gj_app_data_changes")
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "gj_app_data", filter: "id=eq.1" }, async (payload) => {
-        if (payload && payload.new && payload.new.data && Array.isArray(payload.new.data.workers) && payload.new.data.workers.length > 0) {
-          try {
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(payload.new.data));
-          } catch (e) { /* sin espacio local; seguimos igualmente, lo importante es actualizar la pantalla */ }
+        const nuevo = payload && payload.new;
+        if (nuevo && nuevo.data && Array.isArray(nuevo.data.workers) && nuevo.data.workers.length > 0) {
+          // Por tiempo real llega también el "eco" de los guardados de este mismo móvil, a veces tarde o
+          // desordenado. Solo se aplica lo que tenga una versión MAYOR que la que este móvil ya tiene.
+          if (!gjRemotoEsDistinto(nuevo.data, nuevo.updated_at)) return;
+          try { localStorage.setItem(STORAGE_KEY, JSON.stringify(nuevo.data)); } catch (e) { /* sin espacio local */ }
+          // Las marcas avanzan a la vez que la pantalla, para que lo que se vea y lo que se use como base
+          // del siguiente guardado sean siempre la misma versión.
+          gjMarcarVersion(gjVersionDe(nuevo.data));
+          if (nuevo.updated_at) gjMarcarUltimaSync(nuevo.updated_at);
           window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
-          if (gjRemoteChangeCallback) gjRemoteChangeCallback(payload.new.data);
+          if (gjRemoteChangeCallback) gjRemoteChangeCallback(nuevo.data);
         }
       })
       .subscribe();
@@ -13063,6 +13237,9 @@ if (typeof window !== "undefined")
     window.__GJ_MAIN_KEY__ = STORAGE_KEY;
 const DEVICE_KEY = "gj_device_worker_v1";
 const CONSENT_KEY = "gj_device_consent_v1";
+// Número de versión que se ve en la cabecera: sirve para comprobar, móvil por móvil, que todos están
+// ejecutando la versión nueva y no una copia antigua que se haya quedado en memoria.
+const GJ_BUILD = "31oct-sync-5";
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 9); }
 // Valores por defecto de los ratios de presupuesto (m\u00B2/hora, etc.). Si alg\u00FAn ajuste guardado no tiene
 // uno de estos campos (p.ej. por haberse a\u00F1adido despu\u00E9s de que ya se guardaran los ajustes), se
@@ -14692,6 +14869,132 @@ const GROUPS = [
         ] },
 ];
 const TABS = GROUPS.flatMap(g => g.views);
+
+// --- Utilidades para ver y reducir el peso de las fotos guardadas dentro de los datos ---
+function gjRecogerFotos(obj, acc, soloJpeg) {
+    if (typeof obj === "string") {
+        if (obj.startsWith("data:image/") && (!soloJpeg || obj.startsWith("data:image/jpeg") || obj.startsWith("data:image/jpg")))
+            acc.add(obj);
+    }
+    else if (Array.isArray(obj))
+        obj.forEach(x => gjRecogerFotos(x, acc, soloJpeg));
+    else if (obj && typeof obj === "object")
+        Object.keys(obj).forEach(k => gjRecogerFotos(obj[k], acc, soloJpeg));
+    return acc;
+}
+function gjReemplazarFotos(obj, mapa) {
+    if (typeof obj === "string")
+        return mapa.has(obj) ? mapa.get(obj) : obj;
+    if (Array.isArray(obj))
+        return obj.map(x => gjReemplazarFotos(x, mapa));
+    if (obj && typeof obj === "object") {
+        const o = {};
+        Object.keys(obj).forEach(k => { o[k] = gjReemplazarFotos(obj[k], mapa); });
+        return o;
+    }
+    return obj;
+}
+function gjRecomprimirFoto(dataUrl) {
+    return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+            try {
+                const max = 1280;
+                let w = img.naturalWidth, h = img.naturalHeight;
+                const esc = Math.min(1, max / Math.max(w, h));
+                w = Math.max(1, Math.round(w * esc));
+                h = Math.max(1, Math.round(h * esc));
+                const c = document.createElement("canvas");
+                c.width = w;
+                c.height = h;
+                c.getContext("2d").drawImage(img, 0, 0, w, h);
+                resolve(c.toDataURL("image/jpeg", 0.72));
+            }
+            catch (e) { resolve(null); }
+        };
+        img.onerror = () => resolve(null);
+        img.src = dataUrl;
+    });
+}
+function GjPanelDiagnostico({ data, adminMode, persistConReintento, onCerrar }) {
+    const [stats, setStats] = useState(null);
+    const [optimizando, setOptimizando] = useState(null);
+    useEffect(() => {
+        try {
+            const json = JSON.stringify(data);
+            const todas = gjRecogerFotos(data, new Set(), false);
+            let b = 0;
+            todas.forEach(f => { b += f.length; });
+            const pesadas = Array.from(gjRecogerFotos(data, new Set(), true)).filter(f => f.length > 120000).length;
+            setStats({ kb: Math.round(json.length / 1024), nFotos: todas.size, kbFotos: Math.round(b / 1024), pesadas });
+        }
+        catch (e) { setStats(null); }
+    }, []);
+    const log = (window.gjLogGuardado || []).slice(-15).reverse();
+    const ultimaOk = (window.gjLogGuardado || []).slice().reverse().find(e => e.tipo === "escritura" && e.ok);
+    const hora = (t) => { try { return new Date(t).toLocaleTimeString("es-ES"); } catch (e) { return "?"; } };
+    const mb = (kb) => (kb / 1024).toFixed(1).replace(".", ",") + " MB";
+    const optimizar = async () => {
+        setOptimizando("Buscando fotos pesadas\u2026");
+        const todas = Array.from(gjRecogerFotos(data, new Set(), true)).filter(f => f.length > 120000);
+        if (todas.length === 0) {
+            setOptimizando("No hay fotos pesadas que optimizar.");
+            return;
+        }
+        // OJO: en esta app "Map" es el nombre de un icono, así que hay que pedir el Map del navegador por su nombre completo.
+        const mapa = new globalThis.Map();
+        let ahorro = 0;
+        for (let i = 0; i < todas.length; i++) {
+            setOptimizando("Optimizando foto " + (i + 1) + " de " + todas.length + "\u2026");
+            const nueva = await gjRecomprimirFoto(todas[i]);
+            if (nueva && nueva.length < todas[i].length * 0.7) {
+                mapa.set(todas[i], nueva);
+                ahorro += todas[i].length - nueva.length;
+            }
+        }
+        if (mapa.size === 0) {
+            setOptimizando("Las fotos ya estaban optimizadas.");
+            return;
+        }
+        setOptimizando("Guardando\u2026");
+        await persistConReintento(base => gjReemplazarFotos(base, mapa));
+        setOptimizando("Hecho: " + mapa.size + " fotos optimizadas, ahorrados " + (Math.round(ahorro / 1024 / 1024 * 10) / 10) + " MB.");
+    };
+    const descargarCopia = () => {
+        try {
+            const c = JSON.parse(localStorage.getItem("gj_copia_sin_subir_v1"));
+            const blob = new Blob([c.data], { type: "application/json" });
+            const a = document.createElement("a");
+            a.href = URL.createObjectURL(blob);
+            a.download = "copia_sin_subir_" + (c.t || "").slice(0, 10) + ".json";
+            a.click();
+        }
+        catch (e) { alert("No hay copia guardada."); }
+    };
+    const hayCopia = (() => { try { return !!localStorage.getItem("gj_copia_sin_subir_v1"); } catch (e) { return false; } })();
+    const f = { fontSize: 12, marginBottom: 3 };
+    return React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 10, overflowY: "auto" } },
+        React.createElement("div", { className: "gj-card", style: { maxWidth: 460, width: "100%", background: "var(--surface)" } },
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 15, marginBottom: 6 } }, "Estado del guardado"),
+            React.createElement("div", { style: f }, "Versi\u00F3n de la app: ", React.createElement("b", null, GJ_BUILD)),
+            React.createElement("div", { style: f }, "Conexi\u00F3n: ", React.createElement("b", null, (window.gjSyncStatus && window.gjSyncStatus.estado) || "?"), navigator.onLine === false ? " (el m\u00F3vil dice que no tiene internet)" : ""),
+            React.createElement("div", { style: f }, "\u00DAltima subida correcta: ", React.createElement("b", null, ultimaOk ? hora(ultimaOk.t) : "ninguna en este m\u00F3vil")),
+            React.createElement("div", { style: f }, "Versi\u00F3n de los datos: ", React.createElement("b", null, typeof gjVersionConocida !== "undefined" ? gjVersionConocida : "?")),
+            window.gjSyncStatus && window.gjSyncStatus.ultimoError && React.createElement("div", { style: { ...f, color: "var(--warn)", fontWeight: 600 } }, "\u00DAltimo error: ", window.gjSyncStatus.ultimoError),
+            stats && React.createElement("div", { style: f }, "Tama\u00F1o de los datos que se suben en CADA fichaje: ", React.createElement("b", null, mb(stats.kb)), " \u00B7 fotos: ", stats.nFotos, " (", mb(stats.kbFotos), ")"),
+            React.createElement("div", { style: { fontWeight: 600, fontSize: 12, margin: "8px 0 4px" } }, "\u00DAltimos guardados"),
+            log.length === 0 ? React.createElement("div", { style: f }, "Todav\u00EDa no hay ninguno en este m\u00F3vil.") : log.map((e, i) => React.createElement("div", { key: i, style: { fontSize: 11.5, marginBottom: 2, color: e.ok ? "var(--ink)" : "var(--warn)" } },
+                hora(e.t), " \u00B7 ", e.ok ? "\u2714" : "\u2716", " ", e.tipo === "escritura" ? "guardar" : e.tipo,
+                e.kb ? " \u00B7 " + mb(e.kb) : "", e.ms ? " \u00B7 " + (e.ms / 1000).toFixed(1).replace(".", ",") + " s" : "",
+                e.error ? " \u00B7 " + e.error : "", e.nota ? " \u00B7 " + e.nota : "")),
+            React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
+                React.createElement("button", { className: "gj-btn", onClick: () => persistConReintento(b => b) }, "Reintentar guardar ahora"),
+                adminMode && stats && stats.pesadas > 0 && !optimizando && React.createElement("button", { className: "gj-btn accent", onClick: optimizar }, "Optimizar " + stats.pesadas + " fotos pesadas"),
+                hayCopia && React.createElement("button", { className: "gj-btn ghost", onClick: descargarCopia }, "Descargar copia sin subir"),
+                React.createElement("button", { className: "gj-btn ghost", onClick: onCerrar }, "Cerrar")),
+            optimizando && React.createElement("div", { style: { fontSize: 12, marginTop: 8, fontWeight: 600 } }, optimizando)));
+}
+
 function App() {
     const [data, setDataState] = useState(null);
     const dataRef = useRef(null);
@@ -14724,8 +15027,8 @@ function App() {
         const intervalo = setInterval(() => {
             if (window.gjSyncManualAhora)
                 window.gjSyncManualAhora(STORAGE_KEY);
-            if (window.gjReintentarSubidaPendiente)
-                window.gjReintentarSubidaPendiente(STORAGE_KEY);
+            if (window.gjIniciarRealtimeSupabase)
+                window.gjIniciarRealtimeSupabase(STORAGE_KEY);
         }, 25000);
         return () => clearInterval(intervalo);
     }, []);
@@ -14806,46 +15109,54 @@ function App() {
     const persistQueueRef = useRef(Promise.resolve());
     const persistConReintentoInterno = async (patchFn) => {
         let base = dataRef.current;
-        for (let intento = 1; intento <= 3; intento++) {
+        let conflictos = 0;
+        for (let intento = 1; intento <= 4; intento++) {
             const next = patchFn(base);
             setData(next);
+            let r = null;
             try {
-                // Límite de tiempo: si window.storage.set se queda colgado esperando respuesta (mala
-                // cobertura, p.ej.), esto evita que se quede esperando para siempre \u2014 y, como ahora
-                // todos los guardados pasan por una fila única, uno colgado bloquearía también a todos
-                // los que vinieran detrás hasta que alguien saliera y volviera a entrar en la app.
-                const r = await Promise.race([
+                // Última red de seguridad: la petición ya se cancela sola a los 90 s (ver gjFetchInstrumentado);
+                // esto solo evita quedarse esperando para siempre si algo muy raro impidiera incluso eso.
+                r = await Promise.race([
                     window.storage.set(STORAGE_KEY, JSON.stringify(next), true),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout_guardado")), 12000)),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout_guardado")), 150000)),
                 ]);
-                if (r) {
-                    setSaveError(false);
-                    return true;
-                }
-                if (window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") {
-                    const raw = localStorage.getItem(STORAGE_KEY);
-                    if (raw) {
-                        try {
-                            base = JSON.parse(raw);
-                            continue; // reintenta con los datos frescos
-                        }
-                        catch (e) { /* si no se puede leer, caemos al aviso de abajo */ }
-                    }
-                }
-                setSaveError((window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") ? "conflicto" : "error");
-                return false;
             }
             catch (e) {
-                // Esto incluye el caso de que se haya agotado el tiempo de espera: en vez de rendirse al
-                // primer intento, se reintenta igual que con un conflicto \u2014 muchas veces es solo un
-                // bache puntual de cobertura que sí funciona al segundo o tercer intento.
-                if (intento < 3)
-                    continue;
-                setSaveError("error");
-                return false;
+                r = null;
+                window.gjResultadoGuardado = "error";
+            }
+            if (r) {
+                setSaveError(false);
+                return true;
+            }
+            if (window.gjResultadoGuardado === "conflicto") {
+                // Otro móvil guardó antes: se reintenta partiendo de SU versión (ya traída en memoria), sin esperas.
+                conflictos++;
+                if (window.gjBaseRemotaParaReintento) {
+                    base = window.gjBaseRemotaParaReintento;
+                    window.gjBaseRemotaParaReintento = null;
+                }
+                else {
+                    const raw = localStorage.getItem(STORAGE_KEY);
+                    if (raw) {
+                        try { base = JSON.parse(raw); }
+                        catch (e) { /* seguimos con la base actual */ }
+                    }
+                }
+                continue;
+            }
+            // Fallo de red o del servidor: se espera un poco y se reintenta, sin dar el cambio por perdido
+            // a la primera. Si la petición se agotó por tiempo, no se insiste con otra subida inmediata.
+            const seAgotoElTiempo = window.gjUltimaPeticion_agotada === true;
+            if (intento < 4) {
+                await new Promise(rs => setTimeout(rs, intento * 1500));
+                if (seAgotoElTiempo)
+                    intento++;
+                continue;
             }
         }
-        setSaveError("conflicto");
+        setSaveError(conflictos >= 3 ? "conflicto" : "error");
         return false;
     };
     const persistConReintento = useCallback((patchFn) => {
@@ -14857,6 +15168,21 @@ function App() {
         persistQueueRef.current = tanda.catch(() => {});
         return tanda;
     }, []);
+    // Cada vez que pasa algo relevante al guardar (éxito, fallo, choque...), se redibuja el estado visible.
+    const [syncTick, setSyncTick] = useState(0);
+    const [mostrarDiag, setMostrarDiag] = useState(false);
+    useEffect(() => {
+        window.gjOnSyncEvent = () => setSyncTick(t => t + 1);
+        return () => { window.gjOnSyncEvent = null; };
+    }, []);
+    // Si un guardado falla por red o servidor, se reintenta solo cada 20 s (con lo que hay en memoria, que
+    // incluye lo que el trabajador acaba de hacer), sin que nadie tenga que acordarse de repetirlo.
+    useEffect(() => {
+        if (saveError !== "error")
+            return;
+        const id = setInterval(() => { if (navigator.onLine !== false) persistConReintento(b => b); }, 20000);
+        return () => clearInterval(id);
+    }, [saveError]);
     useEffect(() => {
         if (!data)
             return;
@@ -15048,14 +15374,23 @@ function App() {
                     React.createElement("h1", null, data.settings.nombreEmpresa),
                     React.createElement("div", { className: "gj-sub" },
                         "Gesti\u00F3n de mantenimientos ",
-                        "")),
+                        React.createElement("span", { onClick: () => setMostrarDiag(true), style: { opacity: 0.75, fontSize: 10, marginLeft: 4, textDecoration: "underline dotted", cursor: "pointer" } }, "\u00B7 v." + GJ_BUILD + " \u00B7 estado"))),
                 adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: () => setAdminRole(null) },
                     React.createElement(Unlock, { size: 14 }),
                     " ",
                     adminRole === "admin1" ? data.settings.adminNombre1 : data.settings.adminNombre2)) : (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: requestUnlock },
                     React.createElement(Lock, { size: 14 })))),
-            saveError === "conflicto" && React.createElement("div", { className: "gj-no-print", style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F Otro m\u00F3vil guard\u00F3 algo justo ahora. Este \u00FAltimo cambio tuyo NO se ha subido, para no perder lo suyo \u2014 vuelve a hacerlo."),
-            saveError === "error" && React.createElement("div", { className: "gj-no-print", style: { background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F No se ha podido guardar tu \u00FAltimo cambio (sin conexi\u00F3n o cobertura muy d\u00E9bil). Vuelve a hacerlo en cuanto tengas cobertura."),
+            saveError === "conflicto" && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F Otro m\u00F3vil guard\u00F3 algo justo ahora. Este \u00FAltimo cambio tuyo NO se ha subido, para no perder lo suyo \u2014 vuelve a hacerlo."),
+            saveError === "error" && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "#B42318", color: "#fff", padding: "10px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } },
+                "\u26A0\uFE0F NO SE HA GUARDADO tu \u00FAltimo cambio (cobertura d\u00E9bil o fallo del servidor). Se reintenta solo cada 20 s \u2014 no cierres la app hasta que desaparezca este aviso. ",
+                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => persistConReintento(b => b) }, "Reintentar ya"),
+                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => setMostrarDiag(true) }, "Ver motivo")),
+            (window.gjSinServidor && window.gjSinServidor()) && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "#B42318", color: "#fff", padding: "10px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F SIN CONEXI\u00D3N CON EL SERVIDOR: lo que fiches ahora NO se est\u00E1 guardando para los dem\u00E1s. Comprueba la cobertura; se reintenta solo."),
+            window.gjCambiosDescartados && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } },
+                "\u2139\uFE0F Al abrir la app hab\u00EDa cambios de este m\u00F3vil sin subir, y otro m\u00F3vil hab\u00EDa guardado mientras tanto: no se han podido unir. Av\u00EDsale a un administrador. ",
+                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => { window.gjCambiosDescartados = false; setSyncTick(t => t + 1); } }, "Entendido"),
+                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => setMostrarDiag(true) }, "Ver detalle")),
+            mostrarDiag && React.createElement(GjPanelDiagnostico, { data: data, adminMode: adminMode, persistConReintento: persistConReintento, onCerrar: () => setMostrarDiag(false) }),
             pinPrompt && (React.createElement("div", { className: "gj-pin-overlay gj-no-print" },
                 React.createElement("div", { className: "gj-label" }, "PIN de administrador"),
                 React.createElement("div", { style: { display: "flex", gap: 6 } },
