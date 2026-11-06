@@ -186,6 +186,10 @@ function gjTextoError(e) {
 async function gjSincronizarConSupabase(STORAGE_KEY, forzar) {
   const client = gjGetSupabaseClient();
   if (!client) { window.gjSyncStatus.estado = "local"; return null; }
+  // Mientras este móvil está subiendo un guardado, no se aplica nada que llegue del servidor por la vía normal
+  // (consulta periódica): podría ser justo lo que acabamos de subir y se aplicaría dos veces. Si el servidor
+  // tiene algo más nuevo de otro móvil, la propia subida lo detecta (choque) y lo resuelve.
+  if (!forzar && window.gjSubiendo) return null;
   try {
     // Comprobación barata primero: ¿ha cambiado algo en el servidor desde la última vez? Solo se
     // descarga el bloque entero de datos (varios MB con fotos) si la marca ha cambiado. Antes, cada
@@ -288,6 +292,7 @@ window.storage = {
     const t0 = Date.now();
     const kb = Math.round(value.length / 1024);
     gjMarcarPendiente();
+    window.gjSubiendo = true;
     try {
       const parsed = JSON.parse(value);
       const ahoraISO = new Date().toISOString();
@@ -342,6 +347,8 @@ window.storage = {
       window.gjSyncStatus = { estado: "error", ultimoError: msg, ultimaSync: window.gjSyncStatus.ultimaSync };
       gjRegistrar({ tipo: "escritura", ok: false, kb, ms: Date.now() - t0, error: msg });
       return null;
+    } finally {
+      window.gjSubiendo = false;
     }
   },
   async delete(key, shared) {
@@ -370,6 +377,7 @@ function gjIniciarRealtimeSupabase(STORAGE_KEY) {
       .on("postgres_changes", { event: "UPDATE", schema: "public", table: "gj_app_data", filter: "id=eq.1" }, async (payload) => {
         const nuevo = payload && payload.new;
         if (nuevo && nuevo.data && Array.isArray(nuevo.data.workers) && nuevo.data.workers.length > 0) {
+          if (window.gjSubiendo) return; // ver gjSincronizarConSupabase: la consulta periódica lo recogerá enseguida
           // Por tiempo real llega también el "eco" de los guardados de este mismo móvil, a veces tarde o
           // desordenado. Solo se aplica lo que tenga una versión MAYOR que la que este móvil ya tiene.
           if (!gjRemotoEsDistinto(nuevo.data, nuevo.updated_at)) return;
@@ -13239,7 +13247,7 @@ const DEVICE_KEY = "gj_device_worker_v1";
 const CONSENT_KEY = "gj_device_consent_v1";
 // Número de versión que se ve en la cabecera: sirve para comprobar, móvil por móvil, que todos están
 // ejecutando la versión nueva y no una copia antigua que se haya quedado en memoria.
-const GJ_BUILD = "31oct-sync-5";
+const GJ_BUILD = "2nov-fusion-7";
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 9); }
 // Valores por defecto de los ratios de presupuesto (m\u00B2/hora, etc.). Si alg\u00FAn ajuste guardado no tiene
 // uno de estos campos (p.ej. por haberse a\u00F1adido despu\u00E9s de que ya se guardaran los ajustes), se
@@ -14870,6 +14878,120 @@ const GROUPS = [
 ];
 const TABS = GROUPS.flatMap(g => g.views);
 
+// <<GJ_FUSION_INICIO>>
+// --- Fusión de tres vías -------------------------------------------------------------------------
+// Cuando el administrador guarda algo (crear un presupuesto, firmar, aprobar...) y otro móvil ha guardado
+// justo antes, hay que quedarse con LOS DOS cambios. Se compara: "base" = lo que hay ahora en el servidor,
+// "anc" = los datos sobre los que yo trabajé, "mine" = mis datos ya modificados. Solo se aplica lo que YO
+// he cambiado sobre lo del servidor; lo que cambió otro y yo no toqué, se respeta.
+function gjEsObjeto(x) { return x !== null && typeof x === "object" && !Array.isArray(x); }
+function gjClavesVivas(o) { return Object.keys(o).filter(k => o[k] !== undefined); }
+function gjIgual(a, b) {
+    if (a === b)
+        return true;
+    if (typeof a !== typeof b || a === null || b === null || typeof a !== "object")
+        return false;
+    if (Array.isArray(a) !== Array.isArray(b))
+        return false;
+    if (Array.isArray(a)) {
+        if (a.length !== b.length)
+            return false;
+        for (let i = 0; i < a.length; i++)
+            if (!gjIgual(a[i], b[i]))
+                return false;
+        return true;
+    }
+    const ka = gjClavesVivas(a), kb = gjClavesVivas(b);
+    if (ka.length !== kb.length)
+        return false;
+    for (const k of ka)
+        if (b[k] === undefined || !gjIgual(a[k], b[k]))
+            return false;
+    return true;
+}
+function gjClaveColeccion(...listas) {
+    for (const k of ["id", "clienteId"]) {
+        let ok = true;
+        for (const arr of listas) {
+            const vistos = new Set();
+            for (const e of arr) {
+                if (!gjEsObjeto(e) || typeof e[k] !== "string" || vistos.has(e[k])) {
+                    ok = false;
+                    break;
+                }
+                vistos.add(e[k]);
+            }
+            if (!ok)
+                break;
+        }
+        if (ok)
+            return k;
+    }
+    return null;
+}
+function gjFusionar3(base, anc, mine) {
+    if (gjIgual(anc, mine))
+        return base; // yo no he cambiado nada aquí
+    if (gjIgual(base, anc))
+        return mine; // nadie más ha cambiado esto
+    if (gjIgual(base, mine))
+        return base; // ya coincide
+    if (gjEsObjeto(base) && gjEsObjeto(anc) && gjEsObjeto(mine)) {
+        const res = { ...base };
+        const claves = new Set([...Object.keys(anc), ...Object.keys(mine)]);
+        claves.forEach(c => {
+            const enBase = base[c] !== undefined, enAnc = anc[c] !== undefined, enMine = mine[c] !== undefined;
+            if (!enMine) { // lo quité yo
+                if (enBase && enAnc && gjIgual(base[c], anc[c]))
+                    delete res[c];
+                return;
+            }
+            if (!enBase) { // otro lo quitó, o no existe en su versión
+                if (enAnc && gjIgual(anc[c], mine[c]))
+                    return; // yo no lo toqué: sigue quitado
+                res[c] = mine[c]; // lo añadí o modifiqué yo: se conserva lo mío
+                return;
+            }
+            if (!enAnc) { // lo añadimos los dos
+                res[c] = gjEsObjeto(base[c]) && gjEsObjeto(mine[c]) ? gjFusionar3(base[c], {}, mine[c]) : mine[c];
+                return;
+            }
+            res[c] = gjFusionar3(base[c], anc[c], mine[c]);
+        });
+        return res;
+    }
+    if (Array.isArray(base) && Array.isArray(anc) && Array.isArray(mine)) {
+        const k = gjClaveColeccion(base, anc, mine);
+        if (k) { // lista de elementos con identificador (presupuestos, clientes, rutas...): se fusiona elemento a elemento
+            const mapa = (arr) => { const m = new globalThis.Map(); arr.forEach(e => m.set(e[k], e)); return m; };
+            const B = mapa(base), A = mapa(anc), M = mapa(mine);
+            const res = [];
+            base.forEach(e => {
+                const id = e[k];
+                if (!A.has(id)) { // lo añadió otro: se conserva
+                    res.push(e);
+                    return;
+                }
+                if (!M.has(id)) { // lo quité yo
+                    if (gjIgual(e, A.get(id)))
+                        return; // nadie lo tocó: se quita
+                    res.push(e); // otro lo modificó: se conserva
+                    return;
+                }
+                res.push(gjFusionar3(e, A.get(id), M.get(id)));
+            });
+            mine.forEach(e => {
+                const id = e[k];
+                if (!B.has(id) && (!A.has(id) || !gjIgual(e, A.get(id))))
+                    res.push(e); // añadido por mí (o modificado por mí aunque otro lo quitara)
+            });
+            return res;
+        }
+    }
+    return mine; // lo han cambiado los dos y no se puede combinar: se queda lo último que se hizo (lo mío)
+}
+// <<GJ_FUSION_FIN>>
+
 // --- Utilidades para ver y reducir el peso de las fotos guardadas dentro de los datos ---
 function gjRecogerFotos(obj, acc, soloJpeg) {
     if (typeof obj === "string") {
@@ -14916,7 +15038,7 @@ function gjRecomprimirFoto(dataUrl) {
         img.src = dataUrl;
     });
 }
-function GjPanelDiagnostico({ data, adminMode, persistConReintento, onCerrar }) {
+function GjPanelDiagnostico({ data, adminMode, persistConReintento, onReintentar, onCerrar }) {
     const [stats, setStats] = useState(null);
     const [optimizando, setOptimizando] = useState(null);
     useEffect(() => {
@@ -14988,7 +15110,7 @@ function GjPanelDiagnostico({ data, adminMode, persistConReintento, onCerrar }) 
                 e.kb ? " \u00B7 " + mb(e.kb) : "", e.ms ? " \u00B7 " + (e.ms / 1000).toFixed(1).replace(".", ",") + " s" : "",
                 e.error ? " \u00B7 " + e.error : "", e.nota ? " \u00B7 " + e.nota : "")),
             React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
-                React.createElement("button", { className: "gj-btn", onClick: () => persistConReintento(b => b) }, "Reintentar guardar ahora"),
+                React.createElement("button", { className: "gj-btn", onClick: () => (onReintentar ? onReintentar() : persistConReintento(b => b)) }, "Reintentar guardar ahora"),
                 adminMode && stats && stats.pesadas > 0 && !optimizando && React.createElement("button", { className: "gj-btn accent", onClick: optimizar }, "Optimizar " + stats.pesadas + " fotos pesadas"),
                 hayCopia && React.createElement("button", { className: "gj-btn ghost", onClick: descargarCopia }, "Descargar copia sin subir"),
                 React.createElement("button", { className: "gj-btn ghost", onClick: onCerrar }, "Cerrar")),
@@ -15018,7 +15140,16 @@ function App() {
     useEffect(() => {
         if (typeof window === "undefined" || !window.gjOnRemoteChange)
             return;
-        window.gjOnRemoteChange((nuevoData) => setData(nuevoData));
+        window.gjOnRemoteChange((nuevoData) => {
+            // Lo que llega del servidor, con mis cambios que todavía no se han confirmado vueltos a aplicar encima:
+            // así una pulsación recién hecha nunca "desaparece" de la pantalla porque llegue algo de otro móvil.
+            let d = nuevoData;
+            for (const parche of pendientesRef.current) {
+                try { d = parche(d); }
+                catch (e) { /* si un cambio ya no encaja con lo nuevo, se omite */ }
+            }
+            setData(d);
+        });
         if (window.gjIniciarRealtimeSupabase)
             window.gjIniciarRealtimeSupabase(STORAGE_KEY);
         // Además del tiempo real, comprobamos cada 25s si hay una versión más nueva en el servidor.
@@ -15091,83 +15222,99 @@ function App() {
         }
     };
     const adminMode = adminRole !== null;
-    const persist = useCallback(async (next) => {
+    const persist = useCallback((next) => {
+        // Antes: se subía UNA vez y, si fallaba o chocaba con otro móvil, solo se ponía un aviso y la app acababa
+        // sustituyendo la pantalla por lo del servidor: lo hecho (un presupuesto, una firma...) desaparecía sin
+        // decir nada. Ahora usa el mismo motor que el resto: se ve al instante, se reintenta sola, y si otro móvil
+        // guardó antes, los dos cambios se fusionan.
+        const ancestro = dataRef.current;
         setData(next);
-        try {
-            const r = await window.storage.set(STORAGE_KEY, JSON.stringify(next), true);
-            setSaveError(!r ? ((window.gjSyncStatus && window.gjSyncStatus.estado === "conflicto") ? "conflicto" : "error") : false);
-        }
-        catch (e) {
-            setSaveError("error");
-        }
+        pendientesRef.current.push((base) => gjFusionar3(base, ancestro, next));
+        return programarSubida();
     }, []);
     // Como persist, pero para acciones pequeñas y bien definidas (fichar inicio/hecho, almuerzo,
     // actividades extra...): si el guardado choca porque otro móvil guardó algo justo antes, en vez
     // de avisar y parar, vuelve a aplicar la MISMA acción sobre los datos ya actualizados y lo
     // reintenta sola, hasta 3 veces, sin que el trabajador tenga que darse cuenta ni volver a pulsar.
     // patchFn recibe los datos base (clonados ya por el propio patchFn) y debe devolver el nuevo "next".
-    const persistQueueRef = useRef(Promise.resolve());
-    const persistConReintentoInterno = async (patchFn) => {
-        let base = dataRef.current;
-        let conflictos = 0;
-        for (let intento = 1; intento <= 4; intento++) {
-            const next = patchFn(base);
-            setData(next);
-            let r = null;
-            try {
-                // Última red de seguridad: la petición ya se cancela sola a los 90 s (ver gjFetchInstrumentado);
-                // esto solo evita quedarse esperando para siempre si algo muy raro impidiera incluso eso.
-                r = await Promise.race([
-                    window.storage.set(STORAGE_KEY, JSON.stringify(next), true),
-                    new Promise((_, reject) => setTimeout(() => reject(new Error("timeout_guardado")), 150000)),
-                ]);
-            }
-            catch (e) {
-                r = null;
-                window.gjResultadoGuardado = "error";
-            }
-            if (r) {
-                setSaveError(false);
-                return true;
-            }
-            if (window.gjResultadoGuardado === "conflicto") {
-                // Otro móvil guardó antes: se reintenta partiendo de SU versión (ya traída en memoria), sin esperas.
-                conflictos++;
-                if (window.gjBaseRemotaParaReintento) {
-                    base = window.gjBaseRemotaParaReintento;
-                    window.gjBaseRemotaParaReintento = null;
-                }
-                else {
-                    const raw = localStorage.getItem(STORAGE_KEY);
-                    if (raw) {
-                        try { base = JSON.parse(raw); }
-                        catch (e) { /* seguimos con la base actual */ }
-                    }
-                }
-                continue;
-            }
-            // Fallo de red o del servidor: se espera un poco y se reintenta, sin dar el cambio por perdido
-            // a la primera. Si la petición se agotó por tiempo, no se insiste con otra subida inmediata.
-            const seAgotoElTiempo = window.gjUltimaPeticion_agotada === true;
-            if (intento < 4) {
-                await new Promise(rs => setTimeout(rs, intento * 1500));
-                if (seAgotoElTiempo)
-                    intento++;
-                continue;
-            }
+    // ---------------------------------------------------------------------------------------------
+// MOTOR DE GUARDADO. Dos ideas:
+//  1) La pantalla responde AL INSTANTE: cada cambio se aplica en cuanto se pulsa, sin esperar a la red.
+//     (Antes cada pulsación esperaba su turno detrás de los guardados anteriores — varios MB cada uno —
+//     y con poca cobertura el trabajador no veía nada y tenía que pulsar varias veces.)
+//  2) La subida va por detrás y es AGRUPADA: si mientras se está subiendo se hacen más cambios, la siguiente
+//     subida los lleva todos juntos, en vez de una subida por pulsación. Los cambios aún no confirmados se
+//     recuerdan en "pendientes": si otro móvil guarda antes, se vuelven a aplicar encima de lo suyo.
+// ---------------------------------------------------------------------------------------------
+const pendientesRef = useRef([]);
+const subidaEnCursoRef = useRef(null);
+const esperar = (ms) => new Promise(rs => setTimeout(rs, ms));
+const subirUnLote = async () => {
+    let conflictos = 0;
+    for (let intento = 1; intento <= 4; intento++) {
+        const lote = pendientesRef.current.length;
+        const instantanea = dataRef.current;
+        let r = null;
+        try {
+            // Última red de seguridad: la petición ya se cancela sola a los 90 s (ver gjFetchInstrumentado).
+            r = await Promise.race([
+                window.storage.set(STORAGE_KEY, JSON.stringify(instantanea), true),
+                new Promise((_, reject) => setTimeout(() => reject(new Error("timeout_guardado")), 150000)),
+            ]);
         }
-        setSaveError(conflictos >= 3 ? "conflicto" : "error");
-        return false;
-    };
-    const persistConReintento = useCallback((patchFn) => {
-        // Si dos acciones se encadenan muy seguidas (iniciar, terminar, ir a lo siguiente...), cada
-        // guardado espera aquí a que el anterior haya terminado del todo \u2014 incluida la respuesta del
-        // servidor \u2014 antes de empezar el suyo propio. Así nunca viajan dos guardados a la vez por la
-        // red, que es lo que podía hacer que uno "pisara" al otro y se perdiera un fichaje reciente.
-        const tanda = persistQueueRef.current.then(() => persistConReintentoInterno(patchFn), () => persistConReintentoInterno(patchFn));
-        persistQueueRef.current = tanda.catch(() => {});
-        return tanda;
-    }, []);
+        catch (e) {
+            r = null;
+            window.gjResultadoGuardado = "error";
+        }
+        if (r) {
+            pendientesRef.current.splice(0, lote);
+            if (pendientesRef.current.length === 0)
+                setSaveError(false);
+            return true;
+        }
+        if (window.gjResultadoGuardado === "conflicto") {
+            // Otro móvil guardó antes. La capa de sincronización ya ha traído lo suyo y la pantalla ya muestra
+            // "lo suyo + mis cambios pendientes" (ver gjOnRemoteChange más abajo); se reintenta sin esperas.
+            conflictos++;
+            if (!window.gjBaseRemotaParaReintento)
+                await esperar(1500);
+            window.gjBaseRemotaParaReintento = null;
+            continue;
+        }
+        // Fallo de red o del servidor: se espera un poco y se reintenta, sin dar el cambio por perdido.
+        if (intento < 4) {
+            await esperar(intento * 1500);
+            if (window.gjUltimaPeticion_agotada === true)
+                intento++;
+        }
+    }
+    setSaveError(conflictos >= 3 ? "conflicto" : "error");
+    return false;
+};
+const programarSubida = () => {
+    if (!subidaEnCursoRef.current) {
+        subidaEnCursoRef.current = (async () => {
+            let ok = true;
+            try {
+                while (pendientesRef.current.length > 0) {
+                    ok = await subirUnLote();
+                    if (!ok)
+                        break;
+                }
+                return ok;
+            }
+            finally {
+                subidaEnCursoRef.current = null;
+            }
+        })();
+    }
+    return subidaEnCursoRef.current;
+};
+const persistConReintento = useCallback((patchFn) => {
+    setData(patchFn(dataRef.current)); // se ve al instante
+    pendientesRef.current.push(patchFn);
+    return programarSubida();
+}, []);
     // Cada vez que pasa algo relevante al guardar (éxito, fallo, choque...), se redibuja el estado visible.
     const [syncTick, setSyncTick] = useState(0);
     const [mostrarDiag, setMostrarDiag] = useState(false);
@@ -15180,7 +15327,7 @@ function App() {
     useEffect(() => {
         if (saveError !== "error")
             return;
-        const id = setInterval(() => { if (navigator.onLine !== false) persistConReintento(b => b); }, 20000);
+        const id = setInterval(() => { if (navigator.onLine !== false) programarSubida(); }, 20000);
         return () => clearInterval(id);
     }, [saveError]);
     useEffect(() => {
@@ -15372,9 +15519,8 @@ function App() {
                 React.createElement("img", { src: `data:image/png;base64,${LOGO_FULL_B64}`, alt: "Belardi", style: { width: "auto", height: 32, maxWidth: 90, flexShrink: 0, objectFit: "contain" } }),
                 React.createElement("div", { style: { flex: 1 } },
                     React.createElement("h1", null, data.settings.nombreEmpresa),
-                    React.createElement("div", { className: "gj-sub" },
-                        "Gesti\u00F3n de mantenimientos ",
-                        React.createElement("span", { onClick: () => setMostrarDiag(true), style: { opacity: 0.75, fontSize: 10, marginLeft: 4, textDecoration: "underline dotted", cursor: "pointer" } }, "\u00B7 v." + GJ_BUILD + " \u00B7 estado"))),
+                    React.createElement("div", { className: "gj-sub" }, "Gesti\u00F3n de mantenimientos"),
+                    React.createElement("div", { onClick: () => setMostrarDiag(true), style: { display: "inline-block", marginTop: 3, background: "rgba(255,255,255,0.22)", color: "#fff", fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 10, cursor: "pointer" } }, "Versi\u00F3n " + GJ_BUILD + " \u00B7 ver estado \u25B8")),
                 adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: () => setAdminRole(null) },
                     React.createElement(Unlock, { size: 14 }),
                     " ",
@@ -15383,14 +15529,14 @@ function App() {
             saveError === "conflicto" && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F Otro m\u00F3vil guard\u00F3 algo justo ahora. Este \u00FAltimo cambio tuyo NO se ha subido, para no perder lo suyo \u2014 vuelve a hacerlo."),
             saveError === "error" && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "#B42318", color: "#fff", padding: "10px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } },
                 "\u26A0\uFE0F NO SE HA GUARDADO tu \u00FAltimo cambio (cobertura d\u00E9bil o fallo del servidor). Se reintenta solo cada 20 s \u2014 no cierres la app hasta que desaparezca este aviso. ",
-                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => persistConReintento(b => b) }, "Reintentar ya"),
+                React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => programarSubida() }, "Reintentar ya"),
                 React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => setMostrarDiag(true) }, "Ver motivo")),
             (window.gjSinServidor && window.gjSinServidor()) && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "#B42318", color: "#fff", padding: "10px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } }, "\u26A0\uFE0F SIN CONEXI\u00D3N CON EL SERVIDOR: lo que fiches ahora NO se est\u00E1 guardando para los dem\u00E1s. Comprueba la cobertura; se reintenta solo."),
             window.gjCambiosDescartados && React.createElement("div", { className: "gj-no-print", style: { position: "sticky", top: 0, zIndex: 60, background: "var(--warn-bg)", color: "var(--warn)", padding: "8px 12px", fontSize: 13, fontWeight: 600, textAlign: "center" } },
                 "\u2139\uFE0F Al abrir la app hab\u00EDa cambios de este m\u00F3vil sin subir, y otro m\u00F3vil hab\u00EDa guardado mientras tanto: no se han podido unir. Av\u00EDsale a un administrador. ",
                 React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => { window.gjCambiosDescartados = false; setSyncTick(t => t + 1); } }, "Entendido"),
                 React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => setMostrarDiag(true) }, "Ver detalle")),
-            mostrarDiag && React.createElement(GjPanelDiagnostico, { data: data, adminMode: adminMode, persistConReintento: persistConReintento, onCerrar: () => setMostrarDiag(false) }),
+            mostrarDiag && React.createElement(GjPanelDiagnostico, { data: data, adminMode: adminMode, persistConReintento: persistConReintento, onReintentar: () => programarSubida(), onCerrar: () => setMostrarDiag(false) }),
             pinPrompt && (React.createElement("div", { className: "gj-pin-overlay gj-no-print" },
                 React.createElement("div", { className: "gj-label" }, "PIN de administrador"),
                 React.createElement("div", { style: { display: "flex", gap: 6 } },
@@ -18114,7 +18260,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         }
         const idActividadNueva = uid("ext");
         const horaAhora = nowTime();
-        await persistConReintento(base => {
+        persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             order.actividadesExtra = order.actividadesExtra || [];
@@ -18612,7 +18758,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
         // primera parada del d\u00EDa). El resto \u2014 bloqueos, comprobaciones, y el inicio de la parada en
         // s\u00ED \u2014 lo hace iniciarParada, as\u00ED que toda protecci\u00F3n que tenga esa (contra toques repetidos,
         // contra actividades sin cerrar, etc.) se aplica aqu\u00ED tambi\u00E9n sin tener que repetirla.
-        await persistConReintento(base => {
+        persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             order.porTrabajadorJornada = order.porTrabajadorJornada || {};
@@ -18728,7 +18874,7 @@ function TrabajadorView({ data, persist, persistConReintento, getClient, getWork
             return;
         }
         const hora = nowTime();
-        await persistConReintento(base => {
+        persistConReintento(base => {
             const next = structuredClone(base);
             const order = next.orders.find(o => o.id === orderId);
             const miAlmuerzoAbierto2 = order.porTrabajadorAlmuerzo && order.porTrabajadorAlmuerzo[workerId];
