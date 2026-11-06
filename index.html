@@ -130,6 +130,43 @@ function gjMarcarPendiente() { try { localStorage.setItem(GJ_PENDIENTE_KEY, "1")
 function gjLimpiarPendiente() { try { localStorage.removeItem(GJ_PENDIENTE_KEY); } catch (e) {} }
 function gjHayPendiente() { try { return localStorage.getItem(GJ_PENDIENTE_KEY) === "1"; } catch (e) { return false; } }
 
+// --- Almacén de respaldo en IndexedDB (mucho más espacio que localStorage, que se queda en ~5 MB) ---
+// Guarda (a) la "foto" de los últimos datos que el servidor tenía y este móvil conocía (el "ancestro", que
+// permite fusionar después los cambios que quedaron sin subir con los de otros móviles) y (b) una copia de
+// seguridad de esos cambios sin subir. Antes la copia se intentaba guardar en localStorage, donde con datos de
+// varios MB no cabía y fallaba en silencio.
+function gjIdbAbrir() {
+  return new Promise((res, rej) => {
+    try {
+      const r = indexedDB.open("gj_respaldo_v1", 1);
+      r.onupgradeneeded = () => { r.result.createObjectStore("kv"); };
+      r.onsuccess = () => res(r.result);
+      r.onerror = () => rej(r.error);
+    } catch (e) { rej(e); }
+  });
+}
+async function gjIdbPut(k, v) {
+  try {
+    const db = await gjIdbAbrir();
+    await new Promise((res, rej) => { const tx = db.transaction("kv", "readwrite"); tx.objectStore("kv").put(v, k); tx.oncomplete = res; tx.onerror = () => rej(tx.error); tx.onabort = () => rej(tx.error); });
+    db.close();
+    return true;
+  } catch (e) { return false; }
+}
+async function gjIdbGet(k) {
+  try {
+    const db = await gjIdbAbrir();
+    const v = await new Promise((res, rej) => { const tx = db.transaction("kv", "readonly"); const rq = tx.objectStore("kv").get(k); rq.onsuccess = () => res(rq.result); rq.onerror = () => rej(rq.error); });
+    db.close();
+    return v === undefined ? null : v;
+  } catch (e) { return null; }
+}
+window.gjIdbGet = gjIdbGet;
+// Se guarda en segundo plano, sin frenar la pantalla.
+function gjGuardarAncestro(version, obj) {
+  setTimeout(() => { try { gjIdbPut("ancestro", { v: version, t: new Date().toISOString(), texto: JSON.stringify(obj) }); } catch (e) {} }, 0);
+}
+
 // --- Registro de lo que pasa al guardar (se conserva aunque se cierre la app) ---
 window.gjLogGuardado = (() => { try { const x = JSON.parse(localStorage.getItem(GJ_LOG_KEY) || "[]"); return Array.isArray(x) ? x : []; } catch (e) { return []; } })();
 function gjAvisarCambioEstado() { try { if (window.gjOnSyncEvent) window.gjOnSyncEvent(); } catch (e) {} }
@@ -211,6 +248,7 @@ async function gjSincronizarConSupabase(STORAGE_KEY, forzar) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data.data)); } catch (e) { /* sin espacio local: seguimos con los datos descargados */ }
       gjMarcarVersion(gjVersionDe(data.data));
       if (data.updated_at) gjMarcarUltimaSync(data.updated_at);
+      gjGuardarAncestro(gjVersionDe(data.data), data.data);
       return data.data;
     }
     return null;
@@ -230,24 +268,32 @@ async function gjRecuperarPendienteAlArrancar(client, key) {
     const { data: fila, error } = await client.from("gj_app_data").select("updated_at").eq("id", 1).single();
     if (error || !fila) return null;
     if (gjMismaMarca(fila.updated_at, gjUltimaSyncEnMemoria)) {
-      const parsed = JSON.parse(local);
-      const nueva = gjVersionConocida + 1;
-      parsed.__v = nueva;
-      const ahoraISO = new Date().toISOString();
-      const { data: filas, error: e2 } = await client.from("gj_app_data").update({ data: parsed, updated_at: ahoraISO }).eq("id", 1).eq("updated_at", gjUltimaSyncEnMemoria).select("id, updated_at");
-      if (!e2 && filas && filas.length) {
-        gjMarcarVersion(nueva);
-        gjMarcarUltimaSync(filas[0].updated_at || ahoraISO);
-        gjLimpiarPendiente();
-        gjRegistrar({ tipo: "recuperado", ok: true, nota: "Al abrir la app se han subido cambios que se habían quedado sin subir" });
-        return { key, value: JSON.stringify(parsed) };
+      // El servidor sigue igual que la última vez que este móvil lo vio: nadie ha escrito nada entretanto, así que
+      // subir lo local no pisa nada de nadie.
+      const r = await window.storage.set(key, local, true);
+      if (r) { gjRegistrar({ tipo: "recuperado", ok: true, nota: "Al abrir la app se han subido cambios que se habían quedado sin subir" }); return r; }
+      return null;
+    }
+    // Otro móvil guardó mientras tanto. Primero, copia de seguridad de lo local (por si algo saliera mal)...
+    const ancestro = await gjIdbGet("ancestro");
+    await gjIdbPut("copia_sin_subir", { t: new Date().toISOString(), texto: local });
+    // ...y después se FUSIONAN los cambios sin subir con lo del servidor: solo se aplica lo que este móvil cambió
+    // desde la última versión que conocía, y se respeta lo que cambió el otro móvil.
+    if (ancestro && ancestro.v === gjVersionConocida && window.gjFusionar3) {
+      const remoto = await gjSincronizarConSupabase(key, true);
+      if (remoto) {
+        const fusionado = window.gjFusionar3(remoto, JSON.parse(ancestro.texto), JSON.parse(local));
+        const r = await window.storage.set(key, JSON.stringify(fusionado), true);
+        gjRegistrar({ tipo: "recuperado", ok: !!r, nota: "Había cambios sin subir en este móvil y otro móvil guardó mientras tanto: se han unido los dos" + (r ? "" : " (pendiente de subir)") });
+        // Aunque la subida no haya podido completarse, la app arranca ya con los dos cambios unidos y lo sigue intentando.
+        return r || { key, value: JSON.stringify(fusionado) };
       }
       return null;
     }
-    try { localStorage.setItem(GJ_COPIA_KEY, JSON.stringify({ t: new Date().toISOString(), data: local })); } catch (e) {}
+    // Sin "foto" de referencia no se puede fusionar con seguridad: se deja la copia aparte y se avisa.
     gjLimpiarPendiente();
     window.gjCambiosDescartados = true;
-    gjRegistrar({ tipo: "descartado", ok: false, nota: "Había cambios sin subir en este móvil y otro móvil guardó mientras tanto: no se han podido unir. Se ha guardado una copia aparte." });
+    gjRegistrar({ tipo: "descartado", ok: false, nota: "Había cambios sin subir en este móvil y otro móvil guardó mientras tanto; no se han podido unir. Hay una copia en el panel de estado." });
     return null;
   } catch (e) { return null; }
 }
@@ -335,7 +381,7 @@ window.storage = {
         token = (filasUp && filasUp[0] && filasUp[0].updated_at) || ahoraISO;
       }
       // Solo se avanza la marca si no hemos recibido, mientras tanto, algo aún más nuevo.
-      if (nuevaVersion > gjVersionConocida) { gjMarcarVersion(nuevaVersion); gjMarcarUltimaSync(token); }
+      if (nuevaVersion > gjVersionConocida) { gjMarcarVersion(nuevaVersion); gjMarcarUltimaSync(token); gjGuardarAncestro(nuevaVersion, parsed); }
       gjLimpiarPendiente();
       window.gjResultadoGuardado = "ok";
       window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: ahoraISO };
@@ -386,6 +432,7 @@ function gjIniciarRealtimeSupabase(STORAGE_KEY) {
           // del siguiente guardado sean siempre la misma versión.
           gjMarcarVersion(gjVersionDe(nuevo.data));
           if (nuevo.updated_at) gjMarcarUltimaSync(nuevo.updated_at);
+          gjGuardarAncestro(gjVersionDe(nuevo.data), nuevo.data);
           window.gjSyncStatus = { estado: "conectado", ultimoError: null, ultimaSync: new Date().toISOString() };
           if (gjRemoteChangeCallback) gjRemoteChangeCallback(nuevo.data);
         }
@@ -13247,7 +13294,7 @@ const DEVICE_KEY = "gj_device_worker_v1";
 const CONSENT_KEY = "gj_device_consent_v1";
 // Número de versión que se ve en la cabecera: sirve para comprobar, móvil por móvil, que todos están
 // ejecutando la versión nueva y no una copia antigua que se haya quedado en memoria.
-const GJ_BUILD = "2nov-fusion-7";
+const GJ_BUILD = "4nov-envio-9";
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 9); }
 // Valores por defecto de los ratios de presupuesto (m\u00B2/hora, etc.). Si alg\u00FAn ajuste guardado no tiene
 // uno de estos campos (p.ej. por haberse a\u00F1adido despu\u00E9s de que ya se guardaran los ajustes), se
@@ -13417,7 +13464,16 @@ function todayStr() {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 function nowTime() { const d = new Date(); return d.toTimeString().slice(0, 5); }
-function cleanPhone(p) { return (p || "").replace(/[^\d]/g, ""); }
+// WhatsApp (wa.me) necesita el número en formato internacional. Un móvil español escrito como "600 12 34 56"
+// no lleva el 34 delante y el enlace podía no abrir el chat correcto: se añade solo a números españoles de 9 cifras.
+function cleanPhone(p) {
+    let d = (p || "").replace(/[^\d]/g, "");
+    if (d.startsWith("00"))
+        d = d.slice(2);
+    if (d.length === 9 && /^[6789]/.test(d))
+        d = "34" + d;
+    return d;
+}
 function waLink(phone, text) { return `https://wa.me/${cleanPhone(phone)}?text=${encodeURIComponent(text)}`; }
 function mailLink(email, subject, body, cc) { return `mailto:${email}?${cc ? "cc=" + encodeURIComponent(cc) + "&" : ""}subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`; }
 function leerFotoBase64(file) {
@@ -14990,7 +15046,86 @@ function gjFusionar3(base, anc, mine) {
     }
     return mine; // lo han cambiado los dos y no se puede combinar: se queda lo último que se hizo (lo mío)
 }
+window.gjFusionar3 = gjFusionar3;
 // <<GJ_FUSION_FIN>>
+
+
+// --- Pregunta "¿Quieres enviar el documento firmado?" (correo o WhatsApp) ---------------------------
+// Aparece al confirmar la firma del SEPA y del contrato (mantenimiento y obras). Si hay más de un documento
+// firmado, se puede elegir cuál enviar. El correo sale con copia a la empresa.
+function GjEnviarFirmado({ docs, tipoInicial, cliente, email, telefono, emailEmpresa, envios, onEnviado, onGuardarPdf, onCerrar }) {
+    const disponibles = ["contrato", "sepa"].filter(t => docs[t]);
+    const [tipo, setTipo] = useState(docs[tipoInicial] ? tipoInicial : disponibles[0]);
+    const d = docs[tipo];
+    if (!d)
+        return null;
+    const previos = (envios || []).filter(e => e.tipo === tipo);
+    const ultimo = previos.length ? previos[previos.length - 1] : null;
+    const marcar = (canal) => { onEnviado(tipo, canal); onCerrar(); };
+    const caja = { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 1100, display: "flex", alignItems: "center", justifyContent: "center", padding: 12 };
+    const boton = { justifyContent: "center", textAlign: "center", minHeight: 46, fontSize: 15, textDecoration: "none" };
+    return React.createElement("div", { className: "gj-no-print", style: caja },
+        React.createElement("div", { className: "gj-card", style: { maxWidth: 420, width: "100%", background: "var(--surface)", maxHeight: "92vh", overflowY: "auto" } },
+            React.createElement("div", { style: { fontWeight: 700, fontSize: 17, marginBottom: 4 } }, "\u00BFQuieres enviar el documento firmado?"),
+            React.createElement("div", { style: { fontSize: 13, color: "var(--ink-soft)", marginBottom: 10 } }, d.etiqueta + " \u00B7 " + (cliente || "")),
+            disponibles.length > 1 && React.createElement("div", { style: { display: "flex", gap: 6, marginBottom: 10 } },
+                disponibles.map(t => React.createElement("button", { key: t, className: "gj-btn" + (t === tipo ? " primary" : " ghost"), style: { flex: 1, justifyContent: "center" }, onClick: () => setTipo(t) }, docs[t].corto))),
+            ultimo && React.createElement("div", { style: { fontSize: 12, color: "var(--good)", fontWeight: 600, marginBottom: 8 } }, "\u2714 Ya enviado por " + (ultimo.canal === "whatsapp" ? "WhatsApp" : "correo") + " el " + fechaEs(ultimo.fecha) + (ultimo.hora ? " a las " + ultimo.hora : "")),
+            email ? React.createElement("a", { className: "gj-btn primary block", style: boton, href: mailLink(email, d.asunto, d.mensaje, emailEmpresa), target: "_blank", rel: "noreferrer", onClick: () => marcar("correo") },
+                React.createElement(Mail, { size: 16 }), " Correo electr\u00F3nico")
+                : React.createElement("button", { className: "gj-btn block", style: boton, disabled: true }, React.createElement(Mail, { size: 16 }), " Correo electr\u00F3nico (falta el correo del cliente)"),
+            email && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", margin: "3px 0 10px" } }, "Para " + email + (emailEmpresa ? " \u00B7 con copia a " + emailEmpresa : "")),
+            !email && React.createElement("div", { style: { height: 10 } }),
+            telefono ? React.createElement("a", { className: "gj-btn accent block", style: boton, href: waLink(telefono, d.mensaje), target: "_blank", rel: "noreferrer", onClick: () => marcar("whatsapp") },
+                React.createElement(Send, { size: 16 }), " WhatsApp")
+                : React.createElement("button", { className: "gj-btn block", style: boton, disabled: true }, React.createElement(Send, { size: 16 }), " WhatsApp (falta el tel\u00E9fono del cliente)"),
+            telefono && React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-soft)", margin: "3px 0 10px" } }, "Al " + telefono),
+            React.createElement("div", { style: { fontSize: 12, color: "var(--ink-soft)", margin: "6px 0 8px", lineHeight: 1.35 } },
+                "El correo y el WhatsApp salen con el mensaje ya escrito. Para adjuntar el documento, gu\u00E1rdalo antes en PDF: ",
+                React.createElement("button", { className: "gj-btn ghost", style: { padding: "1px 8px", fontSize: 12 }, onClick: () => onGuardarPdf(tipo) }, "Guardar PDF")),
+            React.createElement("button", { className: "gj-btn ghost block", style: { justifyContent: "center" }, onClick: onCerrar }, "Ahora no")));
+}
+function GjEnvolturaEnvio({ props, Interno, docsDe }) {
+    const { p, data, persist } = props;
+    const [envio, setEnvio] = useState(null);
+    const actual = (data.presupuestos || []).find(x => x.id === p.id) || p;
+    const registrarEnvio = (tipo, canal) => {
+        const next = structuredClone(data);
+        const pres = next.presupuestos.find(x => x.id === p.id);
+        if (!pres)
+            return;
+        pres.enviosFirmados = pres.enviosFirmados || [];
+        pres.enviosFirmados.push({ tipo, canal, fecha: todayStr(), hora: nowTime() });
+        persist(next);
+    };
+    return React.createElement(React.Fragment, null,
+        React.createElement(Interno, { ...props, abrirEnviar: setEnvio }),
+        envio && React.createElement(GjEnviarFirmado, {
+            docs: docsDe(actual), tipoInicial: envio.tipo, cliente: actual.nombre, email: actual.email, telefono: actual.telefono,
+            emailEmpresa: data.settings.emailEmpresa, envios: actual.enviosFirmados,
+            onEnviado: registrarEnvio,
+            onGuardarPdf: (tipo) => { setEnvio(null); if (envio.irAEtapa) envio.irAEtapa(tipo === "sepa" ? "sepa" : "contrato"); setTimeout(() => window.print(), 500); },
+            onCerrar: () => setEnvio(null),
+        }));
+}
+function PresupuestoMantenimientoDoc(props) {
+    const docsDe = (p) => ({
+        contrato: p.fechaFirma ? { etiqueta: "Contrato de mantenimiento", corto: "Contrato", asunto: "Contrato de mantenimiento firmado",
+            mensaje: `Le adjuntamos copia del contrato de mantenimiento n\u00BA ${p.id.slice(-4).toUpperCase()} firmado con fecha ${fechaEs(p.fechaFirma)}. Gracias por confiar en Jardiner\u00EDa Belardi.` } : null,
+        sepa: p.fechaFirmaSepa ? { etiqueta: "Mandato de domiciliaci\u00F3n SEPA", corto: "SEPA", asunto: "Mandato SEPA firmado",
+            mensaje: `Le adjuntamos copia del mandato de domiciliaci\u00F3n SEPA n\u00BA SEPA-${p.numeroFormateado ? p.numeroFormateado.replace("/", "-") : p.id.slice(-6).toUpperCase()} firmado con fecha ${fechaEs(p.fechaFirmaSepa)}. Gracias por confiar en Jardiner\u00EDa Belardi.` } : null,
+    });
+    return React.createElement(GjEnvolturaEnvio, { props, Interno: PresupuestoMantenimientoDocInterno, docsDe });
+}
+function PresupuestoObraDoc(props) {
+    const docsDe = (p) => ({
+        contrato: p.fechaFirmaContratoObra ? { etiqueta: "Contrato de obra", corto: "Contrato", asunto: "Contrato de obra firmado",
+            mensaje: `Le adjuntamos copia del contrato de obra n\u00BA ${p.numeroFormateado || p.id.slice(-4).toUpperCase()} firmado con fecha ${fechaEs(p.fechaFirmaContratoObra)}. Gracias por confiar en Jardiner\u00EDa Belardi.` } : null,
+        sepa: p.fechaFirmaSepaObra ? { etiqueta: "Mandato de domiciliaci\u00F3n SEPA (obra)", corto: "SEPA", asunto: "Mandato SEPA firmado",
+            mensaje: `Le adjuntamos copia del mandato de domiciliaci\u00F3n SEPA n\u00BA SEPA-OBRA-${p.numeroFormateado ? p.numeroFormateado.replace("/", "-") : p.id.slice(-6).toUpperCase()} firmado con fecha ${fechaEs(p.fechaFirmaSepaObra)}. Gracias por confiar en Jardiner\u00EDa Belardi.` } : null,
+    });
+    return React.createElement(GjEnvolturaEnvio, { props, Interno: PresupuestoObraDocInterno, docsDe });
+}
 
 // --- Utilidades para ver y reducir el peso de las fotos guardadas dentro de los datos ---
 function gjRecogerFotos(obj, acc, soloJpeg) {
@@ -15082,18 +15217,27 @@ function GjPanelDiagnostico({ data, adminMode, persistConReintento, onReintentar
         await persistConReintento(base => gjReemplazarFotos(base, mapa));
         setOptimizando("Hecho: " + mapa.size + " fotos optimizadas, ahorrados " + (Math.round(ahorro / 1024 / 1024 * 10) / 10) + " MB.");
     };
+    const [copia, setCopia] = useState(null);
+    useEffect(() => {
+        (async () => {
+            try {
+                const c = window.gjIdbGet ? await window.gjIdbGet("copia_sin_subir") : null;
+                setCopia(c);
+            }
+            catch (e) { /* sin copia */ }
+        })();
+    }, []);
     const descargarCopia = () => {
         try {
-            const c = JSON.parse(localStorage.getItem("gj_copia_sin_subir_v1"));
-            const blob = new Blob([c.data], { type: "application/json" });
+            const blob = new Blob([copia.texto], { type: "application/json" });
             const a = document.createElement("a");
             a.href = URL.createObjectURL(blob);
-            a.download = "copia_sin_subir_" + (c.t || "").slice(0, 10) + ".json";
+            a.download = "copia_sin_subir_" + (copia.t || "").slice(0, 10) + ".json";
             a.click();
         }
-        catch (e) { alert("No hay copia guardada."); }
+        catch (e) { alert("No se ha podido descargar la copia."); }
     };
-    const hayCopia = (() => { try { return !!localStorage.getItem("gj_copia_sin_subir_v1"); } catch (e) { return false; } })();
+    const hayCopia = !!copia;
     const f = { fontSize: 12, marginBottom: 3 };
     return React.createElement("div", { className: "gj-no-print", style: { position: "fixed", top: 0, left: 0, right: 0, bottom: 0, background: "rgba(0,0,0,0.55)", zIndex: 1000, display: "flex", alignItems: "flex-start", justifyContent: "center", padding: 10, overflowY: "auto" } },
         React.createElement("div", { className: "gj-card", style: { maxWidth: 460, width: "100%", background: "var(--surface)" } },
@@ -15101,6 +15245,7 @@ function GjPanelDiagnostico({ data, adminMode, persistConReintento, onReintentar
             React.createElement("div", { style: f }, "Versi\u00F3n de la app: ", React.createElement("b", null, GJ_BUILD)),
             React.createElement("div", { style: f }, "Conexi\u00F3n: ", React.createElement("b", null, (window.gjSyncStatus && window.gjSyncStatus.estado) || "?"), navigator.onLine === false ? " (el m\u00F3vil dice que no tiene internet)" : ""),
             React.createElement("div", { style: f }, "\u00DAltima subida correcta: ", React.createElement("b", null, ultimaOk ? hora(ultimaOk.t) : "ninguna en este m\u00F3vil")),
+            React.createElement("div", { style: f }, "Cambios pendientes de subir: ", React.createElement("b", null, (typeof window.gjPendientesCount === "function" ? window.gjPendientesCount() : "?"))),
             React.createElement("div", { style: f }, "Versi\u00F3n de los datos: ", React.createElement("b", null, typeof gjVersionConocida !== "undefined" ? gjVersionConocida : "?")),
             window.gjSyncStatus && window.gjSyncStatus.ultimoError && React.createElement("div", { style: { ...f, color: "var(--warn)", fontWeight: 600 } }, "\u00DAltimo error: ", window.gjSyncStatus.ultimoError),
             stats && React.createElement("div", { style: f }, "Tama\u00F1o de los datos que se suben en CADA fichaje: ", React.createElement("b", null, mb(stats.kb)), " \u00B7 fotos: ", stats.nFotos, " (", mb(stats.kbFotos), ")"),
@@ -15112,7 +15257,7 @@ function GjPanelDiagnostico({ data, adminMode, persistConReintento, onReintentar
             React.createElement("div", { style: { display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 } },
                 React.createElement("button", { className: "gj-btn", onClick: () => (onReintentar ? onReintentar() : persistConReintento(b => b)) }, "Reintentar guardar ahora"),
                 adminMode && stats && stats.pesadas > 0 && !optimizando && React.createElement("button", { className: "gj-btn accent", onClick: optimizar }, "Optimizar " + stats.pesadas + " fotos pesadas"),
-                hayCopia && React.createElement("button", { className: "gj-btn ghost", onClick: descargarCopia }, "Descargar copia sin subir"),
+                hayCopia && React.createElement("button", { className: "gj-btn ghost", onClick: descargarCopia }, "Descargar copia de cambios sin subir (" + hora(copia.t) + ")"),
                 React.createElement("button", { className: "gj-btn ghost", onClick: onCerrar }, "Cerrar")),
             optimizando && React.createElement("div", { style: { fontSize: 12, marginTop: 8, fontWeight: 600 } }, optimizando)));
 }
@@ -15149,6 +15294,10 @@ function App() {
                 catch (e) { /* si un cambio ya no encaja con lo nuevo, se omite */ }
             }
             setData(d);
+            if (pendientesRef.current.length > 0) {
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+                catch (e) { /* sin espacio local */ }
+            }
         });
         if (window.gjIniciarRealtimeSupabase)
             window.gjIniciarRealtimeSupabase(STORAGE_KEY);
@@ -15270,6 +15419,8 @@ const subirUnLote = async () => {
             pendientesRef.current.splice(0, lote);
             if (pendientesRef.current.length === 0)
                 setSaveError(false);
+            if (window.gjOnSyncEvent)
+                window.gjOnSyncEvent(); // redibuja el indicador "Guardando…" → "Guardado"
             return true;
         }
         if (window.gjResultadoGuardado === "conflicto") {
@@ -15291,6 +15442,7 @@ const subirUnLote = async () => {
     setSaveError(conflictos >= 3 ? "conflicto" : "error");
     return false;
 };
+window.gjPendientesCount = () => pendientesRef.current.length;
 const programarSubida = () => {
     if (!subidaEnCursoRef.current) {
         subidaEnCursoRef.current = (async () => {
@@ -15322,6 +15474,52 @@ const persistConReintento = useCallback((patchFn) => {
         window.gjOnSyncEvent = () => setSyncTick(t => t + 1);
         return () => { window.gjOnSyncEvent = null; };
     }, []);
+    // Si se intenta cerrar la app (o recargar) con cambios todavía sin subir, el navegador avisa.
+    useEffect(() => {
+        const avisar = (e) => {
+            if (pendientesRef.current.length > 0) {
+                e.preventDefault();
+                e.returnValue = "";
+                return "";
+            }
+        };
+        window.addEventListener("beforeunload", avisar);
+        return () => window.removeEventListener("beforeunload", avisar);
+    }, []);
+    // El mensaje verde "Guardado" se quita solo a los pocos segundos.
+    useEffect(() => {
+        const ult = (window.gjLogGuardado || []).slice().reverse().find(e => e.tipo === "escritura" && e.ok);
+        if (!ult)
+            return;
+        const resta = 3700 - (Date.now() - new Date(ult.t).getTime());
+        if (resta <= 0)
+            return;
+        const id = setTimeout(() => setSyncTick(t => t + 1), resta);
+        return () => clearTimeout(id);
+    }, [syncTick]);
+    // Si la app se abrió con cambios de este móvil que aún no habían llegado al servidor (y la recuperación inicial
+    // no pudo subirlos), se siguen intentando subir.
+    const arranqueRevisadoRef = useRef(false);
+    useEffect(() => {
+        if (!data || arranqueRevisadoRef.current)
+            return;
+        arranqueRevisadoRef.current = true;
+        if (!(window.gjHayPendiente && window.gjHayPendiente()))
+            return;
+        setTimeout(async () => {
+            try {
+                const anc = window.gjIdbGet ? await window.gjIdbGet("ancestro") : null;
+                const mio = dataRef.current;
+                if (anc && window.gjFusionar3) {
+                    const ancObj = JSON.parse(anc.texto);
+                    persistConReintento(base => window.gjFusionar3(base, ancObj, mio));
+                }
+                else
+                    persistConReintento(b => b);
+            }
+            catch (e) { /* si algo falla, el siguiente cambio lo subirá todo igualmente */ }
+        }, 1500);
+    }, [!!data]);
     // Si un guardado falla por red o servidor, se reintenta solo cada 20 s (con lo que hay en memoria, que
     // incluye lo que el trabajador acaba de hacer), sin que nadie tenga que acordarse de repetirlo.
     useEffect(() => {
@@ -15379,6 +15577,12 @@ const persistConReintento = useCallback((patchFn) => {
             React.createElement("div", { style: { fontSize: 17, fontWeight: 700, marginBottom: 10 } }, "Acceso desactivado"),
             React.createElement("div", { style: { fontSize: 14, color: "#5B6754" } }, "Tu acceso a esta aplicaci\u00F3n ha sido desactivado. Si crees que es un error, contacta con la empresa.")));
     }
+    // --- Estado del guardado, siempre visible ---
+    const hayPendientes = pendientesRef.current.length > 0 || !!window.gjSubiendo;
+    const ultimoOk = (window.gjLogGuardado || []).slice().reverse().find(e => e.tipo === "escritura" && e.ok);
+    const horaGuardado = ultimoOk ? new Date(ultimoOk.t).toLocaleTimeString("es-ES") : null;
+    const estadoGuardado = (saveError === "error" || saveError === "conflicto") ? "error" : (hayPendientes ? "subiendo" : "ok");
+    const recienGuardado = estadoGuardado === "ok" && !!ultimoOk && (Date.now() - new Date(ultimoOk.t).getTime() < 3500);
     return (React.createElement("div", { className: "gj" },
         React.createElement("style", null, `
         @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
@@ -15520,7 +15724,9 @@ const persistConReintento = useCallback((patchFn) => {
                 React.createElement("div", { style: { flex: 1 } },
                     React.createElement("h1", null, data.settings.nombreEmpresa),
                     React.createElement("div", { className: "gj-sub" }, "Gesti\u00F3n de mantenimientos"),
-                    React.createElement("div", { onClick: () => setMostrarDiag(true), style: { display: "inline-block", marginTop: 3, background: "rgba(255,255,255,0.22)", color: "#fff", fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 10, cursor: "pointer" } }, "Versi\u00F3n " + GJ_BUILD + " \u00B7 ver estado \u25B8")),
+                    React.createElement("div", { onClick: () => setMostrarDiag(true), style: { display: "inline-block", marginTop: 3, background: "rgba(255,255,255,0.22)", color: "#fff", fontSize: 11.5, fontWeight: 600, padding: "2px 9px", borderRadius: 10, cursor: "pointer" } }, "Versi\u00F3n " + GJ_BUILD + " \u00B7 ver estado \u25B8"),
+                    React.createElement("div", { onClick: () => setMostrarDiag(true), style: { fontSize: 12, fontWeight: 700, marginTop: 4, cursor: "pointer", color: estadoGuardado === "ok" ? "#9be7a6" : estadoGuardado === "subiendo" ? "#ffd88a" : "#ff9b9b" } },
+                        estadoGuardado === "ok" ? "\u2714 Todo guardado" + (horaGuardado ? " (" + horaGuardado + ")" : "") : estadoGuardado === "subiendo" ? "\u23F3 Guardando\u2026 no cierres la app" : "\u2716 SIN GUARDAR \u2014 no cierres la app")),
                 adminMode ? (React.createElement("button", { className: "gj-btn ghost", style: { color: "var(--primary-ink)" }, onClick: () => setAdminRole(null) },
                     React.createElement(Unlock, { size: 14 }),
                     " ",
@@ -15536,6 +15742,8 @@ const persistConReintento = useCallback((patchFn) => {
                 "\u2139\uFE0F Al abrir la app hab\u00EDa cambios de este m\u00F3vil sin subir, y otro m\u00F3vil hab\u00EDa guardado mientras tanto: no se han podido unir. Av\u00EDsale a un administrador. ",
                 React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => { window.gjCambiosDescartados = false; setSyncTick(t => t + 1); } }, "Entendido"),
                 React.createElement("button", { className: "gj-btn", style: { marginLeft: 6, padding: "2px 8px" }, onClick: () => setMostrarDiag(true) }, "Ver detalle")),
+            (estadoGuardado !== "ok" || recienGuardado) && React.createElement("div", { className: "gj-no-print", onClick: () => setMostrarDiag(true), style: { position: "fixed", left: "50%", transform: "translateX(-50%)", bottom: 16, zIndex: 900, padding: "7px 14px", borderRadius: 20, fontSize: 13, fontWeight: 700, boxShadow: "0 2px 10px rgba(0,0,0,0.3)", cursor: "pointer", background: estadoGuardado === "ok" ? "#1F7A3A" : estadoGuardado === "subiendo" ? "#B7791F" : "#B42318", color: "#fff" } },
+                estadoGuardado === "ok" ? "\u2714 Guardado" : estadoGuardado === "subiendo" ? "\u23F3 Guardando\u2026 no cierres la app" : "\u2716 Sin guardar \u2014 no cierres la app"),
             mostrarDiag && React.createElement(GjPanelDiagnostico, { data: data, adminMode: adminMode, persistConReintento: persistConReintento, onReintentar: () => programarSubida(), onCerrar: () => setMostrarDiag(false) }),
             pinPrompt && (React.createElement("div", { className: "gj-pin-overlay gj-no-print" },
                 React.createElement("div", { className: "gj-label" }, "PIN de administrador"),
@@ -22789,7 +22997,7 @@ function AnexosContrato({ p, data, persist, onVolver, onContinuar, tabsDocumento
                 React.createElement("div", { style: { fontSize: 11, color: "var(--ink-soft)", marginTop: 8 } }, "Nota aclaratoria: todas las actuaciones pueden sufrir variaci\u00F3n tanto en fecha de realizaci\u00F3n como en n\u00FAmero de intervenciones, seg\u00FAn las condiciones climatol\u00F3gicas del a\u00F1o.")))),
         React.createElement("button", { className: "gj-btn primary block", onClick: continuar }, incluirAnexos ? "Guardar anexos y continuar al contrato" : "Continuar al contrato sin anexos")));
 }
-function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setFocusClienteId }) {
+function PresupuestoMantenimientoDocInterno({ p, data, persist, onVolver, setView, setFocusClienteId, abrirEnviar }) {
     const [etapa, setEtapa] = useState(p.firmaCliente ? "listo" : p.aprobado ? "datos" : "documento");
     const [fechaInicio, setFechaInicio] = useState(p.fechaInicioMantenimiento || "");
     const [apellidos, setApellidos] = useState(p.apellidos || "");
@@ -22949,6 +23157,8 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
         }
         persist(next);
         setEtapa("listo");
+        if (abrirEnviar)
+            abrirEnviar({ tipo: "contrato", irAEtapa: setEtapa });
     };
     const guardarFirmaEmpresaSepa = (firmaDataUrl) => {
         const next = structuredClone(data);
@@ -22968,6 +23178,8 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
         pres.fechaFirmaSepa = todayStr();
         persist(next);
         setEtapa("contrato");
+        if (abrirEnviar)
+            abrirEnviar({ tipo: "sepa", irAEtapa: setEtapa });
     };
     const mensajeTexto = `Muy Srs. nuestros:\n\nAtendiendo su amable solicitud, detallamos a continuación nuestro presupuesto de mantenimiento anual de jardinería para su parcela en ${p.direccion}:\n\n${(p.labores || []).map(l => "• " + l).join("\n")}\n\nCuota mensual (IVA no incluido): ${eur(p.importe)}\n\nNos encontramos a su disposición para ampliarle cuantos datos estime oportuno conocer al respecto.\nSin otro particular, y en espera de sus noticias, aprovechamos la oportunidad para saludarle atentamente.\nJardinería Belardi`;
     if (confirmarFusion) {
@@ -23368,16 +23580,9 @@ function PresupuestoMantenimientoDoc({ p, data, persist, onVolver, setView, setF
             React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-soft)", marginBottom: 10 } }, "El cliente ya ha sido dado de alta como cliente de mantenimiento."),
             p.firmaCliente && React.createElement("img", { src: p.firmaCliente, alt: "Firma", style: { maxWidth: 240, border: "1px solid var(--line)", borderRadius: 4 } })),
         React.createElement("div", { className: "gj-row gj-no-print", style: { gap: 6, marginTop: 10 } },
-            p.telefono ? (React.createElement("a", { className: "gj-btn accent", style: { flex: 1, justifyContent: "center" }, href: waLink(p.telefono, mensajeFirmado), target: "_blank", rel: "noreferrer" },
+            React.createElement("button", { className: "gj-btn accent", style: { flex: 1, justifyContent: "center" }, onClick: () => abrirEnviar && abrirEnviar({ tipo: "contrato", irAEtapa: setEtapa }) },
                 React.createElement(Send, { size: 13 }),
-                " Reenviar por WhatsApp")) : (React.createElement("button", { className: "gj-btn accent", style: { flex: 1, justifyContent: "center" }, disabled: true, title: "Falta el tel\u00E9fono del cliente" },
-                React.createElement(Send, { size: 13 }),
-                " Reenviar por WhatsApp")),
-            p.email ? (React.createElement("a", { className: "gj-btn", style: { flex: 1, justifyContent: "center" }, href: mailLink(p.email, asuntoFirmado, mensajeFirmado, data.settings.emailEmpresa), target: "_blank", rel: "noreferrer" },
-                React.createElement(Mail, { size: 13 }),
-                " Reenviar por correo")) : (React.createElement("button", { className: "gj-btn", style: { flex: 1, justifyContent: "center" }, disabled: true, title: "Falta el email del cliente" },
-                React.createElement(Mail, { size: 13 }),
-                " Reenviar por correo")))));
+                " Enviar documento firmado"))));
 }
 const SECCIONES_OBRA = [
     {
@@ -23456,7 +23661,7 @@ function reconstruirPartidasObra(partidas) {
     });
     return { cantidades, precios, riego, materiales, fotos };
 }
-function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpliacion, onAbrirDoc, setView, setFocusClienteId }) {
+function PresupuestoObraDocInterno({ p, data, persist, onVolver, onEditar, onNuevaAmpliacion, onAbrirDoc, setView, setFocusClienteId, abrirEnviar }) {
     const [etapa, setEtapa] = useState(p.fechaFirmaContratoObra ? "listo" : p.aprobado ? "datos" : "documento");
     const [apellidos, setApellidos] = useState(p.apellidos || "");
     const [dni, setDni] = useState(p.dni || "");
@@ -23536,6 +23741,8 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
         pres.fechaFirmaSepaObra = todayStr();
         persist(next);
         setEtapa("contrato");
+        if (abrirEnviar)
+            abrirEnviar({ tipo: "sepa", irAEtapa: setEtapa });
     };
     const guardarFirmaEmpresaContratoObra = (firmaDataUrl) => {
         const next = structuredClone(data);
@@ -23555,6 +23762,8 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
         pres.fechaFirmaContratoObra = todayStr();
         persist(next);
         setEtapa("listo");
+        if (abrirEnviar)
+            abrirEnviar({ tipo: "contrato", irAEtapa: setEtapa });
     };
     const obraIniciada = p.fechaInicioObra && p.fechaInicioObra <= todayStr();
     const irAFichaCliente = () => {
@@ -23915,7 +24124,10 @@ function PresupuestoObraDoc({ p, data, persist, onVolver, onEditar, onNuevaAmpli
                 React.createElement(CheckCircle2, { size: 28, color: "var(--good)" }),
                 React.createElement("div", { className: "gj-h3", style: { marginTop: 8 } },
                     "Contrato de obra firmado el ",
-                    fechaEs(p.fechaFirmaContratoObra)))),
+                    fechaEs(p.fechaFirmaContratoObra)),
+                React.createElement("button", { className: "gj-btn accent gj-no-print", style: { marginTop: 10 }, onClick: () => abrirEnviar && abrirEnviar({ tipo: "contrato", irAEtapa: setEtapa }) },
+                    React.createElement(Send, { size: 13 }),
+                    " Enviar documento firmado"))),
             historialBox));
     }
     if (etapa === "ampliaciones") {
