@@ -13294,7 +13294,7 @@ const DEVICE_KEY = "gj_device_worker_v1";
 const CONSENT_KEY = "gj_device_consent_v1";
 // Número de versión que se ve en la cabecera: sirve para comprobar, móvil por móvil, que todos están
 // ejecutando la versión nueva y no una copia antigua que se haya quedado en memoria.
-const GJ_BUILD = "6nov-1";
+const GJ_BUILD = "13nov-1";
 function uid(p) { return p + "_" + Math.random().toString(36).slice(2, 9); }
 // Valores por defecto de los ratios de presupuesto (m\u00B2/hora, etc.). Si alg\u00FAn ajuste guardado no tiene
 // uno de estos campos (p.ej. por haberse a\u00F1adido despu\u00E9s de que ya se guardaran los ajustes), se
@@ -15372,13 +15372,24 @@ function App() {
     };
     const adminMode = adminRole !== null;
     const persist = useCallback((next) => {
-        // Antes: se subía UNA vez y, si fallaba o chocaba con otro móvil, solo se ponía un aviso y la app acababa
-        // sustituyendo la pantalla por lo del servidor: lo hecho (un presupuesto, una firma...) desaparecía sin
-        // decir nada. Ahora usa el mismo motor que el resto: se ve al instante, se reintenta sola, y si otro móvil
-        // guardó antes, los dos cambios se fusionan.
+        // Se ve al instante, se reintenta sola y, si otro móvil guardó antes, los dos cambios se fusionan.
+        // Además, los cambios seguidos se AGRUPAN: si ya hay uno pendiente de subir (que aún no va en la subida en
+        // curso) y este parte justo de donde terminó aquel, se funden en uno solo. Así, por muchos toques seguidos
+        // que se hagan mientras se sube, solo se guardan dos "fotos" de los datos en memoria, no una por toque.
         const ancestro = dataRef.current;
         setData(next);
-        pendientesRef.current.push((base) => gjFusionar3(base, ancestro, next));
+        const lista = pendientesRef.current;
+        const ult = lista[lista.length - 1];
+        if (ult && ult.esPersist && ult.final === ancestro && lista.length - 1 >= loteEnVueloRef.current) {
+            ult.final = next;
+        }
+        else {
+            const parche = (base) => gjFusionar3(base, parche.origen, parche.final);
+            parche.esPersist = true;
+            parche.origen = ancestro;
+            parche.final = next;
+            lista.push(parche);
+        }
         return programarSubida();
     }, []);
     // Como persist, pero para acciones pequeñas y bien definidas (fichar inicio/hecho, almuerzo,
@@ -15397,12 +15408,14 @@ function App() {
 // ---------------------------------------------------------------------------------------------
 const pendientesRef = useRef([]);
 const subidaEnCursoRef = useRef(null);
+const loteEnVueloRef = useRef(0); // cuántos cambios pendientes van ya dentro de la subida que está en el aire
 const esperar = (ms) => new Promise(rs => setTimeout(rs, ms));
 const subirUnLote = async () => {
     let conflictos = 0;
     for (let intento = 1; intento <= 4; intento++) {
         const lote = pendientesRef.current.length;
         const instantanea = dataRef.current;
+        loteEnVueloRef.current = lote;
         let r = null;
         try {
             // Última red de seguridad: la petición ya se cancela sola a los 90 s (ver gjFetchInstrumentado).
@@ -15415,6 +15428,7 @@ const subirUnLote = async () => {
             r = null;
             window.gjResultadoGuardado = "error";
         }
+        loteEnVueloRef.current = 0;
         if (r) {
             pendientesRef.current.splice(0, lote);
             if (pendientesRef.current.length === 0)
@@ -21444,6 +21458,135 @@ function ResumenDiarioView({ data, getWorker, getClient }) {
                 " sin explicar entre la jornada y la suma de las partes.")),
             f.haySolape && (React.createElement("div", { style: { fontSize: 12.5, color: "var(--warn)", fontWeight: 600, marginTop: 4 } }, "\u26A0\uFE0F Hay fichajes que se solapan en el tiempo (dos cosas a la vez) \u2014 la suma de arriba puede estar contando ese hueco dos veces. Revisa los horarios de ese d\u00EDa en Rutas.")))))));
 }
+// --- Exportar el calendario anual a PDF SIN usar el cuadro de impresión del móvil ----------------------------
+// El botón de imprimir depende del sistema de impresión del navegador, que en algunos móviles se queda
+// bloqueado. Esta vía dibuja el calendario directamente, lo convierte en un PDF de una página y lo comparte o
+// descarga, sin tocar el cuadro de impresión.
+function gjPdfDeJpeg(jpeg, w, h) {
+    const enc = new TextEncoder();
+    const partes = [];
+    let pos = 0;
+    const offs = [];
+    const add = (x) => { const b = typeof x === "string" ? enc.encode(x) : x; partes.push(b); pos += b.length; };
+    add("%PDF-1.4\n");
+    offs[1] = pos;
+    add("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+    offs[2] = pos;
+    add("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+    offs[3] = pos;
+    add("3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595.28 841.89] /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>\nendobj\n");
+    const cont = "q\n595.28 0 0 841.89 0 0 cm\n/Im0 Do\nQ\n";
+    offs[4] = pos;
+    add("4 0 obj\n<< /Length " + cont.length + " >>\nstream\n" + cont + "endstream\nendobj\n");
+    offs[5] = pos;
+    add("5 0 obj\n<< /Type /XObject /Subtype /Image /Width " + w + " /Height " + h + " /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length " + jpeg.length + " >>\nstream\n");
+    add(jpeg);
+    add("\nendstream\nendobj\n");
+    const xref = pos;
+    let t = "xref\n0 6\n0000000000 65535 f \n";
+    for (let i = 1; i <= 5; i++)
+        t += String(offs[i]).padStart(10, "0") + " 00000 n \n";
+    t += "trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n" + xref + "\n%%EOF\n";
+    add(t);
+    const total = new Uint8Array(pos);
+    let o = 0;
+    partes.forEach(b => { total.set(b, o); o += b.length; });
+    return total;
+}
+async function gjCalendarioAPdf({ year, nombre, vac, festivos, stats }) {
+    const W = 1240, H = 1754, M = 60;
+    const cv = document.createElement("canvas");
+    cv.width = W;
+    cv.height = H;
+    const g = cv.getContext("2d");
+    g.fillStyle = "#ffffff";
+    g.fillRect(0, 0, W, H);
+    g.fillStyle = "#1E2A1B";
+    g.textBaseline = "alphabetic";
+    g.font = "bold 54px Arial, Helvetica, sans-serif";
+    g.fillText("Calendario anual " + year, M, 110);
+    g.font = "bold 34px Arial, Helvetica, sans-serif";
+    g.fillText(nombre, M, 160);
+    // cuatro recuadros con las cifras
+    const bw = (W - 2 * M - 3 * 20) / 4;
+    stats.forEach((st, i) => {
+        const x = M + i * (bw + 20), y = 195;
+        g.strokeStyle = "#C9CFC3";
+        g.lineWidth = 2;
+        g.strokeRect(x, y, bw, 120);
+        g.fillStyle = "#1E2A1B";
+        g.font = "bold 38px Arial, Helvetica, sans-serif";
+        g.fillText(st.n, x + 14, y + 55);
+        g.fillStyle = "#5C6657";
+        g.font = "17px Arial, Helvetica, sans-serif";
+        g.fillText(st.l, x + 14, y + 92);
+    });
+    const colores = { vacaciones: "#DC2626", baja: "#6B4A9B", permiso: "#2563EB" };
+    const claros = { "#4ADE80": 1, "#BBF7D0": 1, "#93C5FD": 1 };
+    const MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    const DIAS = ["L", "M", "X", "J", "V", "S", "D"];
+    const colW = (W - 2 * M - 2 * 24) / 3, boxH = 296, top0 = 345, hueco = 18;
+    MESES.forEach((nombreMes, mIdx) => {
+        const bx = M + (mIdx % 3) * (colW + 24), by = top0 + Math.floor(mIdx / 3) * (boxH + hueco);
+        g.strokeStyle = "#C9CFC3";
+        g.lineWidth = 2;
+        g.strokeRect(bx, by, colW, boxH);
+        g.fillStyle = "#1E2A1B";
+        g.font = "bold 26px Arial, Helvetica, sans-serif";
+        g.textAlign = "center";
+        g.fillText(nombreMes, bx + colW / 2, by + 34);
+        const cw = (colW - 16) / 7;
+        g.font = "16px Arial, Helvetica, sans-serif";
+        g.fillStyle = "#5C6657";
+        DIAS.forEach((d, k) => g.fillText(d, bx + 8 + k * cw + cw / 2, by + 58));
+        const nDias = new Date(year, mIdx + 1, 0).getDate();
+        const offset = (new Date(year, mIdx, 1).getDay() + 6) % 7;
+        for (let d = 1; d <= nDias; d++) {
+            const pos = offset + d - 1, col = pos % 7, fila = Math.floor(pos / 7);
+            const x = bx + 8 + col * cw, y = by + 68 + fila * 38;
+            const fecha = year + "-" + String(mIdx + 1).padStart(2, "0") + "-" + String(d).padStart(2, "0");
+            const marca = vac[fecha];
+            const fest = festivos[fecha];
+            let fondo = null;
+            if (marca === "vacaciones" || marca === "baja" || marca === "permiso")
+                fondo = colores[marca];
+            else if (fest)
+                fondo = festivoColor(fest.tipo);
+            if (fondo) {
+                g.fillStyle = fondo;
+                g.fillRect(x + 1, y, cw - 2, 34);
+            }
+            g.fillStyle = fondo && !claros[fondo] ? "#ffffff" : "#1E2A1B";
+            g.font = "20px Arial, Helvetica, sans-serif";
+            g.fillText(String(d), x + cw / 2, y + 24);
+        }
+    });
+    g.textAlign = "left";
+    // leyenda
+    const leyenda = [["#DC2626", "vacaciones"], ["#6B4A9B", "baja / enfermedad"], ["#2563EB", "permiso retribuido"], ["#4ADE80", "festivo oficial"], ["#BBF7D0", "festivo de empresa / puente"], ["#93C5FD", "lluvia o nieve"]];
+    let lx = M, ly = top0 + 4 * (boxH + hueco) + 22;
+    g.font = "20px Arial, Helvetica, sans-serif";
+    leyenda.forEach(([c, t]) => {
+        const ancho = 24 + g.measureText(t).width + 26;
+        if (lx + ancho > W - M) {
+            lx = M;
+            ly += 34;
+        }
+        g.fillStyle = c;
+        g.beginPath();
+        g.arc(lx + 10, ly - 7, 10, 0, 2 * Math.PI);
+        g.fill();
+        g.fillStyle = "#5C6657";
+        g.fillText(t, lx + 26, ly);
+        lx += ancho;
+    });
+    g.fillStyle = "#8A9484";
+    g.font = "16px Arial, Helvetica, sans-serif";
+    g.fillText("Generado el " + new Date().toLocaleDateString("es-ES") + " \u00B7 Jardiner\u00EDa Belardi", M, H - 30);
+    const blob = await new Promise(res => cv.toBlob(res, "image/jpeg", 0.92));
+    const jpeg = new Uint8Array(await blob.arrayBuffer());
+    return gjPdfDeJpeg(jpeg, W, H);
+}
 function CalendarioAnualExportable({ trabajador, year, data, horasAnio, horasObjetivoAnio, vacacionesAnio, bajaAnio, onCerrar }) {
     const vacacionesTrabajador = (data.vacaciones && data.vacaciones[trabajador.id]) || {};
     const diasVacacionesContratados = data.settings.vacacionesAnuales || 22;
@@ -21451,10 +21594,55 @@ function CalendarioAnualExportable({ trabajador, year, data, horasAnio, horasObj
     const horasRestantes = Math.max(0, horasObjetivoAnio - horasAnio);
     const MESES_CORTO = ["Ene", "Feb", "Mar", "Abr", "May", "Jun", "Jul", "Ago", "Sep", "Oct", "Nov", "Dic"];
     const DIAS_CORTO = ["L", "M", "X", "J", "V", "S", "D"];
+    // El PDF se prepara nada más abrir el calendario, para que al pulsar el botón se comparta al instante (los
+    // móviles solo dejan compartir un archivo justo después de tocar un botón).
+    const [pdfListo, setPdfListo] = useState(null);
+    useEffect(() => {
+        let cancelado = false;
+        (async () => {
+            try {
+                const bytes = await gjCalendarioAPdf({ year, nombre: trabajador.nombre, vac: vacacionesTrabajador, festivos: data.festivos || {},
+                    stats: [{ n: horasObjetivoAnio + "h", l: "Horas anuales seg\u00FAn contrato" }, { n: fmtHM(horasAnio), l: "Trabajadas hasta la fecha" }, { n: fmtHM(horasRestantes), l: "Horas restantes del a\u00F1o" }, { n: diasVacacionesRestantes + " / " + diasVacacionesContratados, l: "D\u00EDas de vacaciones restantes" }] });
+                if (!cancelado)
+                    setPdfListo({ bytes, nombre: "Calendario_" + year + "_" + trabajador.nombre.replace(/[^\w]+/g, "_") + ".pdf" });
+            }
+            catch (e) {
+                if (!cancelado)
+                    setPdfListo({ error: true });
+            }
+        })();
+        return () => { cancelado = true; };
+    }, [year, trabajador.id, vacacionesTrabajador, data.festivos]);
+    const guardarPdf = async () => {
+        if (!pdfListo || pdfListo.error) {
+            alert("No se ha podido preparar el PDF. Prueba con el bot\u00F3n de Imprimir.");
+            return;
+        }
+        const file = new File([pdfListo.bytes], pdfListo.nombre, { type: "application/pdf" });
+        try {
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ files: [file], title: pdfListo.nombre });
+                return;
+            }
+        }
+        catch (e) {
+            if (e && e.name === "AbortError")
+                return; // el usuario cerr\u00F3 el panel de compartir
+        }
+        const url = URL.createObjectURL(new Blob([pdfListo.bytes], { type: "application/pdf" }));
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = pdfListo.nombre;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+    };
     return (React.createElement("div", null,
-        React.createElement("div", { className: "gj-row gj-no-print", style: { marginBottom: 10 } },
+        React.createElement("div", { className: "gj-row gj-no-print", style: { marginBottom: 10, flexWrap: "wrap" } },
             React.createElement("button", { className: "gj-btn", onClick: onCerrar }, "\u2190 Volver"),
-            React.createElement("button", { className: "gj-btn primary", onClick: () => window.print() }, "\uD83D\uDDA8 Imprimir / Exportar PDF")),
+            React.createElement("button", { className: "gj-btn primary", onClick: guardarPdf, disabled: !pdfListo }, pdfListo ? "\uD83D\uDCC4 Guardar / compartir PDF" : "Preparando PDF\u2026"),
+            React.createElement("button", { className: "gj-btn ghost", onClick: () => window.print() }, "\uD83D\uDDA8 Imprimir")),
         React.createElement("div", { className: "gj-card" },
             React.createElement("h2", { className: "gj-h2", style: { marginBottom: 2 } }, "Calendario anual ", year),
             React.createElement("div", { style: { fontSize: 14, fontWeight: 600, marginBottom: 10 } }, trabajador.nombre),
@@ -21504,7 +21692,7 @@ function CalendarioAnualExportable({ trabajador, year, data, horasAnio, horasObj
                 React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#BBF7D0", display: "inline-block" } }), " festivo de empresa / puente"),
                 React.createElement("span", { style: { display: "flex", alignItems: "center", gap: 3 } }, React.createElement("span", { style: { width: 10, height: 10, borderRadius: "50%", background: "#93C5FD", display: "inline-block" } }), " lluvia o nieve")))));
 }
-function HorasView({ data, persist, getWorker, getClient, adminMode }) {
+function HorasView({ data, persist, persistConReintento, getWorker, getClient, adminMode }) {
     var _a;
     const now = new Date();
     const [workerId, setWorkerId] = useState(((_a = data.workers[0]) === null || _a === void 0 ? void 0 : _a.id) || "");
@@ -21632,18 +21820,21 @@ function HorasView({ data, persist, getWorker, getClient, adminMode }) {
     const toggleVacacion = (dateStr) => {
         if (!adminMode)
             return;
-        const next = structuredClone(data);
-        next.vacaciones[workerId] = next.vacaciones[workerId] || {};
-        if (next.vacaciones[workerId][dateStr]) {
-            // El d\u00EDa ya ten\u00EDa una marca (sea cual sea): un toque siempre la quita y vuelve a
-            // jornada normal, independientemente de qu\u00E9 tipo tengas seleccionado arriba.
-            delete next.vacaciones[workerId][dateStr];
-        }
-        else {
-            // El d\u00EDa estaba en blanco: se marca con el tipo seleccionado arriba (vacaciones/baja/permiso).
-            next.vacaciones[workerId][dateStr] = tipoMarca;
-        }
-        persist(next);
+        // Un toque en un día YA marcado (sea cual sea la marca) la quita y vuelve a jornada normal; en un día en
+        // blanco se marca con el tipo seleccionado arriba. La decisión se toma AHORA (quitar o poner) y el cambio es
+        // ligero: se modifica solo ese día, sin clonar la base de datos entera. Antes cada pulsación copiaba varios MB
+        // y, marcando muchos días seguidos, la memoria se disparaba y el móvil se quedaba paralizado.
+        const yaMarcado = !!((data.vacaciones && data.vacaciones[workerId]) || {})[dateStr];
+        const marca = yaMarcado ? null : tipoMarca;
+        persistConReintento(base => {
+            const vac = base.vacaciones || {};
+            const delTrabajador = { ...(vac[workerId] || {}) };
+            if (marca === null)
+                delete delTrabajador[dateStr];
+            else
+                delTrabajador[dateStr] = marca;
+            return { ...base, vacaciones: { ...vac, [workerId]: delTrabajador } };
+        });
     };
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const days = Array.from({ length: daysInMonth }, (_, i) => i + 1);
